@@ -9,7 +9,7 @@ static IrIns * emit(Parser *p, IrOp op) {
     IrIns *ins = malloc(sizeof(IrIns));
     ins->op = op;
     ins->next = NULL;
-    ins->prev = *p->ins;
+//    ins->prev = *p->ins; TODO
     *p->ins = ins;
     p->ins = &ins->next;
     return ins;
@@ -111,7 +111,7 @@ static void parse_fn_args(Parser *p) {
         Local local = {.name = name, .type = arg_type, .alloc = NULL}; // Create a local
         def_local(p, local);
 
-        if (p->l.tk == ',') { // Check for a comma
+        if (p->l.tk == ',') { // Check for another argument
             next_tk(&p->l);
             continue;
         } else {
@@ -119,8 +119,8 @@ static void parse_fn_args(Parser *p) {
         }
     }
     int idx = 0;
-    for (IrIns *farg = p->fn->entry->head; farg; farg = farg->next) { // Create IR_ALLOC for each argument
-        IrIns *alloc = emit(p, IR_ALLOC);
+    for (IrIns *farg = p->fn->entry->head; farg && farg->op == IR_FARG; farg = farg->next) {
+        IrIns *alloc = emit(p, IR_ALLOC); // Create IR_ALLOC for each argument
         alloc->type = farg->type;
         IrIns *store = emit(p, IR_STORE);
         store->dest = alloc;
