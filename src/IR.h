@@ -19,6 +19,11 @@ typedef enum {
     X(KI32, 1)     \
     X(STORE, 2)    \
     X(LOAD, 1)     \
+    X(ADD, 2)      \
+    X(SUB, 2)      \
+    X(MUL, 2)      \
+    X(DIV, 2)      \
+    X(NEG, 1)      \
     X(RET, 0)
 
 typedef enum {
