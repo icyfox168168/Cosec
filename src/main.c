@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "Parser.h"
+#include "Debug.h"
+
 typedef struct {
     int help, version;
 } CLIOpts;
@@ -36,7 +39,8 @@ int main(int argc, char *argv[]) {
     } else if (opts.help) {
         print_help();
     } else if (file) {
-        // Compile
+        Module *module = parse(file);
+        print_bb(module->fns->entry);
     } else {
         print_help();
     }
