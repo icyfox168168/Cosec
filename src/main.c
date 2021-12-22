@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "Parser.h"
+#include "opt/Fold.h"
 #include "Assembler.h"
 #include "Encoder.h"
 #include "Debug.h"
@@ -50,6 +51,7 @@ int main(int argc, char *argv[]) {
         print_help();
     } else {
         Module *ir_module = parse(file);
+        opt_fold(ir_module->fns);
         AsmModule *asm_module = assemble(ir_module);
         printf("---- IR\n");
         print_bb(ir_module->fns->entry);

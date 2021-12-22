@@ -300,6 +300,7 @@ static FnDecl * parse_fn_decl(Parser *p) {
 static FnDef * parse_fn_def(Parser *p) {
     FnDef *fn = malloc(sizeof(FnDef));
     fn->entry = malloc(sizeof(BB));
+    fn->entry->next = NULL;
     fn->entry->head = NULL;
 
     p->fn = fn; // Needs to happen before parsing the declaration, since function arguments emit instructions

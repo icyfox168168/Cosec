@@ -5,7 +5,8 @@
 #include "IR.h"
 #include "Lexer.h"
 
-typedef struct {
+typedef struct bb {
+    struct bb *next;
     IrIns *head;
 } BB; // Basic block
 

@@ -46,5 +46,6 @@ typedef struct ir_ins {
 } IrIns;
 
 int size_of(Type type);
+int is_const(IrOp op);
 
 #endif
