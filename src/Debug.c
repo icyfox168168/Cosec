@@ -10,7 +10,7 @@ static void print_ins(IrIns *ins) {
         printf("\t"); // Some opcode names are less than the length of a tab
     }
     switch (ins->op) { // Handle special case instructions (e.g., constants)
-        case IR_FARG: case IR_ALLOC: printf("%s", IR_TYPE_NAMES[ins->type]); break;
+        case IR_FARG: case IR_ALLOC: printf("%s", IR_PRIM_NAMES[ins->type.prim]); break;
         case IR_KI32: printf("%+d", ins->ki32); break;
         default:
             printf("%.4d", ins->l->debug_idx); // Single argument instructions

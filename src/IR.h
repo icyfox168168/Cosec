@@ -4,19 +4,25 @@
 
 #include <stdint.h>
 
-#define IR_TYPES \
+#define IR_PRIMS \
+    X(void)      \
     X(i32)
 
 typedef enum {
-#define X(name) T_ ## name
-    IR_TYPES
+#define X(name) T_ ## name,
+    IR_PRIMS
 #undef X
+} Prim;
+
+typedef struct {
+    Prim prim;
+    int ptrs; // Number of levels of pointer indirection
 } Type;
 
 #define IR_OPCODES \
+    X(KI32, 1)     \
     X(FARG, 1)     \
     X(ALLOC, 1)    \
-    X(KI32, 1)     \
     X(STORE, 2)    \
     X(LOAD, 1)     \
     X(ADD, 2)      \
@@ -34,14 +40,19 @@ typedef enum {
 } IrOp;
 
 typedef struct ir_ins {
-    IrOp op;
     struct ir_ins *next;
-    union { // Operands
-        Type type; // For IR_FARG and IR_ALLOC
-        int32_t ki32; // For IR_KI32
-        struct { struct ir_ins *dest, *src; }; // For IR_STORE
-        struct { struct ir_ins *l, *r; }; // For arithmetic
+    IrOp op;
+    Type type; // All instructions that return a value (i.e. everything but control flow) record its type here
+    union {
+        int32_t ki32; // Constants
+        struct { struct ir_ins *l, *r; }; // Binary instructions
     };
+
+    // Assembler per-IR instruction info
+    int stack_slot; // For IR_ALLOC: location on the stack relative to rbp
+    int vreg; // For instructions that generate a result: virtual register number referenced in the assembly
+
+    // Debug info
     int debug_idx;
 } IrIns;
 

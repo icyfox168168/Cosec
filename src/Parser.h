@@ -8,7 +8,7 @@
 typedef struct bb {
     struct bb *next;
     IrIns *head;
-} BB; // Basic block
+} BB;
 
 typedef struct {
     Type return_type;

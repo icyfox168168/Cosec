@@ -5,9 +5,9 @@
 #include "IR.h"
 #include "Parser.h"
 
-static char *IR_TYPE_NAMES[] = {
+static char *IR_PRIM_NAMES[] = {
 #define X(name) #name,
-    IR_TYPES
+    IR_PRIMS
 #undef X
 };
 

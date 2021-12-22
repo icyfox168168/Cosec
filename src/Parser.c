@@ -23,6 +23,8 @@ static IrIns * emit(Parser *p, IrOp op) {
     IrIns *ins = malloc(sizeof(IrIns));
     ins->op = op;
     ins->next = NULL;
+    ins->type.prim = T_void;
+    ins->type.ptrs = 0;
     *p->ins = ins;
     p->ins = &ins->next;
     return ins;
@@ -92,6 +94,8 @@ static IrIns * parse_const_int(Parser *p) {
     next_tk(&p->l);
     IrIns *expr = emit(p, IR_KI32);
     expr->ki32 = (int32_t) value;
+    expr->type.prim = T_i32;
+    expr->type.ptrs = 0;
     return expr;
 }
 
@@ -113,6 +117,8 @@ static IrIns * parse_local(Parser *p) {
     next_tk(&p->l);
     IrIns *load = emit(p, IR_LOAD);
     load->l = local->alloc;
+    load->type = local->alloc->type;
+    load->type.ptrs -= 1; // Loading DEREFERENCES a pointer
     return load;
 }
 
@@ -143,6 +149,7 @@ static IrIns * parse_unary(Parser *p) {
         IrIns *operand = parse_subexpr(p, UNOP_PREC[unop]);
         IrIns *operation = emit(p, UNOP_OPCODES[unop]);
         operation->l = operand;
+        operation->type = operand->type;
         return operation;
     } else {
         return parse_operand(p);
@@ -153,6 +160,7 @@ static IrIns * parse_binary(Parser *p, Token binop, IrIns *left, IrIns *right) {
     IrIns *operation = emit(p, BINOP_OPCODES[binop]);
     operation->l = left;
     operation->r = right;
+    operation->type = left->type; // Should be the same as 'right'
     return operation;
 }
 
@@ -181,7 +189,8 @@ static int is_decl_spec(Token tk) {
 static Type parse_decl_spec(Parser *p) {
     expect_tk(&p->l, TK_INT); // The only type available for now
     next_tk(&p->l);
-    return T_i32;
+    Type type = {.prim = T_i32, .ptrs = 0};
+    return type;
 }
 
 static void parse_ret(Parser *p) {
@@ -209,13 +218,15 @@ static void parse_decl(Parser *p) {
 
     IrIns *alloc = emit(p, IR_ALLOC);
     alloc->type = type;
+    alloc->type.ptrs += 1; // The result is a POINTER to the value
     if (p->l.tk != ';') { // Definition, not just a declaration
         expect_tk(&p->l, '=');
         next_tk(&p->l);
         IrIns *value = parse_expr(p); // Value
         IrIns *store = emit(p, IR_STORE);
-        store->dest = alloc;
-        store->src = value;
+        store->l = alloc;
+        store->r = value;
+        store->type = value->type;
     }
     Local local = {.name = name, .type = type, .alloc = alloc};
     def_local(p, local);
@@ -275,8 +286,9 @@ static void parse_fn_args(Parser *p) {
         IrIns *alloc = emit(p, IR_ALLOC); // Create IR_ALLOC for each argument
         alloc->type = farg->type;
         IrIns *store = emit(p, IR_STORE);
-        store->dest = alloc;
-        store->src = farg;
+        store->l = alloc;
+        store->r = farg;
+        store->type = farg->type;
         p->locals[idx++].alloc = alloc;
     }
 }

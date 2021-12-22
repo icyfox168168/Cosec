@@ -3,9 +3,22 @@
 
 static void encode_operand(AsmOperand op, FILE *out) {
     switch (op.type) {
-        case OP_REG: fprintf(out, "%s", REG_NAMES[op.reg]); break;
-        case OP_IMM: fprintf(out, "%llu", op.imm); break;
-        case OP_SYM: fprintf(out, "%s", op.sym->label); break;
+    case OP_REG:  fprintf(out, "%s", REG_NAMES[op.reg]); break;
+    case OP_VREG: fprintf(out, "%%%d", op.vreg); break;
+    case OP_MEM:
+        fprintf(out, "[%s", REG_NAMES[op.base]);
+        if (op.scale > 1) {
+            fprintf(out, "*%d", op.scale);
+        }
+        if (op.index > 0) {
+            fprintf(out, " + %d", op.index);
+        } else if (op.index < 0) {
+            fprintf(out, " - %d", -op.index);
+        }
+        fprintf(out, "]");
+        break;
+    case OP_IMM:  fprintf(out, "%llu", op.imm); break;
+    case OP_SYM:  fprintf(out, "%s", op.sym->label); break;
     }
 }
 
