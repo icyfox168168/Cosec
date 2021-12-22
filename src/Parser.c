@@ -5,11 +5,24 @@
 
 #include "Parser.h"
 
+typedef struct {
+    Type type;
+    char *name;
+    IrIns *alloc; // Reference to IR_ALLOC instruction that created this local
+} Local;
+
+typedef struct {
+    Lexer l;
+    FnDef *fn; // Current function being parsed
+    IrIns **ins; // Next instruction to emit
+    Local *locals; // Local variables in scope
+    int num_locals, max_locals;
+} Parser;
+
 static IrIns * emit(Parser *p, IrOp op) {
     IrIns *ins = malloc(sizeof(IrIns));
     ins->op = op;
     ins->next = NULL;
-//    ins->prev = *p->ins; TODO
     *p->ins = ins;
     p->ins = &ins->next;
     return ins;
@@ -174,7 +187,16 @@ static Type parse_decl_spec(Parser *p) {
 static void parse_ret(Parser *p) {
     expect_tk(&p->l, TK_RETURN);
     next_tk(&p->l);
-    emit(p, IR_RET);
+    IrIns *value = NULL;
+    if (p->l.tk != ';') {
+        value = parse_expr(p);
+    }
+    if (value) {
+        IrIns *ret = emit(p, IR_RET1);
+        ret->l = value;
+    } else {
+        emit(p, IR_RET0);
+    }
 }
 
 static void parse_decl(Parser *p) {

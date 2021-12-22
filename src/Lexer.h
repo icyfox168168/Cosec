@@ -16,7 +16,7 @@ typedef int Token;
 enum {
     TK_FIRST = 0xFF, // Marker
 #define X(name) TK_ ## name,
-#define K(name, keyword) TK_ ## name,
+#define K(name, _) TK_ ## name,
     TOKENS
 #undef K
 #undef X
@@ -24,8 +24,8 @@ enum {
 };
 
 static char *KEYWORDS[] = {
-#define X(name)
-#define K(name, keyword) keyword,
+#define X(_)
+#define K(_, keyword) keyword,
     TOKENS
 #undef K
 #undef X

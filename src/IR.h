@@ -24,7 +24,8 @@ typedef enum {
     X(MUL, 2)      \
     X(DIV, 2)      \
     X(NEG, 1)      \
-    X(RET, 0)
+    X(RET1, 1)     \
+    X(RET0, 0)
 
 typedef enum {
 #define X(name, nargs) IR_ ## name,
@@ -34,7 +35,7 @@ typedef enum {
 
 typedef struct ir_ins {
     IrOp op;
-    struct ir_ins *next, *prev;
+    struct ir_ins *next;
     union { // Operands
         Type type; // For IR_FARG and IR_ALLOC
         int32_t ki32; // For IR_KI32

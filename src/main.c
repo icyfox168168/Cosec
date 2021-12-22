@@ -3,7 +3,17 @@
 #include <string.h>
 
 #include "Parser.h"
+#include "Assembler.h"
+#include "Encoder.h"
 #include "Debug.h"
+
+/* Cosec compiler structure:
+ * 1. Lexer     -- splits a module's source code up into tokens
+ * 2. Parser    -- generates IR from the source tokens
+ * 3. Optimiser -- converts the IR into SSA form and optimises it
+ * 4. Assembler -- lowers the SSA IR to target-specific machine code IR
+ * 5. Encoder   -- writes the machine code to an object file ready for linking
+ */
 
 typedef struct {
     int help, version;
@@ -36,13 +46,21 @@ int main(int argc, char *argv[]) {
     }
     if (opts.version) {
         print_version();
-    } else if (opts.help) {
+    } else if (opts.help || !file) {
         print_help();
-    } else if (file) {
-        Module *module = parse(file);
-        print_bb(module->fns->entry);
     } else {
-        print_help();
+        Module *ir_module = parse(file);
+        AsmModule *asm_module = assemble(ir_module);
+        printf("---- IR\n");
+        print_bb(ir_module->fns->entry);
+        printf("\n---- Assembly\n");
+        encode_nasm(asm_module, stdout);
+        FILE *output = fopen("out.s", "w");
+        encode_nasm(asm_module, output);
+        // Compile the generated assembly with:
+        //     nasm -f macho64 out.s
+        //     ld -L/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib -lSystem out.o
+        // (Yes, the linker arguments are annoying, but necessary)
     }
     return 0;
 }
