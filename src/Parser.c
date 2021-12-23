@@ -71,6 +71,7 @@ static Prec BINOP_PREC[TK_LAST] = {
     ['-'] = PREC_ADD, // Subtraction
     ['*'] = PREC_MUL, // Multiplication
     ['/'] = PREC_MUL, // Division
+    ['%'] = PREC_MUL, // Modulo
 };
 
 static int IS_RIGHT_ASSOC[TK_LAST] = {
@@ -86,6 +87,7 @@ static IrOp BINOP_OPCODES[TK_LAST] = {
     ['-'] = IR_SUB,
     ['*'] = IR_MUL,
     ['/'] = IR_DIV,
+    ['%'] = IR_MOD,
 };
 
 static IrIns * parse_const_int(Parser *p) {

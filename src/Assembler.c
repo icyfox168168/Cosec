@@ -23,7 +23,7 @@ static AsmIns * emit(Assembler *a, AsmOp op) {
 
 // Emits an instruction to a virtual register
 static AsmOperand discharge(Assembler *a, IrIns *ins) {
-    if (!is_const(ins->op) && ins->op != IR_LOAD) {
+    if (ins->op != IR_KI32 && ins->op != IR_LOAD) {
         AsmOperand result = {.type = OP_VREG, .vreg = ins->vreg};
         return result; // Already in a virtual register, don't need to discharge again
     }
@@ -32,17 +32,20 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
     AsmIns *mov = emit(a, X86_MOV);
     mov->l.type = OP_VREG;
     mov->l.vreg = ins->vreg;
-    if (is_const(ins->op)) {
+    switch (ins->op) {
+    case IR_KI32:
         mov->r.type = OP_IMM; // Immediate
         mov->r.imm = ins->ki32;
-    } else if (ins->op == IR_LOAD) {
+        break;
+    case IR_LOAD:
         assert(ins->l->type.ptrs >= 1); // Can only load from a pointer
         assert(ins->l->op == IR_ALLOC); // Only source of pointers at the moment is IR_ALLOC
-
         mov->r.type = OP_MEM; // Memory load
         mov->r.base = REG_RBP;
         mov->r.scale = 1;
         mov->r.index = -ins->l->stack_slot;
+        break;
+    default: break; // Doesn't happen
     }
     AsmOperand result = {.type = OP_VREG, .vreg = ins->vreg};
     return result;
@@ -61,7 +64,7 @@ static void asm_store(Assembler *a, IrIns *ir_store) {
     assert(ir_store->l->op == IR_ALLOC); // Only source of pointers is IR_ALLOC
 
     AsmOperand r; // Right operand either a constant or vreg (not memory)
-    if (is_const(ir_store->r->op)) { // Constant
+    if (ir_store->r->op == IR_KI32) { // Constant
         r.type = OP_IMM;
         r.imm = ir_store->r->ki32;
     } else {
@@ -82,7 +85,6 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
         case IR_ADD: op = X86_ADD; break;
         case IR_SUB: op = X86_SUB; break;
         case IR_MUL: op = X86_MUL; break;
-        case IR_DIV: op = X86_IDIV; break;
         default: break; // Doesn't happen
     }
 
@@ -90,7 +92,7 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
 
     AsmIns *arith = emit(a, op);
     arith->l = l;
-    if (is_const(ir_arith->r->op)) {
+    if (ir_arith->r->op == IR_KI32) {
         arith->r.type = OP_IMM;
         arith->r.imm = ir_arith->r->ki32;
     } else if (ir_arith->r->op == IR_LOAD) {
@@ -103,6 +105,49 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
         arith->r.vreg = ir_arith->r->vreg;
     }
     ir_arith->vreg = arith->l.vreg;
+}
+
+static void emit_idiv(Assembler *a, IrIns *ir_div) {
+    AsmOperand l = discharge(a, ir_div->l); // Left operand always a vreg
+    AsmIns *mov = emit(a, X86_MOV); // Mov dividend into eax
+    mov->l.type = OP_REG;
+    mov->l.reg = REG_RAX;
+    mov->r = l;
+
+    emit(a, X86_CDQ); // Sign extend eax into edx
+    AsmIns *div = emit(a, X86_IDIV); // Performs edx:eax / <operand>; quotient in eax, remainder in edx
+    if (ir_div->r->op == IR_KI32) {
+        div->l = discharge(a, ir_div); // Can't divide by an immediate
+    } else if (ir_div->r->op == IR_LOAD) {
+        IrIns *ir_load = ir_div->r;
+        div->l.type = OP_MEM;
+        div->l.base = REG_RBP;
+        div->l.scale = 1;
+        div->l.index = -ir_load->l->stack_slot;
+    } else {
+        div->l.type = OP_VREG;
+        div->l.vreg = ir_div->r->vreg;
+    }
+}
+
+static void asm_div(Assembler *a, IrIns *ir_div) {
+    emit_idiv(a, ir_div);
+    ir_div->vreg = a->vreg++;
+    AsmIns *mov = emit(a, X86_MOV); // Move the result out of eax and into a new vreg
+    mov->l.type = OP_VREG;
+    mov->l.vreg = ir_div->vreg;
+    mov->r.type = OP_REG;
+    mov->r.reg = REG_RAX;
+}
+
+static void asm_mod(Assembler *a, IrIns *ir_mod) {
+    emit_idiv(a, ir_mod);
+    ir_mod->vreg = a->vreg++;
+    AsmIns *mov = emit(a, X86_MOV); // Move the result out of edx and into a new vreg
+    mov->l.type = OP_VREG;
+    mov->l.vreg = ir_mod->vreg;
+    mov->r.type = OP_REG;
+    mov->r.reg = REG_RDX;
 }
 
 static void asm_ret0(Assembler *a) {
@@ -127,13 +172,15 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
 
 static void asm_ins(Assembler *a, IrIns *ir_ins) {
     switch (ir_ins->op) {
-        case IR_KI32:  break; // Don't do anything for constants
+        case IR_KI32: break; // Don't do anything for constants
         case IR_ALLOC: asm_alloc(a, ir_ins); break;
-        case IR_LOAD:  break; // Loads don't always have to generate 'mov's; do as needed
+        case IR_LOAD: break; // Loads don't always have to generate 'mov's; do as needed
         case IR_STORE: asm_store(a, ir_ins); break;
-        case IR_ADD: case IR_SUB: case IR_MUL: case IR_DIV: asm_arith(a, ir_ins); break;
-        case IR_RET0:  asm_ret0(a); break;
-        case IR_RET1:  asm_ret1(a, ir_ins); break;
+        case IR_ADD: case IR_SUB: case IR_MUL: asm_arith(a, ir_ins); break;
+        case IR_DIV: asm_div(a, ir_ins); break;
+        case IR_MOD: asm_mod(a, ir_ins); break;
+        case IR_RET0: asm_ret0(a); break;
+        case IR_RET1: asm_ret1(a, ir_ins); break;
         default: printf("unsupported IR instruction to assembler\n"); exit(1);
     }
 }

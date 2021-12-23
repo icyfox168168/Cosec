@@ -29,6 +29,7 @@ typedef struct {
     X(SUB, 2)      \
     X(MUL, 2)      \
     X(DIV, 2)      \
+    X(MOD, 2)      \
     X(NEG, 1)      \
     X(RET1, 1)     \
     X(RET0, 0)
@@ -57,6 +58,5 @@ typedef struct ir_ins {
 } IrIns;
 
 int size_of(Type type);
-int is_const(IrOp op);
 
 #endif

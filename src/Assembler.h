@@ -25,7 +25,8 @@ typedef enum {
     X(ADD, "add", 2)         \
     X(SUB, "sub", 2)         \
     X(MUL, "mul", 2)         \
-    X(IDIV, "idiv", 2)       \
+    X(CDQ, "cdq", 0)         \
+    X(IDIV, "idiv", 1)       \
     X(PUSH, "push", 1)       \
     X(POP, "pop", 1)         \
     X(CALL, "call", 1)       \

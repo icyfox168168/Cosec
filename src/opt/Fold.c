@@ -4,7 +4,7 @@
 #include "Fold.h"
 
 static void fold_binary_arith(IrIns *ins) {
-    if (!is_const(ins->l->op) || !is_const(ins->r->op)) {
+    if (ins->l->op != IR_KI32 || ins->r->op != IR_KI32) {
         return;
     }
     int32_t v = 0;
@@ -22,7 +22,7 @@ static void fold_binary_arith(IrIns *ins) {
 }
 
 static void fold_unary_arith(IrIns *ins) {
-    if (!is_const(ins->op)) {
+    if (ins->l->op != IR_KI32) {
         return;
     }
     int32_t v = 0;
