@@ -28,7 +28,7 @@
     X(EDX, "edx") \
     X(EBX, "ebx") \
     X(ESP, "esp") \
-    X(EBP, "ebO") \
+    X(EBP, "ebp") \
     X(ESI, "esi") \
     X(EDI, "edi") \
     X(CL, "cl")

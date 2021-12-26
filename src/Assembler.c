@@ -217,6 +217,7 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
         case IR_SHL: case IR_ASHR: case IR_LSHR: asm_shift(a, ir_ins); break;
         case IR_RET0: asm_ret0(a); break;
         case IR_RET1: asm_ret1(a, ir_ins); break;
+        case IR_NOP: break; // Ignore NOPs
         default: printf("unsupported IR instruction to assembler\n"); exit(1);
     }
 }
