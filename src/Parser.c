@@ -83,7 +83,17 @@ static Prec BINOP_PREC[TK_LAST] = {
     ['^'] = PREC_BIT_XOR, // Bitwise xor
     [TK_LSHIFT] = PREC_SHIFT, // Left shift
     [TK_RSHIFT] = PREC_SHIFT, // Right shift
-    ['='] = PREC_ASSIGN,
+    ['='] = PREC_ASSIGN, // Assignments
+    [TK_ADD_ASSIGN] = PREC_ASSIGN,
+    [TK_SUB_ASSIGN] = PREC_ASSIGN,
+    [TK_MUL_ASSIGN] = PREC_ASSIGN,
+    [TK_DIV_ASSIGN] = PREC_ASSIGN,
+    [TK_MOD_ASSIGN] = PREC_ASSIGN,
+    [TK_AND_ASSIGN] = PREC_ASSIGN,
+    [TK_OR_ASSIGN] = PREC_ASSIGN,
+    [TK_XOR_ASSIGN] = PREC_ASSIGN,
+    [TK_LSHIFT_ASSIGN] = PREC_ASSIGN,
+    [TK_RSHIFT_ASSIGN] = PREC_ASSIGN,
 };
 
 static int IS_RIGHT_ASSOC[TK_LAST] = {
@@ -101,6 +111,16 @@ static IrOp BINOP_OPCODES[TK_LAST] = {
     ['^'] = IR_XOR,
     [TK_LSHIFT] = IR_SHL,
     [TK_RSHIFT] = IR_ASHR,
+    [TK_ADD_ASSIGN] = IR_ADD,
+    [TK_SUB_ASSIGN] = IR_SUB,
+    [TK_MUL_ASSIGN] = IR_MUL,
+    [TK_DIV_ASSIGN] = IR_DIV,
+    [TK_MOD_ASSIGN] = IR_MOD,
+    [TK_AND_ASSIGN] = IR_AND,
+    [TK_OR_ASSIGN] = IR_OR,
+    [TK_XOR_ASSIGN] = IR_XOR,
+    [TK_LSHIFT_ASSIGN] = IR_SHL,
+    [TK_RSHIFT_ASSIGN] = IR_ASHR,
 };
 
 static IrIns * parse_const_int(Parser *p) {
@@ -196,20 +216,30 @@ static IrIns * parse_operation(Parser *p, Token binop, IrIns *left, IrIns *right
     return operation;
 }
 
-static IrIns * parse_assign(Parser *p, IrIns *left, IrIns *right) {
+static IrIns * parse_assign(Parser *p, Token binop, IrIns *left, IrIns *right) {
+    if (binop != '=') {
+        right = parse_operation(p, binop, left, right);
+    }
     assert(left->op == IR_LOAD);
     IrIns *store = emit(p, IR_STORE);
     store->l = left->l;
     store->r = right;
     store->type = left->type;
-    left->op = IR_NOP; // Delete the load instruction
+    if (binop == '=') {
+        left->op = IR_NOP; // Delete the load instruction
+    }
     return right; // Assignment evaluates to its right operand
 }
 
 static IrIns * parse_binary(Parser *p, Token binop, IrIns *left, IrIns *right) {
     switch (binop) {
-        case '=': return parse_assign(p, left, right);
-        default:  return parse_operation(p, binop, left, right);
+    case '=': case TK_ADD_ASSIGN: case TK_SUB_ASSIGN: case TK_MUL_ASSIGN:
+    case TK_DIV_ASSIGN: case TK_MOD_ASSIGN:
+    case TK_AND_ASSIGN: case TK_OR_ASSIGN: case TK_XOR_ASSIGN:
+    case TK_LSHIFT_ASSIGN: case TK_RSHIFT_ASSIGN:
+        return parse_assign(p, binop, left, right);
+    default:
+        return parse_operation(p, binop, left, right);
     }
 }
 
