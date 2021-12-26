@@ -3,7 +3,7 @@
 
 #include "Fold.h"
 
-static void fold_binary_arith(IrIns *ins) {
+static void fold_arith(IrIns *ins) {
     if (ins->l->op != IR_KI32 || ins->r->op != IR_KI32) {
         return;
     }
@@ -21,25 +21,9 @@ static void fold_binary_arith(IrIns *ins) {
     // If either of the KI32 arguments are now unused, DCE will eliminate them
 }
 
-static void fold_unary_arith(IrIns *ins) {
-    if (ins->l->op != IR_KI32) {
-        return;
-    }
-    int32_t v = 0;
-    switch (ins->op) {
-        case IR_NEG: v = -ins->l->ki32; break;
-        default: break; // Doesn't happen
-    }
-    // Fold arithmetic instructions in place (don't need to update their uses)
-    ins->op = IR_KI32;
-    ins->ki32 = v;
-    // If the KI32 argument is now unused, DCE will eliminate it
-}
-
 static void fold_ins(IrIns *ins) {
     switch (ins->op) {
-        case IR_ADD: case IR_SUB: case IR_MUL: case IR_DIV: fold_binary_arith(ins); break;
-        case IR_NEG: fold_unary_arith(ins); break;
+        case IR_ADD: case IR_SUB: case IR_MUL: case IR_DIV: fold_arith(ins); break;
         default: break; // Can't fold anything else
     }
 }

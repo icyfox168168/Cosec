@@ -10,4 +10,5 @@ add_executable(Cosec
         src/Parser.c src/Parser.h
         src/Assembler.c src/Assembler.h
         src/Encoder.c src/Encoder.h
-        src/Debug.c src/Debug.h src/opt/Fold.c src/opt/Fold.h)
+        src/Debug.c src/Debug.h
+        src/opt/Fold.c src/opt/Fold.h)

@@ -89,7 +89,6 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
     }
 
     AsmOperand l = discharge(a, ir_arith->l); // Left operand always a vreg
-
     AsmIns *arith = emit(a, op);
     arith->l = l;
     if (ir_arith->r->op == IR_KI32) {
@@ -107,12 +106,12 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
     ir_arith->vreg = arith->l.vreg;
 }
 
-static void emit_idiv(Assembler *a, IrIns *ir_div) {
+static void asm_div(Assembler *a, IrIns *ir_div) {
     AsmOperand l = discharge(a, ir_div->l); // Left operand always a vreg
-    AsmIns *mov = emit(a, X86_MOV); // Mov dividend into eax
-    mov->l.type = OP_REG;
-    mov->l.reg = REG_RAX;
-    mov->r = l;
+    AsmIns *mov1 = emit(a, X86_MOV); // Mov dividend into eax
+    mov1->l.type = OP_REG;
+    mov1->l.reg = REG_RAX;
+    mov1->r = l;
 
     emit(a, X86_CDQ); // Sign extend eax into edx
     AsmIns *div = emit(a, X86_IDIV); // Performs edx:eax / <operand>; quotient in eax, remainder in edx
@@ -128,26 +127,17 @@ static void emit_idiv(Assembler *a, IrIns *ir_div) {
         div->l.type = OP_VREG;
         div->l.vreg = ir_div->r->vreg;
     }
-}
 
-static void asm_div(Assembler *a, IrIns *ir_div) {
-    emit_idiv(a, ir_div);
     ir_div->vreg = a->vreg++;
-    AsmIns *mov = emit(a, X86_MOV); // Move the result out of eax and into a new vreg
-    mov->l.type = OP_VREG;
-    mov->l.vreg = ir_div->vreg;
-    mov->r.type = OP_REG;
-    mov->r.reg = REG_RAX;
-}
-
-static void asm_mod(Assembler *a, IrIns *ir_mod) {
-    emit_idiv(a, ir_mod);
-    ir_mod->vreg = a->vreg++;
-    AsmIns *mov = emit(a, X86_MOV); // Move the result out of edx and into a new vreg
-    mov->l.type = OP_VREG;
-    mov->l.vreg = ir_mod->vreg;
-    mov->r.type = OP_REG;
-    mov->r.reg = REG_RDX;
+    AsmIns *mov2 = emit(a, X86_MOV); // Move the result out of eax and into a new vreg
+    mov2->l.type = OP_VREG;
+    mov2->l.vreg = ir_div->vreg;
+    mov2->r.type = OP_REG;
+    if (ir_div->op == IR_DIV) {
+        mov2->r.reg = REG_RAX; // Division (quotient in rax)
+    } else {
+        mov2->r.reg = REG_RDX; // Modulo (remainder in rdx)
+    }
 }
 
 static void asm_ret0(Assembler *a) {
@@ -177,8 +167,7 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
         case IR_LOAD: break; // Loads don't always have to generate 'mov's; do as needed
         case IR_STORE: asm_store(a, ir_ins); break;
         case IR_ADD: case IR_SUB: case IR_MUL: asm_arith(a, ir_ins); break;
-        case IR_DIV: asm_div(a, ir_ins); break;
-        case IR_MOD: asm_mod(a, ir_ins); break;
+        case IR_DIV: case IR_MOD: asm_div(a, ir_ins); break;
         case IR_RET0: asm_ret0(a); break;
         case IR_RET1: asm_ret1(a, ir_ins); break;
         default: printf("unsupported IR instruction to assembler\n"); exit(1);
@@ -260,6 +249,7 @@ static AsmFn * asm_start(AsmFn *main) {
     entry->label = "_start";
     entry->head = NULL;
     start->entry = entry;
+    start->next = NULL;
 
     Assembler a;
     a.fn = start;

@@ -30,7 +30,6 @@ typedef struct {
     X(MUL, 2)      \
     X(DIV, 2)      \
     X(MOD, 2)      \
-    X(NEG, 1)      \
     X(RET1, 1)     \
     X(RET0, 0)
 

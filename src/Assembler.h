@@ -4,6 +4,14 @@
 
 #include "Parser.h"
 
+/* ASSEMBLER -- lowers the SSA IR into target-specific machine code
+ * instructions. Target-specific optimisations can then be made to the generated
+ * assembly code (e.g., peep-hole optimisations not possible on the SSA IR).
+ *
+ * Variables are still modelled by virtual registers, which are later lowered
+ * to physical registers by the register allocator.
+ */
+
 #define X86_REGS         \
     X(RAX, "rax", 0b000) \
     X(RCX, "rcx", 0b001) \
@@ -18,6 +26,7 @@ typedef enum {
 #define X(name, _, __) REG_ ## name,
     X86_REGS
 #undef X
+    REG_LAST,
 } Reg;
 
 #define X86_OPCODES          \
@@ -41,9 +50,9 @@ typedef enum {
 } AsmOp;
 
 typedef enum {
+    OP_IMM,
     OP_REG,  // Physical register (e.g., rax, etc.)
     OP_VREG, // Virtual register for the register allocator
-    OP_IMM,
     OP_MEM,
     OP_SYM,  // Symbol (e.g. for a call or jump)
 } AsmOperandType;

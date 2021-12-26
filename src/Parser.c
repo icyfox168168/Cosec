@@ -78,10 +78,6 @@ static int IS_RIGHT_ASSOC[TK_LAST] = {
     ['='] = 1, // Assignment is right associative
 };
 
-static IrOp UNOP_OPCODES[TK_LAST] = {
-    ['-'] = IR_NEG,
-};
-
 static IrOp BINOP_OPCODES[TK_LAST] = {
     ['+'] = IR_ADD,
     ['-'] = IR_SUB,
@@ -149,10 +145,18 @@ static IrIns * parse_unary(Parser *p) {
     if (UNOP_PREC[unop]) {
         next_tk(&p->l); // Skip the unary operator
         IrIns *operand = parse_subexpr(p, UNOP_PREC[unop]);
-        IrIns *operation = emit(p, UNOP_OPCODES[unop]);
-        operation->l = operand;
-        operation->type = operand->type;
-        return operation;
+        switch (unop) {
+        case '-': {
+            IrIns *zero = emit(p, IR_KI32);
+            zero->ki32 = 0;
+            IrIns *operation = emit(p, IR_SUB);
+            operation->l = zero;
+            operation->r = operand;
+            operation->type = operand->type;
+            return operation;
+        }
+        default: return NULL; // Doesn't happen
+        }
     } else {
         return parse_operand(p);
     }
