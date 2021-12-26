@@ -20,7 +20,8 @@
     X(RSP, "rsp", 0b100) \
     X(RBP, "rbp", 0b101) \
     X(RSI, "rsi", 0b110) \
-    X(RDI, "rdi", 0b111)
+    X(RDI, "rdi", 0b111) \
+    X(CL, "cl", 0b001)
 
 typedef enum {
 #define X(name, _, __) REG_ ## name,
@@ -36,6 +37,12 @@ typedef enum {
     X(MUL, "mul", 2)         \
     X(CDQ, "cdq", 0)         \
     X(IDIV, "idiv", 1)       \
+    X(AND, "and", 2)         \
+    X(OR, "or", 2)           \
+    X(XOR, "xor", 2)         \
+    X(SHL, "shl", 2)         \
+    X(SHR, "shr", 2)         \
+    X(SAR, "sar", 2)         \
     X(PUSH, "push", 1)       \
     X(POP, "pop", 1)         \
     X(CALL, "call", 1)       \

@@ -85,6 +85,9 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
         case IR_ADD: op = X86_ADD; break;
         case IR_SUB: op = X86_SUB; break;
         case IR_MUL: op = X86_MUL; break;
+        case IR_AND: op = X86_AND; break;
+        case IR_OR:  op = X86_OR; break;
+        case IR_XOR: op = X86_XOR; break;
         default: break; // Doesn't happen
     }
 
@@ -140,6 +143,36 @@ static void asm_div(Assembler *a, IrIns *ir_div) {
     }
 }
 
+static void asm_shift(Assembler *a, IrIns *ir_shift) {
+    AsmOperand sl = discharge(a, ir_shift->l); // Left operand always a vreg
+
+    AsmOperand sr; // Right operand either an immediate or cl
+    if (ir_shift->r->op == IR_KI32) { // Can shift by an immediate
+        sr.type = OP_IMM;
+        sr.imm = ir_shift->r->ki32;
+    } else { // Otherwise, discharge the shift count
+        AsmOperand r = discharge(a, ir_shift->r);
+        AsmIns *mov1 = emit(a, X86_MOV); // Mov shift count into rcx
+        mov1->l.type = OP_REG;
+        mov1->l.reg = REG_RCX;
+        mov1->r = r;
+        sr.type = OP_REG; // Shift by cl
+        sr.reg = REG_CL;
+    }
+
+    AsmOp op = X86_NOP;
+    switch (ir_shift->op) {
+        case IR_SHL: op = X86_SHL; break;
+        case IR_ASHR: op = X86_SAR; break;
+        case IR_LSHR: op = X86_SHR; break;
+        default: break; // Doesn't happen
+    }
+    AsmIns *shift = emit(a, op);
+    shift->l = sl;
+    shift->r = sr;
+    ir_shift->vreg = shift->l.vreg; // Result stored into left operand
+}
+
 static void asm_ret0(Assembler *a) {
     AsmIns *pop = emit(a, X86_POP); // Post-amble
     pop->l.type = OP_REG;
@@ -166,8 +199,11 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
         case IR_ALLOC: asm_alloc(a, ir_ins); break;
         case IR_LOAD: break; // Loads don't always have to generate 'mov's; do as needed
         case IR_STORE: asm_store(a, ir_ins); break;
-        case IR_ADD: case IR_SUB: case IR_MUL: asm_arith(a, ir_ins); break;
+        case IR_ADD: case IR_SUB: case IR_MUL:
+        case IR_AND: case IR_OR: case IR_XOR:
+            asm_arith(a, ir_ins); break;
         case IR_DIV: case IR_MOD: asm_div(a, ir_ins); break;
+        case IR_SHL: case IR_ASHR: case IR_LSHR: asm_shift(a, ir_ins); break;
         case IR_RET0: asm_ret0(a); break;
         case IR_RET1: asm_ret1(a, ir_ins); break;
         default: printf("unsupported IR instruction to assembler\n"); exit(1);
