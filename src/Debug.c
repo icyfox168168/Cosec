@@ -5,7 +5,11 @@
 #include "Debug.h"
 
 static void print_ins(IrIns *ins) {
-    printf("%.4d\t%s\t", ins->debug_idx, IR_OPCODE_NAMES[ins->op]);
+    if (ins->op == IR_NOP) { // Don't print NOPs
+        return;
+    }
+    printf("%.4d\t", ins->debug_idx);
+    printf("%s\t", IR_OPCODE_NAMES[ins->op]);
     if (strlen(IR_OPCODE_NAMES[ins->op]) < 8) {
         printf("\t"); // Some opcode names are less than the length of a tab
     }

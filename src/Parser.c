@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 #include "Parser.h"
 
@@ -52,8 +53,8 @@ typedef enum {
     PREC_NONE,
     PREC_COMMA,   // Comma operator
     PREC_ASSIGN,  // =, +=, -=, *=, /=, %=
-    PREC_LOG_OR,  // ||
-    PREC_LOG_AND, // &&
+    PREC_OR,      // ||
+    PREC_AND,     // &&
     PREC_BIT_OR,  // |
     PREC_BIT_XOR, // ^
     PREC_BIT_AND, // &
@@ -82,6 +83,7 @@ static Prec BINOP_PREC[TK_LAST] = {
     ['^'] = PREC_BIT_XOR, // Bitwise xor
     [TK_LSHIFT] = PREC_SHIFT, // Left shift
     [TK_RSHIFT] = PREC_SHIFT, // Right shift
+    ['='] = PREC_ASSIGN,
 };
 
 static int IS_RIGHT_ASSOC[TK_LAST] = {
@@ -186,12 +188,29 @@ static IrIns * parse_unary(Parser *p) {
     }
 }
 
-static IrIns * parse_binary(Parser *p, Token binop, IrIns *left, IrIns *right) {
+static IrIns * parse_operation(Parser *p, Token binop, IrIns *left, IrIns *right) {
     IrIns *operation = emit(p, BINOP_OPCODES[binop]);
     operation->l = left;
     operation->r = right;
     operation->type = left->type; // Should be the same as 'right'
     return operation;
+}
+
+static IrIns * parse_assign(Parser *p, IrIns *left, IrIns *right) {
+    assert(left->op == IR_LOAD);
+    IrIns *store = emit(p, IR_STORE);
+    store->l = left->l;
+    store->r = right;
+    store->type = left->type;
+    left->op = IR_NOP; // Delete the load instruction
+    return right; // Assignment evaluates to its right operand
+}
+
+static IrIns * parse_binary(Parser *p, Token binop, IrIns *left, IrIns *right) {
+    switch (binop) {
+        case '=': return parse_assign(p, left, right);
+        default:  return parse_operation(p, binop, left, right);
+    }
 }
 
 static IrIns * parse_subexpr(Parser *p, Prec min_prec) {
