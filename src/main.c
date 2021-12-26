@@ -65,12 +65,12 @@ int main(int argc, char *argv[]) {
         printf("---- IR\n");
         print_bb(ir_module->fns->entry);
 
-        AsmModule *asm_module = assemble(ir_module);
-        printf("\n---- Assembly\n");
-        encode_nasm(asm_module, stdout);
-
-        FILE *output = fopen("out.s", "w");
-        encode_nasm(asm_module, output);
+//        AsmModule *asm_module = assemble(ir_module);
+//        printf("\n---- Assembly\n");
+//        encode_nasm(asm_module, stdout);
+//
+//        FILE *output = fopen("out.s", "w");
+//        encode_nasm(asm_module, output);
     }
     return 0;
 }

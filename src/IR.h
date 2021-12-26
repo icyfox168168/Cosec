@@ -19,6 +19,8 @@ typedef struct {
     int ptrs; // Number of levels of pointer indirection
 } Type;
 
+// LSHR = logical right shift, fills with zeros (for unsigned operations, faster)
+// ASHR = arithmetic right shift, fills with sign bits (for signed operations)
 #define IR_OPCODES \
     X(KI32, 1)     \
     X(FARG, 1)     \
@@ -30,6 +32,12 @@ typedef struct {
     X(MUL, 2)      \
     X(DIV, 2)      \
     X(MOD, 2)      \
+    X(AND, 2)      \
+    X(OR, 2)       \
+    X(XOR, 2)      \
+    X(SHL, 2)      \
+    X(LSHR, 2)     \
+    X(ASHR, 2)     \
     X(RET1, 1)     \
     X(RET0, 0)
 

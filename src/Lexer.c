@@ -50,6 +50,19 @@ static void lex_int(Lexer *l) {
     l->num = num;
 }
 
+static void lex_symbol(Lexer *l) {
+    switch (*l->c) { // Check for a multi-character symbol first, then default to a single character one
+#define X(_)
+#define XX(name, ch1, ch2) case ch1: if (*(l->c + 1) == (ch2)) { l->tk = TK_ ## name; l->c += 2; break; }
+#define K(_, __)
+        TOKENS
+#undef K
+#undef XX
+#undef X
+        default: l->tk = (int) *l->c; l->c++;
+    }
+}
+
 void next_tk(Lexer *l) {
     lex_whitespace(l);
     if (isalpha(*l->c) || *l->c == '_') {
@@ -57,8 +70,7 @@ void next_tk(Lexer *l) {
     } else if (isnumber(*l->c)) {
         lex_int(l);
     } else {
-        l->tk = (int) *l->c; // Single character symbol
-        l->c++;
+        lex_symbol(l);
     }
 }
 

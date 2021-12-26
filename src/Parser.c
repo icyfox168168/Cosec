@@ -52,10 +52,14 @@ typedef enum {
     PREC_NONE,
     PREC_COMMA,   // Comma operator
     PREC_ASSIGN,  // =, +=, -=, *=, /=, %=
-    PREC_OR,      // ||
-    PREC_AND,     // &&
+    PREC_LOG_OR,  // ||
+    PREC_LOG_AND, // &&
+    PREC_BIT_OR,  // |
+    PREC_BIT_XOR, // ^
+    PREC_BIT_AND, // &
     PREC_EQ,      // ==, !=
     PREC_REL,     // <, >, <=, >=
+    PREC_SHIFT,   // >>, <<
     PREC_ADD,     // +, -
     PREC_MUL,     // *, /, %
     PREC_UNARY,   // ++, -- (prefix), -, + (unary), !, ~, type casts, *, &, sizeof
@@ -64,6 +68,7 @@ typedef enum {
 
 static Prec UNOP_PREC[TK_LAST] = {
     ['-'] = PREC_UNARY, // Negation
+    ['~'] = PREC_UNARY, // Bitwise not
 };
 
 static Prec BINOP_PREC[TK_LAST] = {
@@ -72,6 +77,11 @@ static Prec BINOP_PREC[TK_LAST] = {
     ['*'] = PREC_MUL, // Multiplication
     ['/'] = PREC_MUL, // Division
     ['%'] = PREC_MUL, // Modulo
+    ['&'] = PREC_BIT_AND, // Bitwise and
+    ['|'] = PREC_BIT_OR,  // Bitwise or
+    ['^'] = PREC_BIT_XOR, // Bitwise xor
+    [TK_LSHIFT] = PREC_SHIFT, // Left shift
+    [TK_RSHIFT] = PREC_SHIFT, // Right shift
 };
 
 static int IS_RIGHT_ASSOC[TK_LAST] = {
@@ -84,6 +94,11 @@ static IrOp BINOP_OPCODES[TK_LAST] = {
     ['*'] = IR_MUL,
     ['/'] = IR_DIV,
     ['%'] = IR_MOD,
+    ['&'] = IR_AND,
+    ['|'] = IR_OR,
+    ['^'] = IR_XOR,
+    [TK_LSHIFT] = IR_SHL,
+    [TK_RSHIFT] = IR_ASHR,
 };
 
 static IrIns * parse_const_int(Parser *p) {
@@ -146,12 +161,21 @@ static IrIns * parse_unary(Parser *p) {
         next_tk(&p->l); // Skip the unary operator
         IrIns *operand = parse_subexpr(p, UNOP_PREC[unop]);
         switch (unop) {
-        case '-': {
+        case '-': { // -a is equivalent to '0 - a'
             IrIns *zero = emit(p, IR_KI32);
             zero->ki32 = 0;
             IrIns *operation = emit(p, IR_SUB);
             operation->l = zero;
             operation->r = operand;
+            operation->type = operand->type;
+            return operation;
+        }
+        case '~': { // ~a is equivalent to 'a ^ -1'
+            IrIns *neg1 = emit(p, IR_KI32);
+            neg1->ki32 = -1;
+            IrIns *operation = emit(p, IR_XOR);
+            operation->l = operand;
+            operation->r = neg1;
             operation->type = operand->type;
             return operation;
         }
