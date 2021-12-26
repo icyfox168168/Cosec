@@ -98,10 +98,11 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
         arith->r.type = OP_IMM;
         arith->r.imm = ir_arith->r->ki32;
     } else if (ir_arith->r->op == IR_LOAD) {
+        IrIns *ir_load = ir_arith->r;
         arith->r.type = OP_MEM;
         arith->r.base = REG_RBP;
         arith->r.scale = 1;
-        arith->r.index = -ir_arith->r->stack_slot;
+        arith->r.index = -ir_load->l->stack_slot;
     } else {
         arith->r.type = OP_VREG;
         arith->r.vreg = ir_arith->r->vreg;
