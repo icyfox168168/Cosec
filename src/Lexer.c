@@ -51,16 +51,17 @@ static void lex_int(Lexer *l) {
 }
 
 static void lex_symbol(Lexer *l) {
-    switch (*l->c) { // Check for a multi-character symbol first, then default to a single character one
 #define X(_)
-#define XX(name, ch1, ch2) case ch1: if (*(l->c + 1) == (ch2)) { l->tk = TK_ ## name; l->c += 2; break; }
+#define Y(name, ch1, ch2) else if (*l->c == (ch1) && *(l->c + 1) == (ch2)) { l->tk = TK_ ## name; l->c += 2; }
+#define Z(name, ch1, ch2, ch3) else if (*l->c == (ch1) && *(l->c + 1) == (ch2) && *(l->c + 2) == (ch3)) { l->tk = TK_ ## name; l->c += 2; }
 #define K(_, __)
-        TOKENS
+    if (0) {}
+    TOKENS
 #undef K
-#undef XX
 #undef X
-        default: l->tk = (int) *l->c; l->c++;
-    }
+#undef Y
+#undef Z
+    else { l->tk = (int) *l->c; l->c++; }
 }
 
 void next_tk(Lexer *l) {
