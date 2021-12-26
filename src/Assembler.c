@@ -51,6 +51,15 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
     return result;
 }
 
+static void asm_farg(Assembler *a, IrIns *ir_farg) {
+    AsmIns *mov = emit(a, X86_MOV);
+    ir_farg->vreg = a->vreg++;
+    mov->l.type = OP_VREG;
+    mov->l.vreg = ir_farg->vreg;
+    mov->r.type = OP_REG;
+    mov->r.reg = FN_ARGS_REGS[ir_farg->narg]; // Pull the argument out of the reg specified by the ABI
+}
+
 static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
     a->stack_size += size_of(ir_alloc->type);
     ir_alloc->stack_slot = a->stack_size;
@@ -197,8 +206,9 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
 static void asm_ins(Assembler *a, IrIns *ir_ins) {
     switch (ir_ins->op) {
         case IR_KI32: break; // Don't do anything for constants
+        case IR_FARG: asm_farg(a, ir_ins); break;
         case IR_ALLOC: asm_alloc(a, ir_ins); break;
-        case IR_LOAD: break; // Loads don't always have to generate 'mov's; do as needed
+        case IR_LOAD: break; // Loads don't always have to generate 'mov's; do it as needed with 'discharge'
         case IR_STORE: asm_store(a, ir_ins); break;
         case IR_ADD: case IR_SUB: case IR_MUL:
         case IR_AND: case IR_OR: case IR_XOR:
@@ -292,16 +302,25 @@ static AsmFn * asm_start(AsmFn *main) {
     a.fn = start;
     a.ins = &entry->head;
 
-    // _start:
-    //     call main
-    //     mov rdi, rax
-    //     mov rax, 0x2000001
-    //     syscall
     AsmIns *ins;
-    ins = emit(&a, X86_CALL);
-    ins->l.type = OP_SYM;
-    ins->l.sym = main->entry;
-    ins = emit(&a, X86_MOV);
+    ins = emit(&a, X86_XOR); // Zero rbp
+    ins->l.type = OP_REG; ins->l.reg = REG_EBP;
+    ins->r.type = OP_REG; ins->r.reg = REG_EBP;
+    ins = emit(&a, X86_MOV); // Take argc off the stack
+    ins->l.type = OP_REG; ins->l.reg = REG_EDI;
+    ins->r.type = OP_MEM; ins->r.base = REG_RSP; ins->r.scale = 1; ins->r.index = 0;
+    ins = emit(&a, X86_LEA); // Take argc off the stack
+    ins->l.type = OP_REG; ins->l.reg = REG_RSI;
+    ins->r.type = OP_MEM; ins->r.base = REG_RSP; ins->r.scale = 1; ins->r.index = 8;
+    ins = emit(&a, X86_LEA); // Take envp off the stack
+    ins->l.type = OP_REG; ins->l.reg = REG_RDX;
+    ins->r.type = OP_MEM; ins->r.base = REG_RSP; ins->r.scale = 1; ins->r.index = 16;
+    ins = emit(&a, X86_XOR); // Zero eax (convention per ABI)
+    ins->l.type = OP_REG; ins->l.reg = REG_EAX;
+    ins->r.type = OP_REG; ins->r.reg = REG_EAX;
+    ins = emit(&a, X86_CALL); // Call main
+    ins->l.type = OP_SYM; ins->l.sym = main->entry;
+    ins = emit(&a, X86_MOV); // Exit syscall
     ins->l.type = OP_REG; ins->l.reg = REG_RDI;
     ins->r.type = OP_REG; ins->r.reg = REG_RAX;
     ins = emit(&a, X86_MOV);

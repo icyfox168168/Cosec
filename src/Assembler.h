@@ -12,26 +12,36 @@
  * to physical registers by the register allocator.
  */
 
-#define X86_REGS         \
-    X(RAX, "rax", 0b000) \
-    X(RCX, "rcx", 0b001) \
-    X(RDX, "rdx", 0b010) \
-    X(RBX, "rbx", 0b011) \
-    X(RSP, "rsp", 0b100) \
-    X(RBP, "rbp", 0b101) \
-    X(RSI, "rsi", 0b110) \
-    X(RDI, "rdi", 0b111) \
-    X(CL, "cl", 0b001)
+#define X86_REGS  \
+    X(RAX, "rax") \
+    X(RCX, "rcx") \
+    X(RDX, "rdx") \
+    X(RBX, "rbx") \
+    X(RSP, "rsp") \
+    X(RBP, "rbp") \
+    X(RSI, "rsi") \
+    X(RDI, "rdi") \
+    X(R8, "r8")   \
+    X(R9, "r9")   \
+    X(EAX, "eax") \
+    X(ECX, "ecx") \
+    X(EDX, "edx") \
+    X(EBX, "ebx") \
+    X(ESP, "esp") \
+    X(EBP, "ebO") \
+    X(ESI, "esi") \
+    X(EDI, "edi") \
+    X(CL, "cl")
 
 typedef enum {
-#define X(name, _, __) REG_ ## name,
+#define X(name, _) REG_ ## name,
     X86_REGS
 #undef X
-    REG_LAST,
 } Reg;
 
 #define X86_OPCODES          \
     X(MOV, "mov", 2)         \
+    X(LEA, "lea", 2)         \
     X(ADD, "add", 2)         \
     X(SUB, "sub", 2)         \
     X(MUL, "mul", 2)         \
@@ -55,6 +65,22 @@ typedef enum {
     X86_OPCODES
 #undef X
 } AsmOp;
+
+// Tells us which register each function argument is in, according to the
+// System V ABI. The array is indexed by function argument number, where 1 is
+// the left-most argument.
+//
+// 'NUM_FN_ARGS_REGS' tells us how many function arguments are passed via
+// registers. After this many arguments, we need to start pulling off the stack.
+#define NUM_FN_ARGS_REGS 6
+static Reg FN_ARGS_REGS[] = {
+    REG_RDI,
+    REG_RSI,
+    REG_RDX,
+    REG_RCX,
+    REG_R8,
+    REG_R9,
+};
 
 typedef enum {
     OP_IMM,

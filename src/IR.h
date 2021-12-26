@@ -52,6 +52,7 @@ typedef struct ir_ins {
     IrOp op;
     Type type; // All instructions that return a value (i.e. everything but control flow) record its type here
     union {
+        int narg; // Function arguments
         int32_t ki32; // Constants
         struct { struct ir_ins *l, *r; }; // Binary instructions
     };

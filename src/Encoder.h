@@ -16,7 +16,7 @@
  */
 
 static char *REG_NAMES[] = {
-#define X(_, str, __) str,
+#define X(_, str) str,
     X86_REGS
 #undef X
 };

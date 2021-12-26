@@ -287,7 +287,7 @@ static void parse_block(Parser *p) {
 
 // ---- Top Level Module
 
-static void parse_fn_arg(Parser *p) {
+static void parse_fn_arg(Parser *p, int narg) {
     Type arg_type = parse_decl_spec(p); // Type
     expect_tk(&p->l, TK_IDENT); // Name
     char *name = malloc((p->l.len + 1) * sizeof(char));
@@ -296,14 +296,16 @@ static void parse_fn_arg(Parser *p) {
     next_tk(&p->l);
 
     IrIns *farg = emit(p, IR_FARG); // Define the argument
+    farg->narg = narg;
     farg->type = arg_type;
     Local local = {.name = name, .type = arg_type, .alloc = NULL}; // Create a local
     def_local(p, local);
 }
 
 static void parse_fn_args(Parser *p) {
+    int idx = 0;
     while (p->l.tk != '\0' && p->l.tk != ')') {
-        parse_fn_arg(p);
+        parse_fn_arg(p, idx++);
         if (p->l.tk == ',') { // Check for another argument
             next_tk(&p->l);
             continue;
@@ -311,10 +313,11 @@ static void parse_fn_args(Parser *p) {
             break;
         }
     }
-    int idx = 0;
+    idx = 0;
     for (IrIns *farg = p->fn->entry->head; farg && farg->op == IR_FARG; farg = farg->next) {
         IrIns *alloc = emit(p, IR_ALLOC); // Create IR_ALLOC for each argument
         alloc->type = farg->type;
+        alloc->type.ptrs += 1; // Alloc creates stack space that points to the type
         IrIns *store = emit(p, IR_STORE);
         store->l = alloc;
         store->r = farg;
