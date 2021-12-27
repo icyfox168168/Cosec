@@ -4,7 +4,7 @@
 
 #include <stdint.h>
 
-#define UNREACHABLE() while (1) {}
+#define UNREACHABLE() exit(1);
 
 #define IR_PRIMS \
     X(void)      \
@@ -40,6 +40,16 @@ typedef struct {
     X(SHL, 2)      \
     X(LSHR, 2)     \
     X(ASHR, 2)     \
+    X(EQ, 2)       \
+    X(NEQ, 2)      \
+    X(SLT, 2)      \
+    X(SLE, 2)      \
+    X(SGT, 2)      \
+    X(SGE, 2)      \
+    X(ULT, 2)      \
+    X(ULE, 2)      \
+    X(UGT, 2)      \
+    X(UGE, 2)      \
     X(RET1, 1)     \
     X(RET0, 0)
 
@@ -47,6 +57,7 @@ typedef enum {
 #define X(name, nargs) IR_ ## name,
     IR_OPCODES
 #undef X
+    IR_LAST,
 } IrOp;
 
 typedef struct ir_ins {

@@ -39,6 +39,14 @@ typedef enum {
 #undef X
 } Reg;
 
+typedef enum {
+    REG_ALL, // All 64 bits (e.g., rax)
+    REG_32,  // Lowest 32 bits (e.g., eax)
+    REG_16,  // Lowest 16 bits (e.g., ax)
+    REG_8H,  // Highest 8 bits of the lowest 16 bits (e.g., ah)
+    REG_8L,  // Lowest 8 bits (e.g., al)
+} RegSubsection;
+
 #define X86_OPCODES          \
     X(MOV, "mov", 2)         \
     X(LEA, "lea", 2)         \
@@ -53,12 +61,22 @@ typedef enum {
     X(SHL, "shl", 2)         \
     X(SHR, "shr", 2)         \
     X(SAR, "sar", 2)         \
+    X(CMP, "cmp", 2)         \
+    X(SETE, "sete", 1)       \
+    X(SETNE, "setne", 1)     \
+    X(SETL, "setl", 1)       \
+    X(SETLE, "setle", 1)     \
+    X(SETG, "setg", 1)       \
+    X(SETGE, "setge", 1)     \
+    X(SETB, "setb", 1)       \
+    X(SETBE, "setbe", 1)     \
+    X(SETA, "seta", 1)       \
+    X(SETAE, "setae", 1)     \
     X(PUSH, "push", 1)       \
     X(POP, "pop", 1)         \
     X(CALL, "call", 1)       \
     X(RET, "ret", 0)         \
-    X(SYSCALL, "syscall", 0) \
-    X(NOP, "nop", 0)
+    X(SYSCALL, "syscall", 0)
 
 typedef enum {
 #define X(name, _, __) X86_ ## name,
@@ -82,6 +100,20 @@ static Reg FN_ARGS_REGS[] = {
     REG_R9,
 };
 
+// Converts IR instruction operands into SETxx x86 opcodes.
+static AsmOp IROP_TO_SETXX[IR_LAST] = {
+    [IR_EQ] = X86_SETE,
+    [IR_NEQ] = X86_SETNE,
+    [IR_SLT] = X86_SETL,
+    [IR_SLE] = X86_SETLE,
+    [IR_SGT] = X86_SETG,
+    [IR_SGE] = X86_SETGE,
+    [IR_ULT] = X86_SETB,
+    [IR_ULE] = X86_SETBE,
+    [IR_UGT] = X86_SETA,
+    [IR_UGE] = X86_SETAE,
+};
+
 typedef enum {
     OP_IMM,
     OP_REG,  // Physical register (e.g., rax, etc.)
@@ -93,10 +125,10 @@ typedef enum {
 typedef struct {
     AsmOperandType type;
     union {
-        Reg reg;
-        int vreg;
         uint64_t imm;
-        struct { Reg base; int scale; int index; }; // For OP_MEM
+        Reg reg;
+        struct { int vreg, subsection; }; // For OP_VREG
+        struct { Reg base; int scale, index; }; // For OP_MEM
         struct asm_bb *sym;
     };
 } AsmOperand;

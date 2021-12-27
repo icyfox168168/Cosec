@@ -4,7 +4,16 @@
 static void encode_operand(AsmOperand op, FILE *out) {
     switch (op.type) {
     case OP_REG:  fprintf(out, "%s", REG_NAMES[op.reg]); break;
-    case OP_VREG: fprintf(out, "%%%d", op.vreg); break;
+    case OP_VREG:
+        fprintf(out, "%%%d", op.vreg);
+        switch (op.subsection) {
+            case REG_32: fprintf(out, "(32)"); break;
+            case REG_16: fprintf(out, "(16)"); break;
+            case REG_8H: fprintf(out, "(8h)"); break;
+            case REG_8L: fprintf(out, "(8l)"); break;
+            default: break; // Don't print anything for REG_ALL
+        }
+        break;
     case OP_MEM:
         fprintf(out, "[%s", REG_NAMES[op.base]);
         if (op.scale > 1) {

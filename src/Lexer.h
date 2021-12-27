@@ -8,6 +8,10 @@
 #define TOKENS                      \
     X(IDENT)                        \
     X(NUM)                          \
+    Y(EQ, '=', '=')                 \
+    Y(NEQ, '!', '=')                \
+    Y(LE, '<', '=')                 \
+    Y(GE, '>', '=')                 \
     Y(LSHIFT, '<', '<')             \
     Y(RSHIFT, '>', '>')             \
     Y(ADD_ASSIGN, '+', '=')         \

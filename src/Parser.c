@@ -73,17 +73,23 @@ static Prec UNOP_PREC[TK_LAST] = {
 };
 
 static Prec BINOP_PREC[TK_LAST] = {
-    ['+'] = PREC_ADD, // Addition
-    ['-'] = PREC_ADD, // Subtraction
     ['*'] = PREC_MUL, // Multiplication
     ['/'] = PREC_MUL, // Division
     ['%'] = PREC_MUL, // Modulo
-    ['&'] = PREC_BIT_AND, // Bitwise and
-    ['|'] = PREC_BIT_OR,  // Bitwise or
-    ['^'] = PREC_BIT_XOR, // Bitwise xor
+    ['+'] = PREC_ADD, // Addition
+    ['-'] = PREC_ADD, // Subtraction
     [TK_LSHIFT] = PREC_SHIFT, // Left shift
     [TK_RSHIFT] = PREC_SHIFT, // Right shift
-    ['='] = PREC_ASSIGN, // Assignments
+    ['<'] = PREC_REL,     // Less than
+    [TK_LE] = PREC_REL,   // Less than or equal
+    ['>'] = PREC_REL,     // Greater than
+    [TK_GE] = PREC_REL,   // Greater than or equal
+    [TK_EQ] = PREC_EQ,    // Equal
+    [TK_NEQ] = PREC_EQ,   // Not equal
+    ['&'] = PREC_BIT_AND, // Bitwise and
+    ['^'] = PREC_BIT_XOR, // Bitwise xor
+    ['|'] = PREC_BIT_OR,  // Bitwise or
+    ['='] = PREC_ASSIGN,  // Assignments
     [TK_ADD_ASSIGN] = PREC_ASSIGN,
     [TK_SUB_ASSIGN] = PREC_ASSIGN,
     [TK_MUL_ASSIGN] = PREC_ASSIGN,
@@ -98,6 +104,16 @@ static Prec BINOP_PREC[TK_LAST] = {
 
 static int IS_RIGHT_ASSOC[TK_LAST] = {
     ['='] = 1, // Assignment is right associative
+    [TK_ADD_ASSIGN] = 1,
+    [TK_SUB_ASSIGN] = 1,
+    [TK_MUL_ASSIGN] = 1,
+    [TK_DIV_ASSIGN] = 1,
+    [TK_MOD_ASSIGN] = 1,
+    [TK_AND_ASSIGN] = 1,
+    [TK_OR_ASSIGN] = 1,
+    [TK_XOR_ASSIGN] = 1,
+    [TK_LSHIFT_ASSIGN] = 1,
+    [TK_RSHIFT_ASSIGN] = 1,
 };
 
 static IrOp BINOP_OPCODES[TK_LAST] = {
@@ -109,6 +125,12 @@ static IrOp BINOP_OPCODES[TK_LAST] = {
     ['&'] = IR_AND,
     ['|'] = IR_OR,
     ['^'] = IR_XOR,
+    [TK_EQ] = IR_EQ,
+    [TK_NEQ] = IR_NEQ,
+    ['<'] = IR_SLT,
+    [TK_LE] = IR_SLE,
+    ['>'] = IR_SGT,
+    [TK_GE] = IR_SGE,
     [TK_LSHIFT] = IR_SHL,
     [TK_RSHIFT] = IR_ASHR,
     [TK_ADD_ASSIGN] = IR_ADD,
@@ -272,10 +294,8 @@ static Expr parse_assign(Parser *p, Token binop, Expr left, Expr right) {
 
 static Expr parse_binary(Parser *p, Token binop, Expr left, Expr right) {
     switch (binop) {
-    case '=': case TK_ADD_ASSIGN: case TK_SUB_ASSIGN: case TK_MUL_ASSIGN:
-    case TK_DIV_ASSIGN: case TK_MOD_ASSIGN:
-    case TK_AND_ASSIGN: case TK_OR_ASSIGN: case TK_XOR_ASSIGN:
-    case TK_LSHIFT_ASSIGN: case TK_RSHIFT_ASSIGN:
+    case '=': case TK_ADD_ASSIGN: case TK_SUB_ASSIGN: case TK_MUL_ASSIGN: case TK_DIV_ASSIGN: case TK_MOD_ASSIGN:
+    case TK_AND_ASSIGN: case TK_OR_ASSIGN: case TK_XOR_ASSIGN: case TK_LSHIFT_ASSIGN: case TK_RSHIFT_ASSIGN:
         return parse_assign(p, binop, left, right);
     default:
         return parse_operation(p, binop, left, right);

@@ -4,9 +4,17 @@
 
 #include "Debug.h"
 
+static void print_type(Type t) {
+    printf("%s", IR_PRIM_NAMES[t.prim]);
+    for (int i = 0; i < t.ptrs; i++) {
+        printf("*");
+    }
+}
+
 static void print_ins(IrIns *ins) {
     printf("%.4d\t", ins->debug_idx);
-    printf("%s\t", IR_OPCODE_NAMES[ins->op]);
+    print_type(ins->type);
+    printf("\t%s\t", IR_OPCODE_NAMES[ins->op]);
     if (strlen(IR_OPCODE_NAMES[ins->op]) < 8) {
         printf("\t"); // Some opcode names are less than the length of a tab
     }
