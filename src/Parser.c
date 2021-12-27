@@ -123,18 +123,49 @@ static IrOp BINOP_OPCODES[TK_LAST] = {
     [TK_RSHIFT_ASSIGN] = IR_ASHR,
 };
 
-static IrIns * parse_const_int(Parser *p) {
-    expect_tk(&p->l, TK_NUM);
-    long value = p->l.num;
-    next_tk(&p->l);
-    IrIns *expr = emit(p, IR_KI32);
-    expr->ki32 = (int32_t) value;
-    expr->type.prim = T_i32;
-    expr->type.ptrs = 0;
+typedef enum {
+    EXPR_INS,   // Result of an operation
+    EXPR_LOCAL, // Local variable that's yet to be loaded
+} ExprType;
+
+typedef struct {
+    ExprType type;
+    union {
+        IrIns *ins; // For EXPR_INS
+        Local *local; // For EXPR_LOCAL; refers to the IR_ALLOC for the local
+    };
+} Expr;
+
+// Converts all expressions into EXPR_INS:
+// * For EXPR_LOCAL: emits an IR_LOAD instruction
+static Expr discharge_expr(Parser *p,  Expr expr) {
+    if (expr.type == EXPR_LOCAL) {
+        IrIns *load = emit(p, IR_LOAD);
+        load->l = expr.local->alloc;
+        load->type = expr.local->type;
+        Expr result;
+        result.type = EXPR_INS;
+        result.ins = load;
+        return result;
+    }
     return expr;
 }
 
-static IrIns * parse_local(Parser *p) {
+static Expr parse_const_int(Parser *p) {
+    expect_tk(&p->l, TK_NUM);
+    long value = p->l.num;
+    next_tk(&p->l);
+    IrIns *k = emit(p, IR_KI32);
+    k->ki32 = (int32_t) value;
+    k->type.prim = T_i32;
+    k->type.ptrs = 0;
+    Expr result;
+    result.type = EXPR_INS;
+    result.ins = k;
+    return result;
+}
+
+static Expr parse_local(Parser *p) {
     expect_tk(&p->l, TK_IDENT);
     char *name = p->l.ident;
     int len = p->l.len;
@@ -150,25 +181,24 @@ static IrIns * parse_local(Parser *p) {
         exit(1);
     }
     next_tk(&p->l);
-    IrIns *load = emit(p, IR_LOAD);
-    load->l = local->alloc;
-    load->type = local->alloc->type;
-    load->type.ptrs -= 1; // Loading DEREFERENCES a pointer
-    return load;
+    Expr result;
+    result.type = EXPR_LOCAL;
+    result.local = local;
+    return result;
 }
 
-static IrIns * parse_subexpr(Parser *p, Prec min_prec); // Forward declaration
+static Expr parse_subexpr(Parser *p, Prec min_prec); // Forward declaration
 
-static IrIns * parse_braced_subexpr(Parser *p) {
+static Expr parse_braced_subexpr(Parser *p) {
     expect_tk(&p->l, '(');
     next_tk(&p->l);
-    IrIns *expr = parse_subexpr(p, PREC_NONE);
+    Expr expr = parse_subexpr(p, PREC_NONE);
     expect_tk(&p->l, ')');
     next_tk(&p->l);
     return expr;
 }
 
-static IrIns * parse_operand(Parser *p) {
+static Expr parse_operand(Parser *p) {
     switch (p->l.tk) {
         case TK_NUM:   return parse_const_int(p);
         case TK_IDENT: return parse_local(p);
@@ -177,61 +207,70 @@ static IrIns * parse_operand(Parser *p) {
     }
 }
 
-static IrIns * parse_unary(Parser *p) {
+static Expr parse_unary(Parser *p) {
     Token unop = p->l.tk;
     if (UNOP_PREC[unop]) {
         next_tk(&p->l); // Skip the unary operator
-        IrIns *operand = parse_subexpr(p, UNOP_PREC[unop]);
+        Expr operand = parse_subexpr(p, UNOP_PREC[unop]);
+        operand = discharge_expr(p, operand);
+        IrIns *operation;
         switch (unop) {
         case '-': { // -a is equivalent to '0 - a'
             IrIns *zero = emit(p, IR_KI32);
             zero->ki32 = 0;
-            IrIns *operation = emit(p, IR_SUB);
+            operation = emit(p, IR_SUB);
             operation->l = zero;
-            operation->r = operand;
-            operation->type = operand->type;
-            return operation;
+            operation->r = operand.ins;
+            operation->type = operand.ins->type;
+            break;
         }
         case '~': { // ~a is equivalent to 'a ^ -1'
             IrIns *neg1 = emit(p, IR_KI32);
             neg1->ki32 = -1;
-            IrIns *operation = emit(p, IR_XOR);
-            operation->l = operand;
+            operation = emit(p, IR_XOR);
+            operation->l = operand.ins;
             operation->r = neg1;
-            operation->type = operand->type;
-            return operation;
+            operation->type = operand.ins->type;
+            break;
         }
-        default: return NULL; // Doesn't happen
+        default: UNREACHABLE();
         }
+        Expr result;
+        result.type = EXPR_INS;
+        result.ins = operation;
+        return result;
     } else {
         return parse_operand(p);
     }
 }
 
-static IrIns * parse_operation(Parser *p, Token binop, IrIns *left, IrIns *right) {
+static Expr parse_operation(Parser *p, Token binop, Expr left, Expr right) {
+    left = discharge_expr(p, left);
+    right = discharge_expr(p, right);
     IrIns *operation = emit(p, BINOP_OPCODES[binop]);
-    operation->l = left;
-    operation->r = right;
-    operation->type = left->type; // Should be the same as 'right'
-    return operation;
+    operation->l = left.ins;
+    operation->r = right.ins;
+    operation->type = left.ins->type; // Should be the same as 'right'
+    Expr result;
+    result.type = EXPR_INS;
+    result.ins = operation;
+    return result;
 }
 
-static IrIns * parse_assign(Parser *p, Token binop, IrIns *left, IrIns *right) {
+static Expr parse_assign(Parser *p, Token binop, Expr left, Expr right) {
     if (binop != '=') {
         right = parse_operation(p, binop, left, right);
     }
-    assert(left->op == IR_LOAD);
+    assert(left.type == EXPR_LOCAL);
+    right = discharge_expr(p, right);
     IrIns *store = emit(p, IR_STORE);
-    store->l = left->l;
-    store->r = right;
-    store->type = left->type;
-    if (binop == '=') {
-        left->op = IR_NOP; // Delete the load instruction
-    }
+    store->l = left.local->alloc;
+    store->r = right.ins;
+    store->type = left.local->type;
     return right; // Assignment evaluates to its right operand
 }
 
-static IrIns * parse_binary(Parser *p, Token binop, IrIns *left, IrIns *right) {
+static Expr parse_binary(Parser *p, Token binop, Expr left, Expr right) {
     switch (binop) {
     case '=': case TK_ADD_ASSIGN: case TK_SUB_ASSIGN: case TK_MUL_ASSIGN:
     case TK_DIV_ASSIGN: case TK_MOD_ASSIGN:
@@ -243,19 +282,21 @@ static IrIns * parse_binary(Parser *p, Token binop, IrIns *left, IrIns *right) {
     }
 }
 
-static IrIns * parse_subexpr(Parser *p, Prec min_prec) {
-    IrIns *left = parse_unary(p);
+static Expr parse_subexpr(Parser *p, Prec min_prec) {
+    Expr left = parse_unary(p);
     while (BINOP_PREC[p->l.tk] > min_prec) {
         Token binop = p->l.tk;
         next_tk(&p->l); // Skip the binary operator
-        IrIns *right = parse_subexpr(p, BINOP_PREC[binop] - IS_RIGHT_ASSOC[binop]);
+        Expr right = parse_subexpr(p, BINOP_PREC[binop] - IS_RIGHT_ASSOC[binop]);
         left = parse_binary(p, binop, left, right);
     }
     return left;
 }
 
 static IrIns * parse_expr(Parser *p) {
-    return parse_subexpr(p, PREC_NONE);
+    Expr result = parse_subexpr(p, PREC_NONE);
+    result = discharge_expr(p, result);
+    return result.ins;
 }
 
 

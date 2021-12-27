@@ -5,9 +5,6 @@
 #include "Debug.h"
 
 static void print_ins(IrIns *ins) {
-    if (ins->op == IR_NOP) { // Don't print NOPs
-        return;
-    }
     printf("%.4d\t", ins->debug_idx);
     printf("%s\t", IR_OPCODE_NAMES[ins->op]);
     if (strlen(IR_OPCODE_NAMES[ins->op]) < 8) {
