@@ -23,6 +23,6 @@ static int IR_OPCODE_NARGS[] = {
 #undef X
 };
 
-void print_bb(BB *bb);
+void print_fn(FnDef *fn);
 
 #endif

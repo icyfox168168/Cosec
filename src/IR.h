@@ -70,7 +70,7 @@ typedef struct ir_ins {
         int narg; // Function arguments
         int32_t ki32; // Constants
         struct { struct ir_ins *l, *r; }; // Binary instructions
-        struct bb *bb; // Unconditional branch
+        struct bb *br; // Unconditional branch
         struct { struct ir_ins *cond; struct bb *true, *false; }; // Conditional branch
     };
 

@@ -25,6 +25,7 @@
     Z(LSHIFT_ASSIGN, '<', '<', '=') \
     Z(RSHIFT_ASSIGN, '>', '>', '=') \
     K(INT, "int")                   \
+    K(IF, "if")                     \
     K(RETURN, "return")
 #define FIRST_KEYWORD TK_INT
 

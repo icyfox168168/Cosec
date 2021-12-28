@@ -19,12 +19,25 @@ typedef struct {
     int num_locals, max_locals;
 } Parser;
 
-static IrIns * emit(Parser *p, IrOp op) {
+static BB * new_bb() {
+    BB *bb = malloc(sizeof(BB));
+    bb->label = -1;
+    bb->head = NULL;
+    bb->mark = 0;
+    return bb;
+}
+
+static IrIns * new_ins(IrOp op) {
     IrIns *ins = malloc(sizeof(IrIns));
     ins->op = op;
     ins->next = NULL;
     ins->type.prim = T_void;
     ins->type.ptrs = 0;
+    return ins;
+}
+
+static IrIns * emit(Parser *p, IrOp op) {
+    IrIns *ins = new_ins(op);
     *p->ins = ins;
     p->ins = &ins->next;
     return ins;
@@ -172,6 +185,30 @@ static Expr discharge_expr(Parser *p,  Expr expr) {
     return expr;
 }
 
+// Converts an expression into a condition (e.g., for if or while statements)
+static Expr to_cond(Parser *p, Expr expr) {
+    expr = discharge_expr(p, expr);
+    IrOp op = expr.ins->op;
+    if (op >= IR_EQ && op <= IR_UGE) {
+        return expr; // Already a condition
+    }
+    IrIns *zero = emit(p, IR_KI32);
+    zero->ki32 = 0;
+    zero->type.prim = T_i32;
+    zero->type.ptrs = 0;
+
+    IrIns *cmp = emit(p, IR_NEQ);
+    cmp->l = expr.ins;
+    cmp->r = zero;
+    cmp->type.prim = T_i32;
+    cmp->type.ptrs = 0;
+
+    Expr result;
+    result.type = EXPR_INS;
+    result.ins = cmp;
+    return result;
+}
+
 static Expr parse_const_int(Parser *p) {
     expect_tk(&p->l, TK_NUM);
     long value = p->l.num;
@@ -314,39 +351,18 @@ static Expr parse_subexpr(Parser *p, Prec min_prec) {
     return left;
 }
 
-static IrIns * parse_expr(Parser *p) {
-    Expr result = parse_subexpr(p, PREC_NONE);
-    result = discharge_expr(p, result);
-    return result.ins;
+static Expr parse_expr(Parser *p) {
+    return parse_subexpr(p, PREC_NONE);
 }
 
 
 // ---- Statements
-
-static int is_decl_spec(Token tk) {
-    return tk == TK_INT;
-}
 
 static Type parse_decl_spec(Parser *p) {
     expect_tk(&p->l, TK_INT); // The only type available for now
     next_tk(&p->l);
     Type type = {.prim = T_i32, .ptrs = 0};
     return type;
-}
-
-static void parse_ret(Parser *p) {
-    expect_tk(&p->l, TK_RETURN);
-    next_tk(&p->l);
-    IrIns *value = NULL;
-    if (p->l.tk != ';') {
-        value = parse_expr(p);
-    }
-    if (value) {
-        IrIns *ret = emit(p, IR_RET1);
-        ret->l = value;
-    } else {
-        emit(p, IR_RET0);
-    }
 }
 
 static void parse_decl(Parser *p) {
@@ -363,30 +379,73 @@ static void parse_decl(Parser *p) {
     if (p->l.tk != ';') { // Definition, not just a declaration
         expect_tk(&p->l, '=');
         next_tk(&p->l);
-        IrIns *value = parse_expr(p); // Value
+        Expr expr = parse_expr(p); // Value
+        expr = discharge_expr(p, expr);
         IrIns *store = emit(p, IR_STORE);
         store->l = alloc;
-        store->r = value;
-        store->type = value->type;
+        store->r = expr.ins;
+        store->type = expr.ins->type;
     }
     Local local = {.name = name, .type = type, .alloc = alloc};
     def_local(p, local);
 }
 
-static void parse_block(Parser *p); // Forward declaration
+static void parse_stmt(Parser *p); // Forward declaration
 
-static void parse_braced_block(Parser *p) {
-    expect_tk(&p->l, '{');
-    next_tk(&p->l);
-    parse_block(p);
-    expect_tk(&p->l, '}');
-    next_tk(&p->l);
+static void parse_body_stmt(Parser *p) {
+    int num_locals = p->num_locals;
+    parse_stmt(p);
+    p->num_locals = num_locals;
 }
+
+static void parse_if(Parser *p) {
+    expect_tk(&p->l, TK_IF);
+    next_tk(&p->l);
+    expect_tk(&p->l, '(');
+    next_tk(&p->l);
+    Expr cond = parse_expr(p);
+    cond = to_cond(p, cond);
+    expect_tk(&p->l, ')');
+    next_tk(&p->l);
+    IrIns *cond_br = emit(p, IR_CONDBR);
+    cond_br->cond = cond.ins;
+
+    BB *body = new_bb();
+    p->ins = &body->head;
+    parse_body_stmt(p);
+    IrIns *end_br = emit(p, IR_BR); // End the if body with an unconditional branch
+
+    BB *after = new_bb();
+    end_br->br = after;
+    cond_br->true = body;
+    cond_br->false = after;
+    p->ins = &after->head;
+}
+
+static void parse_ret(Parser *p) {
+    expect_tk(&p->l, TK_RETURN);
+    next_tk(&p->l);
+    IrIns *value = NULL;
+    if (p->l.tk != ';') {
+        Expr expr = parse_expr(p);
+        expr = discharge_expr(p, expr);
+        value = expr.ins;
+    }
+    if (value) {
+        IrIns *ret = emit(p, IR_RET1);
+        ret->l = value;
+    } else {
+        emit(p, IR_RET0);
+    }
+}
+
+static void parse_braced_block(Parser *p); // Forward declaration
 
 static void parse_stmt(Parser *p) {
     switch (p->l.tk) {
         case ';': next_tk(&p->l); return;        // Empty statement
         case '{': parse_braced_block(p); return; // Block
+        case TK_IF: parse_if(p); return;          // If statement
         case TK_INT: parse_decl(p); break;       // Declaration
         case TK_RETURN: parse_ret(p); break;     // Return
         default: parse_expr(p); break;           // Expression statement
@@ -395,12 +454,16 @@ static void parse_stmt(Parser *p) {
     next_tk(&p->l);
 }
 
-static void parse_block(Parser *p) {
+static void parse_braced_block(Parser *p) {
+    expect_tk(&p->l, '{');
+    next_tk(&p->l);
     int num_locals = p->num_locals;
     while (p->l.tk != '\0' && p->l.tk != '}') {
         parse_stmt(p);
     }
     p->num_locals = num_locals; // Get rid of any locals allocated in the block
+    expect_tk(&p->l, '}');
+    next_tk(&p->l);
 }
 
 
@@ -466,18 +529,27 @@ static FnDecl * parse_fn_decl(Parser *p) {
     return decl;
 }
 
+static void ensure_ret(BB *bb, void *_) {
+    IrIns *end = bb->head;
+    if (!end) {
+        bb->head = new_ins(IR_RET0);
+        return;
+    }
+    while (end->next) { end = end->next; } // Find the last instruction
+    if (end->op != IR_BR && end->op != IR_CONDBR && end->op != IR_RET0 && end->op != IR_RET1) {
+        end->next = new_ins(IR_RET0); // Add RET if the last instruction isn't a terminator
+    }
+}
+
 static FnDef * parse_fn_def(Parser *p) {
     FnDef *fn = malloc(sizeof(FnDef));
-    fn->entry = malloc(sizeof(BB));
-    fn->entry->head = NULL;
-
+    fn->entry = new_bb();
     p->ins = &fn->entry->head;
     fn->decl = parse_fn_decl(p); // Declaration
-    expect_tk(&p->l, '{'); // Body
-    next_tk(&p->l);
-    parse_block(p);
-    expect_tk(&p->l, '}');
-    next_tk(&p->l);
+    parse_braced_block(p); // Body
+
+    // Ensure every leaf basic block ends in a return
+    iterate_bb(fn, ensure_ret, NULL);
     return fn;
 }
 
@@ -519,4 +591,29 @@ Module * parse(char *file) {
     free(source);
     free(p.locals);
     return module;
+}
+
+static void iterate_bb_dfs(BB *bb, void (*pred)(BB *, void *), void *data, int mark) {
+    if (bb->mark != mark) {
+        return; // Already visited this block
+    }
+    bb->mark = !bb->mark; // Swap the mark bit (mark bit needs to be the SAME for EVERY BB)
+    pred(bb, data);
+    IrIns *end = bb->head;
+    if (!end) { return; } // Empty basic block
+    while (end->next) { end = end->next; } // Find the last instruction
+    switch (end->op) {
+    case IR_BR:
+        iterate_bb_dfs(end->br, pred, data, mark);
+        break;
+    case IR_CONDBR:
+        iterate_bb_dfs(end->true, pred, data, mark);
+        iterate_bb_dfs(end->false, pred, data, mark);
+        break;
+    default: break; // Base case; basic block doesn't end with a branch (leaf node)
+    }
+}
+
+void iterate_bb(FnDef *fn, void (*pred)(BB *, void *), void *data) {
+    iterate_bb_dfs(fn->entry, pred, data, fn->entry->mark);
 }

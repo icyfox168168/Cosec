@@ -336,18 +336,7 @@ static AsmFn * asm_fn(Assembler *a, FnDef *ir_fn) {
     ins->r.type = OP_REG;
     ins->r.reg = REG_RSP;
 
-    // Compile the basic block
     asm_bb(a, ir_fn->entry);
-
-    // Ensure every function ends in ret
-    AsmIns *last = fn->entry->head;
-    while (last->next) { last = last->next; }
-    if (last->op != X86_RET) {
-        ins = emit(a, X86_POP); // Post-amble
-        ins->l.type = OP_REG;
-        ins->l.reg = REG_RBP;
-        emit(a, X86_RET);
-    }
     return fn;
 }
 

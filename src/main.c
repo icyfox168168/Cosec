@@ -63,14 +63,14 @@ int main(int argc, char *argv[]) {
     } else {
         Module *ir_module = parse(file);
         printf("---- IR\n");
-        print_bb(ir_module->fns->entry);
+        print_fn(ir_module->fns);
 
-        AsmModule *asm_module = assemble(ir_module);
-        printf("\n---- Assembly\n");
-        encode_nasm(asm_module, stdout);
-
-        FILE *output = fopen("out.s", "w");
-        encode_nasm(asm_module, output);
+//        AsmModule *asm_module = assemble(ir_module);
+//        printf("\n---- Assembly\n");
+//        encode_nasm(asm_module, stdout);
+//
+//        FILE *output = fopen("out.s", "w");
+//        encode_nasm(asm_module, output);
     }
     return 0;
 }
