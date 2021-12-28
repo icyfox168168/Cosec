@@ -52,8 +52,10 @@ static void lex_int(Lexer *l) {
 
 static void lex_symbol(Lexer *l) {
 #define X(_)
-#define Y(name, ch1, ch2) else if (*l->c == (ch1) && *(l->c + 1) == (ch2)) { l->tk = TK_ ## name; l->c += 2; }
-#define Z(name, ch1, ch2, ch3) else if (*l->c == (ch1) && *(l->c + 1) == (ch2) && *(l->c + 2) == (ch3)) { l->tk = TK_ ## name; l->c += 2; }
+#define Y(name, ch1, ch2) \
+    else if (*l->c == (ch1) && *(l->c + 1) == (ch2)) { l->tk = TK_ ## name; l->c += 2; }
+#define Z(name, ch1, ch2, ch3) \
+    else if (*l->c == (ch1) && *(l->c + 1) == (ch2) && *(l->c + 2) == (ch3)) { l->tk = TK_ ## name; l->c += 2; }
 #define K(_, __)
     if (0) {}
     TOKENS
@@ -77,7 +79,7 @@ void next_tk(Lexer *l) {
 
 void expect_tk(Lexer *l, Token tk) {
     if (l->tk != tk) {
-        printf("expected token '%d', found '%d'\n", tk, l->tk);
+        printf("expected token '%c', found '%c'\n", tk, l->tk);
         exit(1);
     }
 }

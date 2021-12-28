@@ -385,11 +385,11 @@ static void parse_braced_block(Parser *p) {
 
 static void parse_stmt(Parser *p) {
     switch (p->l.tk) {
-        case ';': next_tk(&p->l); parse_stmt(p); break; // Empty statement
-        case '{': parse_braced_block(p); break; // Block
-        case TK_INT: parse_decl(p); break;      // Declaration
-        case TK_RETURN: parse_ret(p); break;    // Return
-        default: parse_expr(p); break;          // Expression statement
+        case ';': next_tk(&p->l); return;        // Empty statement
+        case '{': parse_braced_block(p); return; // Block
+        case TK_INT: parse_decl(p); break;       // Declaration
+        case TK_RETURN: parse_ret(p); break;     // Return
+        default: parse_expr(p); break;           // Expression statement
     }
     expect_tk(&p->l, ';');
     next_tk(&p->l);
