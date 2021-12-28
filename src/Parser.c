@@ -14,7 +14,6 @@ typedef struct {
 
 typedef struct {
     Lexer l;
-    FnDef *fn; // Current function being parsed
     IrIns **ins; // Next instruction to emit
     Local *locals; // Local variables in scope
     int num_locals, max_locals;
@@ -294,8 +293,10 @@ static Expr parse_assign(Parser *p, Token binop, Expr left, Expr right) {
 
 static Expr parse_binary(Parser *p, Token binop, Expr left, Expr right) {
     switch (binop) {
-    case '=': case TK_ADD_ASSIGN: case TK_SUB_ASSIGN: case TK_MUL_ASSIGN: case TK_DIV_ASSIGN: case TK_MOD_ASSIGN:
-    case TK_AND_ASSIGN: case TK_OR_ASSIGN: case TK_XOR_ASSIGN: case TK_LSHIFT_ASSIGN: case TK_RSHIFT_ASSIGN:
+    case '=': case TK_ADD_ASSIGN: case TK_SUB_ASSIGN:
+    case TK_MUL_ASSIGN: case TK_DIV_ASSIGN: case TK_MOD_ASSIGN:
+    case TK_AND_ASSIGN: case TK_OR_ASSIGN: case TK_XOR_ASSIGN:
+    case TK_LSHIFT_ASSIGN: case TK_RSHIFT_ASSIGN:
         return parse_assign(p, binop, left, right);
     default:
         return parse_operation(p, binop, left, right);
@@ -372,32 +373,40 @@ static void parse_decl(Parser *p) {
     def_local(p, local);
 }
 
+static void parse_block(Parser *p); // Forward declaration
+
+static void parse_braced_block(Parser *p) {
+    expect_tk(&p->l, '{');
+    next_tk(&p->l);
+    parse_block(p);
+    expect_tk(&p->l, '}');
+    next_tk(&p->l);
+}
+
 static void parse_stmt(Parser *p) {
     switch (p->l.tk) {
-    case ';': next_tk(&p->l); return;
-    case TK_RETURN: parse_ret(p); break;
-    default:
-        if (is_decl_spec(p->l.tk)) {
-            parse_decl(p);
-        } else {
-            parse_expr(p); // Discard the result
-        }
-        break;
+        case ';': next_tk(&p->l); parse_stmt(p); break; // Empty statement
+        case '{': parse_braced_block(p); break; // Block
+        case TK_INT: parse_decl(p); break;      // Declaration
+        case TK_RETURN: parse_ret(p); break;    // Return
+        default: parse_expr(p); break;          // Expression statement
     }
     expect_tk(&p->l, ';');
     next_tk(&p->l);
 }
 
 static void parse_block(Parser *p) {
+    int num_locals = p->num_locals;
     while (p->l.tk != '\0' && p->l.tk != '}') {
         parse_stmt(p);
     }
+    p->num_locals = num_locals; // Get rid of any locals allocated in the block
 }
 
 
 // ---- Top Level Module
 
-static void parse_fn_arg(Parser *p, int narg) {
+static IrIns * parse_fn_arg(Parser *p, int narg) {
     Type arg_type = parse_decl_spec(p); // Type
     expect_tk(&p->l, TK_IDENT); // Name
     char *name = malloc((p->l.len + 1) * sizeof(char));
@@ -410,12 +419,17 @@ static void parse_fn_arg(Parser *p, int narg) {
     farg->type = arg_type;
     Local local = {.name = name, .type = arg_type, .alloc = NULL}; // Create a local
     def_local(p, local);
+    return farg;
 }
 
 static void parse_fn_args(Parser *p) {
     int idx = 0;
+    IrIns *first_farg = NULL;
     while (p->l.tk != '\0' && p->l.tk != ')') {
-        parse_fn_arg(p, idx++);
+        IrIns *farg = parse_fn_arg(p, idx++);
+        if (!first_farg) {
+            first_farg = farg;
+        }
         if (p->l.tk == ',') { // Check for another argument
             next_tk(&p->l);
             continue;
@@ -424,7 +438,7 @@ static void parse_fn_args(Parser *p) {
         }
     }
     idx = 0;
-    for (IrIns *farg = p->fn->entry->head; farg && farg->op == IR_FARG; farg = farg->next) {
+    for (IrIns *farg = first_farg; farg && farg->op == IR_FARG; farg = farg->next) {
         IrIns *alloc = emit(p, IR_ALLOC); // Create IR_ALLOC for each argument
         alloc->type = farg->type;
         alloc->type.ptrs += 1; // Alloc creates stack space that points to the type
@@ -455,10 +469,8 @@ static FnDecl * parse_fn_decl(Parser *p) {
 static FnDef * parse_fn_def(Parser *p) {
     FnDef *fn = malloc(sizeof(FnDef));
     fn->entry = malloc(sizeof(BB));
-    fn->entry->next = NULL;
     fn->entry->head = NULL;
 
-    p->fn = fn; // Needs to happen before parsing the declaration, since function arguments emit instructions
     p->ins = &fn->entry->head;
     fn->decl = parse_fn_decl(p); // Declaration
     expect_tk(&p->l, '{'); // Body
@@ -499,7 +511,6 @@ Module * parse(char *file) {
     Parser p;
     p.l = new_lexer(source);
     next_tk(&p.l);
-    p.fn = NULL;
     p.ins = NULL;
     p.num_locals = 0;
     p.max_locals = 8;

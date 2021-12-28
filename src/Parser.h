@@ -6,8 +6,7 @@
 #include "Lexer.h"
 
 typedef struct bb {
-    struct bb *next;
-    IrIns *head;
+    IrIns *head; // The last instruction (the terminator) MUST be a branch (BR, CONDBR) or return (RET0, RET1)
 } BB;
 
 typedef struct {

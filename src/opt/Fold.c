@@ -37,7 +37,5 @@ static void fold_bb(BB *bb) {
 void opt_fold(FnDef *fn) {
     // Iterate over every instruction and check if it can be folded (don't need
     // to bother with conditionals and control flow yet)
-    for (BB *bb = fn->entry; bb; bb = bb->next) {
-        fold_bb(bb);
-    }
+    fold_bb(fn->entry);
 }

@@ -50,6 +50,8 @@ typedef struct {
     X(ULE, 2)      \
     X(UGT, 2)      \
     X(UGE, 2)      \
+    X(BR, 1)       \
+    X(CONDBR, 3)   \
     X(RET1, 1)     \
     X(RET0, 0)
 
@@ -68,6 +70,8 @@ typedef struct ir_ins {
         int narg; // Function arguments
         int32_t ki32; // Constants
         struct { struct ir_ins *l, *r; }; // Binary instructions
+        struct bb *bb; // Unconditional branch
+        struct { struct ir_ins *cond; struct bb *true, *false; }; // Conditional branch
     };
 
     // Assembler per-IR instruction info
