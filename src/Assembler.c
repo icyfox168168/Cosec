@@ -410,7 +410,7 @@ AsmModule * assemble(Module *ir_mod) {
     module->fns = asm_fn(&a, ir_mod->fns);
     module->main = module->fns; // There's only one function, make it the main one (even if it's not called 'main')
 
-    if (module->main) { // If this module has a 'main' function
+    if (module->main) { // If this module has a 'main' function, then we're creating an executable
         AsmFn *start = asm_start(module->main); // Insert a 'start' stub to call the 'main' function
         start->next = module->fns;
         module->fns = start;
