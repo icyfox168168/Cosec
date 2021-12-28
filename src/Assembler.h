@@ -10,6 +10,13 @@
  *
  * Variables are still modelled by virtual registers, which are later lowered
  * to physical registers by the register allocator.
+ *
+ * The control flow graph (CFG) present in the IR is represented implicitly in
+ * the assembly. Jumps can only occur at the END of basic blocks, and if the
+ * condition on the jump is false then control flows through to 'bb->next'.
+ * This implicit CFG structure is still enough to construct successor and
+ * predecessor lists required in register allocation (specifically, for
+ * lifetime determination).
  */
 
 #define X86_REGS  \
@@ -100,26 +107,12 @@ static Reg FN_ARGS_REGS[] = {
     REG_R9,
 };
 
-// Converts IR instruction operands into SETxx x86 opcodes.
-static AsmOp IROP_TO_SETXX[IR_LAST] = {
-    [IR_EQ] = X86_SETE,
-    [IR_NEQ] = X86_SETNE,
-    [IR_SLT] = X86_SETL,
-    [IR_SLE] = X86_SETLE,
-    [IR_SGT] = X86_SETG,
-    [IR_SGE] = X86_SETGE,
-    [IR_ULT] = X86_SETB,
-    [IR_ULE] = X86_SETBE,
-    [IR_UGT] = X86_SETA,
-    [IR_UGE] = X86_SETAE,
-};
-
 typedef enum {
     OP_IMM,
-    OP_REG,  // Physical register (e.g., rax, etc.)
-    OP_VREG, // Virtual register for the register allocator
+    OP_REG,   // Physical register (e.g., rax, etc.)
+    OP_VREG,  // Virtual register for the register allocator
     OP_MEM,
-    OP_SYM,  // Symbol (e.g. for a call or jump)
+    OP_LABEL, // Symbol (e.g. for a call or jump)
 } AsmOperandType;
 
 typedef struct {
@@ -129,7 +122,7 @@ typedef struct {
         Reg reg;
         struct { int vreg, subsection; }; // For OP_VREG
         struct { Reg base; int scale, index; }; // For OP_MEM
-        struct asm_bb *sym;
+        struct asm_bb *bb; // For OP_LABEL; the ONLY jump allowed in a basic block is at the end
     };
 } AsmOperand;
 
@@ -141,12 +134,13 @@ typedef struct asm_ins {
 
 typedef struct asm_bb {
     struct asm_bb *next;
-    char *label; // NULL if automatically assigned
+    int label;
     AsmIns *head;
 } AsmBB;
 
 typedef struct asm_fn {
     struct asm_fn *next;
+    char *name;
     AsmBB *entry; // The BBs for an AsmFn form a linear CFG (the optimiser creates the DAG to achieve this ordering)
 } AsmFn;
 

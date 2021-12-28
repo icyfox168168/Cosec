@@ -16,7 +16,7 @@ My goals for the project are:
 
 ### Usage
 
-You can use [CMake](https://cmake.org/) to build the compiler:
+You can build the compiler with [CMake](https://cmake.org/):
 
 ```bash
 $ mkdir build

@@ -6,13 +6,50 @@
 #include "Assembler.h"
 
 typedef struct {
-    AsmFn *fn;
     AsmIns **ins;
     int stack_size; // Number of bytes allocated on the stack by 'IR_ALLOC's
     int vreg; // Next virtual register slot to use
 } Assembler;
 
-static AsmIns * emit(Assembler *a, AsmOp op) {
+// Converts IR instruction operands into SETxx x86 opcodes.
+static AsmOp IROP_TO_SETXX[IR_LAST] = {
+    [IR_EQ] = X86_SETE,
+    [IR_NEQ] = X86_SETNE,
+    [IR_SLT] = X86_SETL,
+    [IR_SLE] = X86_SETLE,
+    [IR_SGT] = X86_SETG,
+    [IR_SGE] = X86_SETGE,
+    [IR_ULT] = X86_SETB,
+    [IR_ULE] = X86_SETBE,
+    [IR_UGT] = X86_SETA,
+    [IR_UGE] = X86_SETAE,
+};
+
+static Assembler  new_asm() {
+    Assembler a;
+    a.ins = NULL;
+    a.stack_size = 0;
+    a.vreg = 0;
+    return a;
+}
+
+static AsmFn * new_fn() {
+    AsmFn *fn = malloc(sizeof(AsmFn));
+    fn->next = NULL;
+    fn->name = NULL;
+    fn->entry = NULL;
+    return fn;
+}
+
+static AsmBB * new_bb() {
+    AsmBB *bb = malloc(sizeof(AsmBB));
+    bb->next = NULL;
+    bb->label = -1;
+    bb->head = NULL;
+    return bb;
+}
+
+static AsmIns * new_ins(AsmOp op) {
     AsmIns *ins = malloc(sizeof(AsmIns));
     ins->next = NULL;
     ins->op = op;
@@ -22,6 +59,11 @@ static AsmIns * emit(Assembler *a, AsmOp op) {
     ins->r.type = 0;
     ins->r.vreg = 0;
     ins->r.subsection = REG_ALL;
+    return ins;
+}
+
+static AsmIns * emit(Assembler *a, AsmOp op) {
+    AsmIns *ins = new_ins(op);
     *a->ins = ins;
     a->ins = &ins->next;
     return ins;
@@ -103,16 +145,15 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
         AsmOperand result = {.type = OP_VREG, .vreg = ins->vreg};
         return result; // Already in a virtual register, don't need to discharge again
     }
-
     switch (ins->op) {
-    case IR_KI32: // Immediates
-        return discharge_imm(a, ins);
-    case IR_LOAD: // Memory
-        return discharge_load(a, ins);
-    case IR_EQ: case IR_NEQ: // Comparisons
+    case IR_KI32:
+        return discharge_imm(a, ins); // Immediate
+    case IR_LOAD:
+        return discharge_load(a, ins); // Memory load
+    case IR_EQ: case IR_NEQ:
     case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
     case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
-        return discharge_rel(a, ins);
+        return discharge_rel(a, ins); // Comparisons
     default: UNREACHABLE();
     }
 }
@@ -127,10 +168,9 @@ static void asm_farg(Assembler *a, IrIns *ir_farg) {
 }
 
 static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
-    a->stack_size += size_of(ir_alloc->type);
+    a->stack_size += size_of(ir_alloc->type); // Create some space on the stack for the alloc
     ir_alloc->stack_slot = a->stack_size;
-    ir_alloc->vreg = a->vreg++; // Virtual register for the POINTER returned by the ALLOC instruction
-    // Don't emit any instructions for a fixed-size allocation
+    ir_alloc->vreg = a->vreg++; // Vreg for the POINTER returned by the ALLOC instruction
 }
 
 static void asm_store(Assembler *a, IrIns *ir_store) {
@@ -143,7 +183,7 @@ static void asm_store(Assembler *a, IrIns *ir_store) {
         r.type = OP_IMM;
         r.imm = ir_store->r->ki32;
     } else {
-        r = discharge(a, ir_store->r); // Virtual register
+        r = discharge(a, ir_store->r); // Vreg
     }
 
     AsmIns *mov = emit(a, X86_MOV);
@@ -155,17 +195,6 @@ static void asm_store(Assembler *a, IrIns *ir_store) {
 }
 
 static void asm_arith(Assembler *a, IrIns *ir_arith) {
-    AsmOp op;
-    switch (ir_arith->op) {
-        case IR_ADD: op = X86_ADD; break;
-        case IR_SUB: op = X86_SUB; break;
-        case IR_MUL: op = X86_MUL; break;
-        case IR_AND: op = X86_AND; break;
-        case IR_OR:  op = X86_OR; break;
-        case IR_XOR: op = X86_XOR; break;
-        default: UNREACHABLE();
-    }
-
     AsmOperand l = discharge(a, ir_arith->l); // Left operand always a vreg
     AsmOperand r;
     if (ir_arith->r->op == IR_KI32) {
@@ -179,6 +208,17 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
         r.index = -ir_load->l->stack_slot;
     } else {
         r = discharge(a, ir_arith->r);
+    }
+
+    AsmOp op;
+    switch (ir_arith->op) {
+        case IR_ADD: op = X86_ADD; break;
+        case IR_SUB: op = X86_SUB; break;
+        case IR_MUL: op = X86_MUL; break;
+        case IR_AND: op = X86_AND; break;
+        case IR_OR:  op = X86_OR; break;
+        case IR_XOR: op = X86_XOR; break;
+        default: UNREACHABLE();
     }
     AsmIns *arith = emit(a, op);
     arith->l = l;
@@ -249,6 +289,10 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
     ir_shift->vreg = shift->l.vreg; // Result stored into left operand
 }
 
+static void asm_br(Assembler *a, IrIns *ir_br) {
+
+}
+
 static void asm_ret0(Assembler *a) {
     AsmIns *pop = emit(a, X86_POP); // Post-amble
     pop->l.type = OP_REG;
@@ -268,36 +312,21 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
 
 static void asm_ins(Assembler *a, IrIns *ir_ins) {
     switch (ir_ins->op) {
-        case IR_KI32:
-            break; // Don't do anything for constants
-        case IR_FARG:
-            asm_farg(a, ir_ins);
-            break;
-        case IR_ALLOC:
-            asm_alloc(a, ir_ins);
-            break;
-        case IR_LOAD:
-            break; // Loads don't always have to generate 'mov's; do it as needed with 'discharge'
-        case IR_STORE:
-            asm_store(a, ir_ins);
-            break;
+        case IR_KI32:  break; // Don't do anything for constants
+        case IR_FARG:  asm_farg(a, ir_ins); break;
+        case IR_ALLOC: asm_alloc(a, ir_ins); break;
+        case IR_LOAD:  break; // Loads don't always have to generate 'mov's; do it as needed with 'discharge'
+        case IR_STORE: asm_store(a, ir_ins); break;
         case IR_ADD: case IR_SUB: case IR_MUL: case IR_AND: case IR_OR: case IR_XOR:
-            asm_arith(a, ir_ins);
-            break;
-        case IR_DIV: case IR_MOD:
-            asm_div(a, ir_ins);
-            break;
+            asm_arith(a, ir_ins); break;
+        case IR_DIV: case IR_MOD: asm_div(a, ir_ins); break;
         case IR_SHL: case IR_ASHR: case IR_LSHR:
-            asm_shift(a, ir_ins);
-            break;
+            asm_shift(a, ir_ins); break;
         case IR_EQ: case IR_NEQ: case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
             break; // Don't do anything for comparisons; do it as needed with 'discharge'
-        case IR_RET0:
-            asm_ret0(a);
-            break;
-        case IR_RET1:
-            asm_ret1(a, ir_ins);
-            break;
+        case IR_BR: asm_br(a, ir_ins); break;
+        case IR_RET0: asm_ret0(a); break;
+        case IR_RET1: asm_ret1(a, ir_ins); break;
         default: printf("unsupported IR instruction to assembler\n"); exit(1);
     }
 }
@@ -308,24 +337,7 @@ static void asm_bb(Assembler *a, BB *ir_bb) {
     }
 }
 
-static char * prepend_underscore(char *str) {
-    char *out = malloc(strlen(str) + 2);
-    out[0] = '_';
-    strcpy(&out[1], str);
-    return out;
-}
-
-static AsmFn * asm_fn(Assembler *a, FnDef *ir_fn) {
-    AsmFn *fn = malloc(sizeof(AsmFn));
-    fn->next = NULL;
-    fn->entry = malloc(sizeof(AsmBB));
-    fn->entry->next = NULL;
-    fn->entry->label = prepend_underscore(ir_fn->decl->name);
-    fn->entry->head = NULL;
-    a->fn = fn;
-    a->ins = &fn->entry->head;
-
-    // Add the function preamble
+static void asm_fn_preamble(Assembler *a) {
     AsmIns *ins;
     ins = emit(a, X86_PUSH);
     ins->l.type = OP_REG;
@@ -335,8 +347,23 @@ static AsmFn * asm_fn(Assembler *a, FnDef *ir_fn) {
     ins->l.reg = REG_RBP;
     ins->r.type = OP_REG;
     ins->r.reg = REG_RSP;
+}
 
-    asm_bb(a, ir_fn->entry);
+static char * prepend_underscore(char *str) {
+    char *out = malloc(strlen(str) + 2);
+    out[0] = '_';
+    strcpy(&out[1], str);
+    return out;
+}
+
+static AsmFn * asm_fn(FnDef *ir_fn) {
+    Assembler a = new_asm();
+    AsmFn *fn = new_fn();
+    fn->name = prepend_underscore(ir_fn->decl->name);
+    fn->entry = new_bb();
+    a.ins = &fn->entry->head;
+    asm_fn_preamble(&a);
+    asm_bb(&a, ir_fn->entry);
     return fn;
 }
 
@@ -360,16 +387,12 @@ static AsmFn * asm_fn(Assembler *a, FnDef *ir_fn) {
  *     syscall
  */
 static AsmFn * asm_start(AsmFn *main) {
-    AsmFn *start = malloc(sizeof(AsmFn));
-    AsmBB *entry = malloc(sizeof(AsmBB));
-    entry->next = NULL;
-    entry->label = "_start";
-    entry->head = NULL;
+    AsmFn *start = new_fn();
+    start->name = "_start";
+    AsmBB *entry = new_bb();
     start->entry = entry;
-    start->next = NULL;
 
-    Assembler a;
-    a.fn = start;
+    Assembler a = new_asm();
     a.ins = &entry->head;
 
     AsmIns *ins;
@@ -389,7 +412,7 @@ static AsmFn * asm_start(AsmFn *main) {
     ins->l.type = OP_REG; ins->l.reg = REG_EAX;
     ins->r.type = OP_REG; ins->r.reg = REG_EAX;
     ins = emit(&a, X86_CALL); // Call main
-    ins->l.type = OP_SYM; ins->l.sym = main->entry;
+    ins->l.type = OP_LABEL; ins->l.bb = main->entry;
     ins = emit(&a, X86_MOV); // Exit syscall
     ins->l.type = OP_REG; ins->l.reg = REG_RDI;
     ins->r.type = OP_REG; ins->r.reg = REG_RAX;
@@ -401,13 +424,8 @@ static AsmFn * asm_start(AsmFn *main) {
 }
 
 AsmModule * assemble(Module *ir_mod) {
-    Assembler a;
-    a.fn = NULL;
-    a.ins = NULL;
-    a.stack_size = 0;
-    a.vreg = 0;
     AsmModule *module = malloc(sizeof(AsmModule));
-    module->fns = asm_fn(&a, ir_mod->fns);
+    module->fns = asm_fn(ir_mod->fns);
     module->main = module->fns; // There's only one function, make it the main one (even if it's not called 'main')
 
     if (module->main) { // If this module has a 'main' function, then we're creating an executable

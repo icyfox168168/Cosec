@@ -14,16 +14,17 @@ typedef struct {
 
 typedef struct {
     Lexer l;
-    IrIns **ins; // Next instruction to emit
+    BB *bb;        // Current basic block
+    IrIns **ins;   // Next instruction to emit
     Local *locals; // Local variables in scope
     int num_locals, max_locals;
 } Parser;
 
 static BB * new_bb() {
     BB *bb = malloc(sizeof(BB));
+    bb->next = NULL;
     bb->label = -1;
     bb->head = NULL;
-    bb->mark = 0;
     return bb;
 }
 
@@ -411,6 +412,8 @@ static void parse_if(Parser *p) {
     cond_br->cond = cond.ins;
 
     BB *body = new_bb();
+    p->bb->next = body;
+    p->bb = body;
     p->ins = &body->head;
     parse_body_stmt(p);
     IrIns *end_br = emit(p, IR_BR); // End the if body with an unconditional branch
@@ -419,6 +422,8 @@ static void parse_if(Parser *p) {
     end_br->br = after;
     cond_br->true = body;
     cond_br->false = after;
+    p->bb->next = after;
+    p->bb = after;
     p->ins = &after->head;
 }
 
@@ -443,12 +448,12 @@ static void parse_braced_block(Parser *p); // Forward declaration
 
 static void parse_stmt(Parser *p) {
     switch (p->l.tk) {
-        case ';': next_tk(&p->l); return;        // Empty statement
-        case '{': parse_braced_block(p); return; // Block
-        case TK_IF: parse_if(p); return;          // If statement
-        case TK_INT: parse_decl(p); break;       // Declaration
-        case TK_RETURN: parse_ret(p); break;     // Return
-        default: parse_expr(p); break;           // Expression statement
+        case ';':       next_tk(&p->l); return;        // Empty statement
+        case '{':       parse_braced_block(p); return; // Block
+        case TK_IF:     parse_if(p); return;           // If statement
+        case TK_INT:    parse_decl(p); break;          // Declaration
+        case TK_RETURN: parse_ret(p); break;           // Return
+        default:        parse_expr(p); break;          // Expression statement
     }
     expect_tk(&p->l, ';');
     next_tk(&p->l);
@@ -529,27 +534,28 @@ static FnDecl * parse_fn_decl(Parser *p) {
     return decl;
 }
 
-static void ensure_ret(BB *bb, void *_) {
-    IrIns *end = bb->head;
-    if (!end) {
-        bb->head = new_ins(IR_RET0);
-        return;
-    }
-    while (end->next) { end = end->next; } // Find the last instruction
-    if (end->op != IR_BR && end->op != IR_CONDBR && end->op != IR_RET0 && end->op != IR_RET1) {
-        end->next = new_ins(IR_RET0); // Add RET if the last instruction isn't a terminator
+static void ensure_ret(FnDef *fn) {
+    for (BB *bb = fn->entry; bb; bb = bb->next) { // Iterate over all basic blocks
+        IrIns *end = bb->head;
+        if (!end) {
+            bb->head = new_ins(IR_RET0);
+            return;
+        }
+        while (end->next) { end = end->next; } // Find the last instruction
+        if (end->op != IR_BR && end->op != IR_CONDBR && end->op != IR_RET0 && end->op != IR_RET1) {
+            end->next = new_ins(IR_RET0); // Add RET if the last instruction isn't a terminator
+        }
     }
 }
 
 static FnDef * parse_fn_def(Parser *p) {
     FnDef *fn = malloc(sizeof(FnDef));
     fn->entry = new_bb();
+    p->bb = fn->entry;
     p->ins = &fn->entry->head;
     fn->decl = parse_fn_decl(p); // Declaration
     parse_braced_block(p); // Body
-
-    // Ensure every leaf basic block ends in a return
-    iterate_bb(fn, ensure_ret, NULL);
+    ensure_ret(fn);
     return fn;
 }
 
@@ -583,6 +589,7 @@ Module * parse(char *file) {
     Parser p;
     p.l = new_lexer(source);
     next_tk(&p.l);
+    p.bb = NULL;
     p.ins = NULL;
     p.num_locals = 0;
     p.max_locals = 8;
@@ -591,29 +598,4 @@ Module * parse(char *file) {
     free(source);
     free(p.locals);
     return module;
-}
-
-static void iterate_bb_dfs(BB *bb, void (*pred)(BB *, void *), void *data, int mark) {
-    if (bb->mark != mark) {
-        return; // Already visited this block
-    }
-    bb->mark = !bb->mark; // Swap the mark bit (mark bit needs to be the SAME for EVERY BB)
-    pred(bb, data);
-    IrIns *end = bb->head;
-    if (!end) { return; } // Empty basic block
-    while (end->next) { end = end->next; } // Find the last instruction
-    switch (end->op) {
-    case IR_BR:
-        iterate_bb_dfs(end->br, pred, data, mark);
-        break;
-    case IR_CONDBR:
-        iterate_bb_dfs(end->true, pred, data, mark);
-        iterate_bb_dfs(end->false, pred, data, mark);
-        break;
-    default: break; // Base case; basic block doesn't end with a branch (leaf node)
-    }
-}
-
-void iterate_bb(FnDef *fn, void (*pred)(BB *, void *), void *data) {
-    iterate_bb_dfs(fn->entry, pred, data, fn->entry->mark);
 }

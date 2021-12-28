@@ -6,9 +6,9 @@
 #include "Lexer.h"
 
 typedef struct bb {
+    struct bb *next; // Maintain an ordering over all the basic blocks (the order in which they're seen in the source)
     int label;
     IrIns *head; // The last instruction (the terminator) MUST be a branch (BR, CONDBR) or return (RET0, RET1)
-    int mark;
 } BB;
 
 typedef struct {
@@ -26,9 +26,5 @@ typedef struct {
 } Module;
 
 Module * parse(char *file);
-
-// Iterate over the basic blocks in a function via depth-first search (DFS).
-// Passes 'data' to the 'pred' function.
-void iterate_bb(FnDef *fn, void (*pred)(BB *, void *), void *data);
 
 #endif

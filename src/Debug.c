@@ -36,27 +36,22 @@ static void print_ins(IrIns *ins) {
     printf("\n");
 }
 
-static void print_bb(BB *bb, void *_) {
+static void print_bb(BB *bb) {
     printf("%d:\n", bb->label); // Print the BB label
     for (IrIns *ins = bb->head; ins; ins = ins->next) { // Number every instruction
         print_ins(ins);
     }
 }
 
-static void number_ins(BB *bb, void *ins_idx) {
-    for (IrIns *ins = bb->head; ins; ins = ins->next) { // Number every instruction
-        ins->debug_idx = (*((int *) ins_idx))++;
-    }
-}
-
-static void label_bb(BB *bb, void *bb_idx) {
-    bb->label = (*((int *) bb_idx))++;
-}
-
 void print_fn(FnDef *fn) {
-    int label_idx = 0;
-    iterate_bb(fn, label_bb, &label_idx); // Label basic blocks
-    int ins_idx = 0;
-    iterate_bb(fn, number_ins, &ins_idx);
-    iterate_bb(fn, print_bb, NULL);
+    int bb_idx = 0, ins_idx = 0;
+    for (BB *bb = fn->entry; bb; bb = bb->next) { // Number the basic blocks and instructions first
+        bb->label = bb_idx++; // Number the basic blocks
+        for (IrIns *ins = bb->head; ins; ins = ins->next) {
+            ins->debug_idx = ins_idx++; // Number the IR instructions
+        }
+    }
+    for (BB *bb = fn->entry; bb; bb = bb->next) { // Print the basic blocks
+        print_bb(bb);
+    }
 }
