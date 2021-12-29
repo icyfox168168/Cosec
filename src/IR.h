@@ -59,6 +59,7 @@ typedef struct {
     X(UGE, 2)             \
                           \
     /* Control flow */    \
+    X(PHI, 0)    /* SSA phi instruction */ \
     X(BR, 1)     /* Unconditional branch */ \
     X(CONDBR, 3) /* Conditional branch (condition, true BB, false BB) */ \
     X(RET1, 1)   /* Return a value */ \
@@ -71,11 +72,24 @@ typedef enum {
     IR_LAST, // Required for hash-tables indexed by IR opcode
 } IrOpcode;
 
+// SSA phi instructions keep track of the value of a variable along different
+// control flow paths. Phi instructions ONLY occur at the head of a basic block.
+// They take as an argument a list of pairs <basic block, definition>, one pair
+// for each predecessor basic block. The pairs are stored as a linked list.
+typedef struct phi {
+    struct phi *next;
+    struct bb *bb;
+    struct ir_ins *def;
+} Phi;
+
 typedef struct ir_ins {
     struct ir_ins *next;
+    struct bb *bb; // The basic block this instruction is in
+
     IrOpcode op;
-    Type type; // Everything except control flow records its return type here
+    Type type; // Everything except control flow records its return type
     union {
+        Phi *phi;                         // Phi instructions
         int arg_num;                      // Function arguments
         int32_t ki32;                     // Constants
         struct { struct ir_ins *l, *r; }; // Binary operations
@@ -85,6 +99,7 @@ typedef struct ir_ins {
             struct bb *true, *false;
         };
     };
+    struct ir_ins *jmp_list; // For '&&' and '||'
 
     // Assembler info
     int stack_slot; // For IR_ALLOC; location on the stack relative to rbp
@@ -227,7 +242,7 @@ typedef struct asm_ins {
 // instructions that always execute in order (useful for optimisation)
 typedef struct bb {
     // Maintain an ordering over basic blocks in a function, the same as the
-    // order in which they appear in the C source code
+    // order in which they appear in the source code
     struct bb *next;
     char *label;
     IrIns *ir_head;

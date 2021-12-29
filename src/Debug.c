@@ -1,6 +1,5 @@
 
 #include <stdio.h>
-#include <string.h>
 
 #include "Debug.h"
 
@@ -29,6 +28,14 @@ static void print_type(Type t) {
     }
 }
 
+static void print_phi(IrIns *phi) {
+    Phi *pair = phi->phi;
+    while (pair) {
+        printf("[ %s, %.4d ] ", pair->bb->label, pair->def->debug_idx);
+        pair = pair->next;
+    }
+}
+
 static void print_ins(IrIns *ins) {
     printf("\t"); // Indent all instructions by a tab
     printf("%.4d\t", ins->debug_idx); // Instruction's index in the function
@@ -44,6 +51,7 @@ static void print_ins(IrIns *ins) {
         printf("%s\t", ins->true->label); // True branch
         printf("%s", ins->false->label); // False branch
         break;
+    case IR_PHI: print_phi(ins); break;
     default:
         if (IR_OPCODE_NARGS[ins->op] >= 1) { // Single argument instructions
             printf("%.4d", ins->l->debug_idx);
