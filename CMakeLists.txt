@@ -5,8 +5,8 @@ set(CMAKE_C_STANDARD 99)
 
 add_executable(Cosec
         src/main.c
-        src/IR.c src/IR.h
         src/Lexer.c src/Lexer.h
+        src/IR.h src/IR.c
         src/Parser.c src/Parser.h
         src/Assembler.c src/Assembler.h
         src/Encoder.c src/Encoder.h

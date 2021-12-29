@@ -5,12 +5,6 @@
 #include "IR.h"
 #include "Lexer.h"
 
-typedef struct bb {
-    struct bb *next; // Maintain an ordering over all the basic blocks (the order in which they're seen in the source)
-    int label;
-    IrIns *head; // The last instruction (the terminator) MUST be a branch (BR, CONDBR) or return (RET0, RET1)
-} BB;
-
 typedef struct {
     Type return_type;
     char *name;
@@ -22,7 +16,7 @@ typedef struct {
 } FnDef;
 
 typedef struct {
-    FnDef *fns;
+    FnDef *fn; // Only one function for the moment
 } Module;
 
 Module * parse(char *file);

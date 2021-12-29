@@ -9,7 +9,7 @@
 typedef struct {
     Type type;
     char *name;
-    IrIns *alloc; // Reference to IR_ALLOC instruction that created this local
+    IrIns *alloc; // The IR_ALLOC instruction that created this local
 } Local;
 
 typedef struct {
@@ -20,15 +20,7 @@ typedef struct {
     int num_locals, max_locals;
 } Parser;
 
-static BB * new_bb() {
-    BB *bb = malloc(sizeof(BB));
-    bb->next = NULL;
-    bb->label = -1;
-    bb->head = NULL;
-    return bb;
-}
-
-static IrIns * new_ins(IrOp op) {
+static IrIns * new_ins(IrOpcode op) {
     IrIns *ins = malloc(sizeof(IrIns));
     ins->op = op;
     ins->next = NULL;
@@ -37,7 +29,7 @@ static IrIns * new_ins(IrOp op) {
     return ins;
 }
 
-static IrIns * emit(Parser *p, IrOp op) {
+static IrIns * emit(Parser *p, IrOpcode op) {
     IrIns *ins = new_ins(op);
     *p->ins = ins;
     p->ins = &ins->next;
@@ -46,7 +38,7 @@ static IrIns * emit(Parser *p, IrOp op) {
 
 static void def_local(Parser *p, Local local) {
     // TODO: compare against function definitions too!
-    for (int i = p->num_locals - 1; i >= 0; i--) { // Check local isn't already defined
+    for (int i = p->num_locals - 1; i >= 0; i--) { // Check local isn't defined
         if (strcmp(p->locals[i].name, local.name) == 0) {
             printf("local already defn\n");
             exit(1);
@@ -60,7 +52,7 @@ static void def_local(Parser *p, Local local) {
 }
 
 
-// ---- Expressions
+// ---- Expressions -----------------------------------------------------------
 
 typedef enum {
     PREC_NONE,
@@ -72,12 +64,12 @@ typedef enum {
     PREC_BIT_XOR, // ^
     PREC_BIT_AND, // &
     PREC_EQ,      // ==, !=
-    PREC_REL,     // <, >, <=, >=
+    PREC_GTLT,    // <, >, <=, >=
     PREC_SHIFT,   // >>, <<
     PREC_ADD,     // +, -
     PREC_MUL,     // *, /, %
-    PREC_UNARY,   // ++, -- (prefix), -, + (unary), !, ~, type casts, *, &, sizeof
-    PREC_POSTFIX, // ++, -- (postfix), function calls, array indexes, member access (. and ->)
+    PREC_UNARY,   // ++, -- (prefix), -, + (unary), !, ~, casts, *, &, sizeof
+    PREC_POSTFIX, // ++, -- (postfix), calls, array index, member access (., ->)
 } Prec;
 
 static Prec UNOP_PREC[TK_LAST] = {
@@ -86,23 +78,23 @@ static Prec UNOP_PREC[TK_LAST] = {
 };
 
 static Prec BINOP_PREC[TK_LAST] = {
-    ['*'] = PREC_MUL, // Multiplication
-    ['/'] = PREC_MUL, // Division
-    ['%'] = PREC_MUL, // Modulo
-    ['+'] = PREC_ADD, // Addition
-    ['-'] = PREC_ADD, // Subtraction
+    ['*'] = PREC_MUL,         // Multiplication
+    ['/'] = PREC_MUL,         // Division
+    ['%'] = PREC_MUL,         // Modulo
+    ['+'] = PREC_ADD,         // Addition
+    ['-'] = PREC_ADD,         // Subtraction
     [TK_LSHIFT] = PREC_SHIFT, // Left shift
     [TK_RSHIFT] = PREC_SHIFT, // Right shift
-    ['<'] = PREC_REL,     // Less than
-    [TK_LE] = PREC_REL,   // Less than or equal
-    ['>'] = PREC_REL,     // Greater than
-    [TK_GE] = PREC_REL,   // Greater than or equal
-    [TK_EQ] = PREC_EQ,    // Equal
-    [TK_NEQ] = PREC_EQ,   // Not equal
-    ['&'] = PREC_BIT_AND, // Bitwise and
-    ['^'] = PREC_BIT_XOR, // Bitwise xor
-    ['|'] = PREC_BIT_OR,  // Bitwise or
-    ['='] = PREC_ASSIGN,  // Assignments
+    ['<'] = PREC_GTLT,        // Less than
+    [TK_LE] = PREC_GTLT,      // Less than or equal
+    ['>'] = PREC_GTLT,        // Greater than
+    [TK_GE] = PREC_GTLT,      // Greater than or equal
+    [TK_EQ] = PREC_EQ,        // Equal
+    [TK_NEQ] = PREC_EQ,       // Not equal
+    ['&'] = PREC_BIT_AND,     // Bitwise and
+    ['^'] = PREC_BIT_XOR,     // Bitwise xor
+    ['|'] = PREC_BIT_OR,      // Bitwise or
+    ['='] = PREC_ASSIGN,      // Assignments
     [TK_ADD_ASSIGN] = PREC_ASSIGN,
     [TK_SUB_ASSIGN] = PREC_ASSIGN,
     [TK_MUL_ASSIGN] = PREC_ASSIGN,
@@ -129,7 +121,7 @@ static int IS_RIGHT_ASSOC[TK_LAST] = {
     [TK_RSHIFT_ASSIGN] = 1,
 };
 
-static IrOp BINOP_OPCODES[TK_LAST] = {
+static IrOpcode BINOP_OPCODES[TK_LAST] = {
     ['+'] = IR_ADD,
     ['-'] = IR_SUB,
     ['*'] = IR_MUL,
@@ -160,19 +152,19 @@ static IrOp BINOP_OPCODES[TK_LAST] = {
 
 typedef enum {
     EXPR_INS,   // Result of an operation
-    EXPR_LOCAL, // Local variable that's yet to be loaded
+    EXPR_LOCAL, // Local variable that's yet to be loaded (no IR_LOAD emitted)
 } ExprType;
 
 typedef struct {
     ExprType type;
     union {
-        IrIns *ins; // For EXPR_INS
-        Local *local; // For EXPR_LOCAL; refers to the IR_ALLOC for the local
+        IrIns *ins;   // For EXPR_INS
+        Local *local; // For EXPR_LOCAL
     };
 } Expr;
 
-// Converts all expressions into EXPR_INS:
-// * For EXPR_LOCAL: emits an IR_LOAD instruction
+// Converts all expressions into EXPR_INS. Currently, this only involves
+// emitting an IR_LOAD instruction for EXPR_LOCALs
 static Expr discharge_expr(Parser *p,  Expr expr) {
     if (expr.type == EXPR_LOCAL) {
         IrIns *load = emit(p, IR_LOAD);
@@ -187,9 +179,10 @@ static Expr discharge_expr(Parser *p,  Expr expr) {
 }
 
 // Converts an expression into a condition (e.g., for if or while statements)
+// by emitting a comparison operation if needed
 static Expr to_cond(Parser *p, Expr expr) {
     expr = discharge_expr(p, expr);
-    IrOp op = expr.ins->op;
+    IrOpcode op = expr.ins->op;
     if (op >= IR_EQ && op <= IR_UGE) {
         return expr; // Already a condition
     }
@@ -266,61 +259,72 @@ static Expr parse_operand(Parser *p) {
     }
 }
 
-static Expr parse_unary(Parser *p) {
-    Token unop = p->l.tk;
-    if (UNOP_PREC[unop]) {
-        next_tk(&p->l); // Skip the unary operator
-        Expr operand = parse_subexpr(p, UNOP_PREC[unop]);
-        operand = discharge_expr(p, operand);
-        IrIns *operation;
-        switch (unop) {
-        case '-': { // -a is equivalent to '0 - a'
-            IrIns *zero = emit(p, IR_KI32);
-            zero->ki32 = 0;
-            operation = emit(p, IR_SUB);
-            operation->l = zero;
-            operation->r = operand.ins;
-            operation->type = operand.ins->type;
-            break;
-        }
-        case '~': { // ~a is equivalent to 'a ^ -1'
-            IrIns *neg1 = emit(p, IR_KI32);
-            neg1->ki32 = -1;
-            operation = emit(p, IR_XOR);
-            operation->l = operand.ins;
-            operation->r = neg1;
-            operation->type = operand.ins->type;
-            break;
-        }
-        default: UNREACHABLE();
-        }
-        Expr result;
-        result.type = EXPR_INS;
-        result.ins = operation;
-        return result;
-    } else {
-        return parse_operand(p);
-    }
-}
-
-static Expr parse_operation(Parser *p, Token binop, Expr left, Expr right) {
-    left = discharge_expr(p, left);
-    right = discharge_expr(p, right);
-    IrIns *operation = emit(p, BINOP_OPCODES[binop]);
-    operation->l = left.ins;
-    operation->r = right.ins;
-    operation->type = left.ins->type; // Should be the same as 'right'
+static Expr parse_neg(Parser *p, Expr operand) {
+    operand = discharge_expr(p, operand);
+    IrIns *zero = emit(p, IR_KI32); // -a is equivalent to '0 - a'
+    zero->ki32 = 0;
+    IrIns *operation = emit(p, IR_SUB);
+    operation->l = zero;
+    operation->r = operand.ins;
+    operation->type = operand.ins->type;
     Expr result;
     result.type = EXPR_INS;
     result.ins = operation;
     return result;
 }
 
-static Expr parse_assign(Parser *p, Token binop, Expr left, Expr right) {
+static Expr parse_bit_not(Parser *p, Expr operand) {
+    operand = discharge_expr(p, operand);
+    IrIns *neg1 = emit(p, IR_KI32); // ~a is equivalent to 'a ^ -1'
+    neg1->ki32 = -1;
+    IrIns *operation = emit(p, IR_XOR);
+    operation->l = operand.ins;
+    operation->r = neg1;
+    operation->type = operand.ins->type;
+    Expr result;
+    result.type = EXPR_INS;
+    result.ins = operation;
+    return result;
+}
+
+static Expr parse_unary(Parser *p) {
+    Tk unop = p->l.tk;
+    if (UNOP_PREC[unop]) {
+        next_tk(&p->l); // Skip the unary operator
+        Expr operand = parse_subexpr(p, UNOP_PREC[unop]);
+        switch (unop) {
+            case '-': return parse_neg(p, operand);
+            case '~': return parse_bit_not(p, operand);
+            default: UNREACHABLE();
+        }
+    } else {
+        return parse_operand(p);
+    }
+}
+
+static Expr parse_operation(Parser *p, Tk binop, Expr left, Expr right) {
+    left = discharge_expr(p, left);
+    right = discharge_expr(p, right);
+
+    // 'left' and 'right' should have the same type
+    assert(left.ins->type.prim == right.ins->type.prim);
+    assert(left.ins->type.ptrs == right.ins->type.ptrs);
+
+    IrIns *operation = emit(p, BINOP_OPCODES[binop]);
+    operation->l = left.ins;
+    operation->r = right.ins;
+    operation->type = left.ins->type; // Same as 'right.ins->type'
+    Expr result;
+    result.type = EXPR_INS;
+    result.ins = operation;
+    return result;
+}
+
+static Expr parse_assign(Parser *p, Tk binop, Expr left, Expr right) {
     if (binop != '=') {
         right = parse_operation(p, binop, left, right);
     }
-    assert(left.type == EXPR_LOCAL);
+    assert(left.type == EXPR_LOCAL); // Can only assign to lvalues
     right = discharge_expr(p, right);
     IrIns *store = emit(p, IR_STORE);
     store->l = left.local->alloc;
@@ -329,7 +333,7 @@ static Expr parse_assign(Parser *p, Token binop, Expr left, Expr right) {
     return right; // Assignment evaluates to its right operand
 }
 
-static Expr parse_binary(Parser *p, Token binop, Expr left, Expr right) {
+static Expr parse_binary(Parser *p, Tk binop, Expr left, Expr right) {
     switch (binop) {
     case '=': case TK_ADD_ASSIGN: case TK_SUB_ASSIGN:
     case TK_MUL_ASSIGN: case TK_DIV_ASSIGN: case TK_MOD_ASSIGN:
@@ -344,25 +348,29 @@ static Expr parse_binary(Parser *p, Token binop, Expr left, Expr right) {
 static Expr parse_subexpr(Parser *p, Prec min_prec) {
     Expr left = parse_unary(p);
     while (BINOP_PREC[p->l.tk] > min_prec) {
-        Token binop = p->l.tk;
-        next_tk(&p->l); // Skip the binary operator
-        Expr right = parse_subexpr(p, BINOP_PREC[binop] - IS_RIGHT_ASSOC[binop]);
-        left = parse_binary(p, binop, left, right);
+        Tk binop = p->l.tk;
+        next_tk(&p->l); // Skip the operator
+
+        Prec prec = BINOP_PREC[binop] - IS_RIGHT_ASSOC[binop];
+        Expr right = parse_subexpr(p, prec); // Parse the right operand
+        left = parse_binary(p, binop, left, right); // Emit the operation
     }
     return left;
 }
 
 static Expr parse_expr(Parser *p) {
-    return parse_subexpr(p, PREC_NONE);
+    return parse_subexpr(p, PREC_NONE); // Wrapper for 'parse_subexpr'
 }
 
 
-// ---- Statements
+// ---- Statements ------------------------------------------------------------
 
 static Type parse_decl_spec(Parser *p) {
     expect_tk(&p->l, TK_INT); // The only type available for now
     next_tk(&p->l);
-    Type type = {.prim = T_i32, .ptrs = 0};
+    Type type;
+    type.prim = T_i32;
+    type.ptrs = 0;
     return type;
 }
 
@@ -374,12 +382,11 @@ static void parse_decl(Parser *p) {
     name[p->l.len] = '\0';
     next_tk(&p->l);
 
-    IrIns *alloc = emit(p, IR_ALLOC);
+    IrIns *alloc = emit(p, IR_ALLOC); // Create some stack space
     alloc->type = type;
-    alloc->type.ptrs += 1; // The result is a POINTER to the value
-    if (p->l.tk != ';') { // Definition, not just a declaration
-        expect_tk(&p->l, '=');
-        next_tk(&p->l);
+    alloc->type.ptrs += 1; // The result of IR_ALLOC is a POINTER to the value
+    if (p->l.tk == '=') { // Check if we have a definition too
+        next_tk(&p->l); // Skip the '=' token
         Expr expr = parse_expr(p); // Value
         expr = discharge_expr(p, expr);
         IrIns *store = emit(p, IR_STORE);
@@ -387,16 +394,22 @@ static void parse_decl(Parser *p) {
         store->r = expr.ins;
         store->type = expr.ins->type;
     }
-    Local local = {.name = name, .type = type, .alloc = alloc};
+    Local local;
+    local.name = name;
+    local.type = type;
+    local.alloc = alloc;
     def_local(p, local);
 }
 
 static void parse_stmt(Parser *p); // Forward declaration
 
-static void parse_body_stmt(Parser *p) {
-    int num_locals = p->num_locals;
+// The body for an 'if', 'while', etc. statement can be either a single
+// statement (with its OWN local variable scope), or a braced block of multiple
+// statements.
+static void parse_body(Parser *p) {
+    int num_locals = p->num_locals; // Create a new scope for locals
     parse_stmt(p);
-    p->num_locals = num_locals;
+    p->num_locals = num_locals; // Get rid of any locals defined in the block
 }
 
 static void parse_if(Parser *p) {
@@ -412,36 +425,32 @@ static void parse_if(Parser *p) {
     cond_br->cond = cond.ins;
 
     BB *body = new_bb();
+    cond_br->true = body;
     p->bb->next = body;
     p->bb = body;
-    p->ins = &body->head;
-    parse_body_stmt(p);
-    IrIns *end_br = emit(p, IR_BR); // End the if body with an unconditional branch
+    p->ins = &body->ir_head;
+    parse_body(p);
+    IrIns *end_br = emit(p, IR_BR); // End the body with a branch to 'after'
 
     BB *after = new_bb();
-    end_br->br = after;
-    cond_br->true = body;
     cond_br->false = after;
+    end_br->br = after;
     p->bb->next = after;
     p->bb = after;
-    p->ins = &after->head;
+    p->ins = &after->ir_head;
 }
 
 static void parse_ret(Parser *p) {
     expect_tk(&p->l, TK_RETURN);
     next_tk(&p->l);
     IrIns *value = NULL;
-    if (p->l.tk != ';') {
+    if (p->l.tk != ';') { // If we're returning something
         Expr expr = parse_expr(p);
         expr = discharge_expr(p, expr);
         value = expr.ins;
     }
-    if (value) {
-        IrIns *ret = emit(p, IR_RET1);
-        ret->l = value;
-    } else {
-        emit(p, IR_RET0);
-    }
+    IrIns *ret = emit(p, value ? IR_RET1 : IR_RET0);
+    ret->l = value;
 }
 
 static void parse_braced_block(Parser *p); // Forward declaration
@@ -472,7 +481,7 @@ static void parse_braced_block(Parser *p) {
 }
 
 
-// ---- Top Level Module
+// ---- Top Level Module ------------------------------------------------------
 
 static IrIns * parse_fn_arg(Parser *p, int narg) {
     Type arg_type = parse_decl_spec(p); // Type
@@ -483,20 +492,24 @@ static IrIns * parse_fn_arg(Parser *p, int narg) {
     next_tk(&p->l);
 
     IrIns *farg = emit(p, IR_FARG); // Define the argument
-    farg->narg = narg;
+    farg->arg_num = narg;
     farg->type = arg_type;
-    Local local = {.name = name, .type = arg_type, .alloc = NULL}; // Create a local
+    Local local; // Create a local for the function argument
+    local.name = name;
+    local.type = arg_type;
+    local.alloc = NULL;
     def_local(p, local);
     return farg;
 }
 
 static void parse_fn_args(Parser *p) {
-    int idx = 0;
-    IrIns *first_farg = NULL;
+    int arg_num = 0;
+    IrIns *first = NULL;
+    // Put all the IR_FARGs together at the start of the function
     while (p->l.tk != '\0' && p->l.tk != ')') {
-        IrIns *farg = parse_fn_arg(p, idx++);
-        if (!first_farg) {
-            first_farg = farg;
+        IrIns *farg = parse_fn_arg(p, arg_num++); // Parse an argument
+        if (!first) { // Save the first one
+            first = farg;
         }
         if (p->l.tk == ',') { // Check for another argument
             next_tk(&p->l);
@@ -505,16 +518,16 @@ static void parse_fn_args(Parser *p) {
             break;
         }
     }
-    idx = 0;
-    for (IrIns *farg = first_farg; farg && farg->op == IR_FARG; farg = farg->next) {
-        IrIns *alloc = emit(p, IR_ALLOC); // Create IR_ALLOC for each argument
+    arg_num = 0;
+    for (IrIns *farg = first; farg && farg->op == IR_FARG; farg = farg->next) {
+        IrIns *alloc = emit(p, IR_ALLOC); // Create IR_ALLOC for each
         alloc->type = farg->type;
-        alloc->type.ptrs += 1; // Alloc creates stack space that points to the type
+        alloc->type.ptrs += 1; // IR_ALLOC returns a POINTER
         IrIns *store = emit(p, IR_STORE);
         store->l = alloc;
         store->r = farg;
         store->type = farg->type;
-        p->locals[idx++].alloc = alloc;
+        p->locals[arg_num++].alloc = alloc;
     }
 }
 
@@ -535,15 +548,17 @@ static FnDecl * parse_fn_decl(Parser *p) {
 }
 
 static void ensure_ret(FnDef *fn) {
-    for (BB *bb = fn->entry; bb; bb = bb->next) { // Iterate over all basic blocks
-        IrIns *end = bb->head;
-        if (!end) {
-            bb->head = new_ins(IR_RET0);
+    for (BB *bb = fn->entry; bb; bb = bb->next) { // Iterate over all BBs
+        IrIns *end = bb->ir_head;
+        if (!end) { // BB is empty, put RET0 in it
+            bb->ir_head = new_ins(IR_RET0);
             return;
         }
         while (end->next) { end = end->next; } // Find the last instruction
-        if (end->op != IR_BR && end->op != IR_CONDBR && end->op != IR_RET0 && end->op != IR_RET1) {
-            end->next = new_ins(IR_RET0); // Add RET if the last instruction isn't a terminator
+        // The last instruction in a basic block must be a branch or ret
+        if (end->op != IR_BR && end->op != IR_CONDBR &&
+                end->op != IR_RET0 && end->op != IR_RET1) {
+            end->next = new_ins(IR_RET0);
         }
     }
 }
@@ -552,16 +567,18 @@ static FnDef * parse_fn_def(Parser *p) {
     FnDef *fn = malloc(sizeof(FnDef));
     fn->entry = new_bb();
     p->bb = fn->entry;
-    p->ins = &fn->entry->head;
+    p->ins = &fn->entry->ir_head;
+    int num_locals = p->num_locals; // 'parse_fn_args' creates new locals
     fn->decl = parse_fn_decl(p); // Declaration
     parse_braced_block(p); // Body
+    p->num_locals = num_locals; // Get rid of the function's arguments
     ensure_ret(fn);
     return fn;
 }
 
 static Module * parse_module(Parser *p) {
     Module *module = malloc(sizeof(Module));
-    module->fns = parse_fn_def(p);
+    module->fn = parse_fn_def(p); // Only one function for now
     return module;
 }
 
@@ -588,7 +605,7 @@ Module * parse(char *file) {
     }
     Parser p;
     p.l = new_lexer(source);
-    next_tk(&p.l);
+    next_tk(&p.l); // Lex the first token in the file
     p.bb = NULL;
     p.ins = NULL;
     p.num_locals = 0;

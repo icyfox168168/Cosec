@@ -1,6 +1,23 @@
 
+#include <stdlib.h>
+
 #include "IR.h"
 
-int size_of(Type type) {
-    return 4; // Only type is T_I32, which is 4 bytes
+BB * new_bb() {
+    BB *bb = malloc(sizeof(BB));
+    bb->next = NULL;
+    bb->label = -1;
+    bb->ir_head = NULL;
+    bb->asm_head = NULL;
+    return bb;
+}
+
+int size_of(Type t) {
+    if (t.ptrs > 0) {
+        return 8; // Pointers are always 8 bytes
+    }
+    switch (t.prim) {
+        case T_void: return 0;
+        case T_i32:  return 4;
+    }
 }

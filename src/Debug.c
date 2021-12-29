@@ -4,26 +4,46 @@
 
 #include "Debug.h"
 
+static char *IR_PRIM_NAMES[] = {
+#define X(name) #name,
+    IR_PRIMS
+#undef X
+};
+
+static char *IR_OPCODE_NAMES[] = {
+#define X(opcode, nargs) #opcode,
+    IR_OPCODES
+#undef X
+};
+
+static int IR_OPCODE_NARGS[] = {
+#define X(opcode, nargs) nargs,
+    IR_OPCODES
+#undef X
+};
+
 static void print_type(Type t) {
-    printf("%s", IR_PRIM_NAMES[t.prim]);
+    printf("%s", IR_PRIM_NAMES[t.prim]); // Primitive name
     for (int i = 0; i < t.ptrs; i++) {
-        printf("*");
+        printf("*"); // Star for every pointer indirection
     }
 }
 
 static void print_ins(IrIns *ins) {
-    printf("\t%.4d\t", ins->debug_idx);
-    print_type(ins->type);
-    printf("\t%s\t", IR_OPCODE_NAMES[ins->op]);
-    if (strlen(IR_OPCODE_NAMES[ins->op]) < 8) {
-        printf("\t"); // Some opcode names are less than the length of a tab
-    }
+    printf("\t"); // Indent all instructions by a tab
+    printf("%.4d\t", ins->debug_idx); // Instruction's index in the function
+    print_type(ins->type); // Return type (void if control flow)
+    printf("\t%s\t", IR_OPCODE_NAMES[ins->op]); // Opcode name
     switch (ins->op) { // Handle special case instructions (e.g., constants)
-    case IR_FARG: printf("%d", ins->narg); break;
-    case IR_KI32: printf("%+d", ins->ki32); break;
-    case IR_ALLOC: printf("%s", IR_PRIM_NAMES[ins->type.prim]); break;
-    case IR_BR: printf("%d", ins->br->label); break;
-    case IR_CONDBR: printf("%.4d\t%d\t%d", ins->cond->debug_idx, ins->true->label, ins->false->label); break;
+    case IR_FARG:   printf("%d", ins->arg_num); break;
+    case IR_KI32:   printf("%+d", ins->ki32); break;
+    case IR_ALLOC:  printf("%s", IR_PRIM_NAMES[ins->type.prim]); break;
+    case IR_BR:     printf("%d", ins->br->label); break;
+    case IR_CONDBR:
+        printf("%.4d\t", ins->cond->debug_idx); // Condition
+        printf("%d\t", ins->true->label); // True branch
+        printf("%d", ins->false->label); // False branch
+        break;
     default:
         if (IR_OPCODE_NARGS[ins->op] >= 1) { // Single argument instructions
             printf("%.4d", ins->l->debug_idx);
@@ -38,20 +58,26 @@ static void print_ins(IrIns *ins) {
 
 static void print_bb(BB *bb) {
     printf("%d:\n", bb->label); // Print the BB label
-    for (IrIns *ins = bb->head; ins; ins = ins->next) { // Number every instruction
-        print_ins(ins);
+    for (IrIns *ins = bb->ir_head; ins; ins = ins->next) {
+        print_ins(ins); // Print every instruction in the BB
+    }
+}
+
+// Assigns a numeric label to each basic block (in it's 'label' field) and a
+// numeric label to each instruction in the function (in it's 'debug_idx' field)
+static void number_bb_and_ins(FnDef *fn) {
+    int bb_idx = 0, ins_idx = 0;
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        bb->label = bb_idx++; // Number the BBs
+        for (IrIns *ins = bb->ir_head; ins; ins = ins->next) {
+            ins->debug_idx = ins_idx++; // Number the IR instructions
+        }
     }
 }
 
 void print_fn(FnDef *fn) {
-    int bb_idx = 0, ins_idx = 0;
-    for (BB *bb = fn->entry; bb; bb = bb->next) { // Number the basic blocks and instructions first
-        bb->label = bb_idx++; // Number the basic blocks
-        for (IrIns *ins = bb->head; ins; ins = ins->next) {
-            ins->debug_idx = ins_idx++; // Number the IR instructions
-        }
-    }
-    for (BB *bb = fn->entry; bb; bb = bb->next) { // Print the basic blocks
-        print_bb(bb);
+    number_bb_and_ins(fn);
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        print_bb(bb); // Print BBs in the order they appear in the source
     }
 }

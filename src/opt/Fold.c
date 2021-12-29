@@ -18,24 +18,23 @@ static void fold_arith(IrIns *ins) {
     // Fold arithmetic instructions in place (don't need to update their uses)
     ins->op = IR_KI32;
     ins->ki32 = v;
-    // If either of the KI32 arguments are now unused, DCE will eliminate them
+    // If either KI32 arguments are now unused, DCE will eliminate them...
 }
 
 static void fold_ins(IrIns *ins) {
     switch (ins->op) {
-        case IR_ADD: case IR_SUB: case IR_MUL: case IR_DIV: fold_arith(ins); break;
-        default: break; // Can't fold anything else
-    }
-}
-
-static void fold_bb(BB *bb) {
-    for (IrIns *ins = bb->head; ins; ins = ins->next) {
-        fold_ins(ins);
+        case IR_ADD: case IR_SUB: case IR_MUL: case IR_DIV:
+            fold_arith(ins); break;
+        default: break; // Can't fold anything else at the moment
     }
 }
 
 void opt_fold(FnDef *fn) {
     // Iterate over every instruction and check if it can be folded (don't need
     // to bother with conditionals and control flow yet)
-    fold_bb(fn->entry);
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        for (IrIns *ins = bb->ir_head; ins; ins = ins->next) {
+            fold_ins(ins);
+        }
+    }
 }
