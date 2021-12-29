@@ -12,7 +12,6 @@
 
 typedef struct asm_fn {
     struct asm_fn *next; // Linked list of functions
-    char *name; // This function's name
     BB *entry;  // First basic block
 } AsmFn;
 

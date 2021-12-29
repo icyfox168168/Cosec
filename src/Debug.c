@@ -38,11 +38,11 @@ static void print_ins(IrIns *ins) {
     case IR_FARG:   printf("%d", ins->arg_num); break;
     case IR_KI32:   printf("%+d", ins->ki32); break;
     case IR_ALLOC:  printf("%s", IR_PRIM_NAMES[ins->type.prim]); break;
-    case IR_BR:     printf("%d", ins->br->label); break;
+    case IR_BR:     printf("%s", ins->br->label); break;
     case IR_CONDBR:
         printf("%.4d\t", ins->cond->debug_idx); // Condition
-        printf("%d\t", ins->true->label); // True branch
-        printf("%d", ins->false->label); // False branch
+        printf("%s\t", ins->true->label); // True branch
+        printf("%s", ins->false->label); // False branch
         break;
     default:
         if (IR_OPCODE_NARGS[ins->op] >= 1) { // Single argument instructions
@@ -57,18 +57,15 @@ static void print_ins(IrIns *ins) {
 }
 
 static void print_bb(BB *bb) {
-    printf("%d:\n", bb->label); // Print the BB label
+    printf("%s:\n", bb->label); // Print the BB label
     for (IrIns *ins = bb->ir_head; ins; ins = ins->next) {
         print_ins(ins); // Print every instruction in the BB
     }
 }
 
-// Assigns a numeric label to each basic block (in it's 'label' field) and a
-// numeric label to each instruction in the function (in it's 'debug_idx' field)
-static void number_bb_and_ins(FnDef *fn) {
-    int bb_idx = 0, ins_idx = 0;
+static void number_ins(FnDef *fn) {
+    int ins_idx = 0;
     for (BB *bb = fn->entry; bb; bb = bb->next) {
-        bb->label = bb_idx++; // Number the BBs
         for (IrIns *ins = bb->ir_head; ins; ins = ins->next) {
             ins->debug_idx = ins_idx++; // Number the IR instructions
         }
@@ -76,7 +73,7 @@ static void number_bb_and_ins(FnDef *fn) {
 }
 
 void print_fn(FnDef *fn) {
-    number_bb_and_ins(fn);
+    number_ins(fn);
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         print_bb(bb); // Print BBs in the order they appear in the source
     }

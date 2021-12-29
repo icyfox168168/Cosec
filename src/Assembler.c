@@ -6,7 +6,8 @@
 #include "Assembler.h"
 
 typedef struct {
-    AsmIns **ins;
+    BB *bb;         // Current basic block that we're assembling
+    AsmIns **ins;   // Spot for the next-emitted instruction to go
     int stack_size; // Number of bytes allocated on the stack by 'IR_ALLOC's
     int vreg;       // Next virtual register slot to use
 } Assembler;
@@ -27,7 +28,7 @@ static Reg FN_ARGS_REGS[] = {
     REG_R9,
 };
 
-static AsmOpcode IROP_TO_SETXX[IR_LAST] = { // Convert IR into SETcc x86 opcode
+static AsmOpcode IR_OP_TO_SETXX[IR_LAST] = { // Convert IR to SETxx opcode
     [IR_EQ] = X86_SETE,
     [IR_NEQ] = X86_SETNE,
     [IR_SLT] = X86_SETL,
@@ -40,8 +41,35 @@ static AsmOpcode IROP_TO_SETXX[IR_LAST] = { // Convert IR into SETcc x86 opcode
     [IR_UGE] = X86_SETAE,
 };
 
+static AsmOpcode IR_OP_TO_JXX[IR_LAST] = { // Convert IR to Jxx opcode
+    [IR_EQ] = X86_JE,
+    [IR_NEQ] = X86_JNE,
+    [IR_SLT] = X86_JL,
+    [IR_SLE] = X86_JLE,
+    [IR_SGT] = X86_JG,
+    [IR_SGE] = X86_JGE,
+    [IR_ULT] = X86_JB,
+    [IR_ULE] = X86_JBE,
+    [IR_UGT] = X86_JA,
+    [IR_UGE] = X86_JAE,
+};
+
+static AsmOpcode INVERT_COND[X86_LAST] = { // Invert a conditional opcode
+    [X86_JE] = X86_JNE, // Jxx
+    [X86_JNE] = X86_JE,
+    [X86_JL] = X86_JGE,
+    [X86_JLE] = X86_JG,
+    [X86_JG] = X86_JLE,
+    [X86_JGE] = X86_JL,
+    [X86_JB] = X86_JAE,
+    [X86_JBE] = X86_JA,
+    [X86_JA] = X86_JBE,
+    [X86_JAE] = X86_JB,
+};
+
 static Assembler new_asm() {
     Assembler a;
+    a.bb = NULL;
     a.ins = NULL;
     a.stack_size = 0;
     a.vreg = 0;
@@ -51,7 +79,6 @@ static Assembler new_asm() {
 static AsmFn * new_fn() {
     AsmFn *fn = malloc(sizeof(AsmFn));
     fn->next = NULL;
-    fn->name = NULL;
     fn->entry = NULL;
     return fn;
 }
@@ -88,6 +115,7 @@ static AsmOperand discharge_imm(Assembler *a, IrIns *ir_k) {
     AsmOperand result;
     result.type = OP_VREG;
     result.vreg = ir_k->vreg;
+    result.subsection = REG_64;
     return result;
 }
 
@@ -105,30 +133,35 @@ static AsmOperand discharge_load(Assembler *a, IrIns *ir_load) {
     AsmOperand result;
     result.type = OP_VREG;
     result.vreg = ir_load->vreg;
+    result.subsection = REG_64;
     return result;
 }
 
-static AsmOperand discharge_rel(Assembler *a, IrIns *ir_rel) {
-    AsmOperand l = discharge(a, ir_rel->l); // Left operand to cmp always a vreg
+static AsmIns * asm_cmp(Assembler *a, IrIns *ir_cmp) {
+    AsmOperand l = discharge(a, ir_cmp->l); // Left operand to cmp always a vreg
     AsmOperand r;
-    if (ir_rel->r->op == IR_KI32) {
+    if (ir_cmp->r->op == IR_KI32) {
         r.type = OP_IMM;
-        r.imm = ir_rel->r->ki32;
-    } else if (ir_rel->r->op == IR_LOAD) {
-        IrIns *ir_load = ir_rel->r;
+        r.imm = ir_cmp->r->ki32;
+    } else if (ir_cmp->r->op == IR_LOAD) {
+        IrIns *ir_load = ir_cmp->r;
         r.type = OP_MEM;
         r.base = REG_RBP;
         r.scale = 1;
         r.index = -ir_load->l->stack_slot;
     } else {
-        r = discharge(a, ir_rel->r);
+        r = discharge(a, ir_cmp->r);
     }
     AsmIns *cmp = emit(a, X86_CMP); // Comparison
     cmp->l = l;
     cmp->r = r;
+    return cmp;
+}
 
+static AsmOperand discharge_rel(Assembler *a, IrIns *ir_rel) {
+    asm_cmp(a, ir_rel); // Emit a CMP instruction
     ir_rel->vreg = a->vreg++;
-    AsmIns *set = emit(a, IROP_TO_SETXX[ir_rel->op]); // SETcc operation
+    AsmIns *set = emit(a, IR_OP_TO_SETXX[ir_rel->op]); // SETcc operation
     set->l.type = OP_VREG;
     set->l.vreg = ir_rel->vreg;
     set->l.subsection = REG_8L; // Lowest 8 bits of the vreg
@@ -149,6 +182,7 @@ static AsmOperand discharge_rel(Assembler *a, IrIns *ir_rel) {
     AsmOperand result;
     result.type = OP_VREG;
     result.vreg = ir_rel->vreg;
+    result.subsection = REG_64;
     return result;
 }
 
@@ -160,6 +194,7 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
         AsmOperand result;
         result.type = OP_VREG;
         result.vreg = ins->vreg;
+        result.subsection = REG_64;
         return result; // Already in a virtual register
     }
     switch (ins->op) {
@@ -186,7 +221,9 @@ static void asm_farg(Assembler *a, IrIns *ir_farg) {
 }
 
 static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
-    a->stack_size += size_of(ir_alloc->type); // Create some space on the stack
+    Type t = ir_alloc->type;
+    t.ptrs -= 1; // IR_ALLOC returns a POINTER to what we want stack space for
+    a->stack_size += size_of(t); // Create some space on the stack
     ir_alloc->stack_slot = a->stack_size;
     // Create a vreg for the POINTER returned by the ALLOC instruction
     ir_alloc->vreg = a->vreg++;
@@ -256,8 +293,6 @@ static void asm_div(Assembler *a, IrIns *ir_div) {
         divisor.index = -ir_load->l->stack_slot;
     } else { // Including immediate (can't divide by immediate)
         divisor = discharge(a, ir_div->r);
-        divisor.type = OP_VREG;
-        divisor.vreg = ir_div->r->vreg;
     }
 
     AsmIns *mov1 = emit(a, X86_MOV); // Mov dividend into eax
@@ -308,19 +343,45 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
     ir_shift->vreg = shift->l.vreg; // Result stored into left operand
 }
 
+static void asm_br(Assembler *a, IrIns *ir_br) {
+    if (ir_br->br == a->bb->next) { // If the branch is to the next BB
+        return; // Don't emit a JMP to the very next instruction
+    }
+    AsmIns *jmp = emit(a, X86_JMP);
+    jmp->l.bb = ir_br->br;
+}
+
+static void asm_cond_br(Assembler *a, IrIns *ir_br) {
+    // One of the true case or false case MUST be the next block (either the
+    // true case or the false case must fall through)
+    assert(ir_br->true == a->bb->next || ir_br->false == a->bb->next);
+    asm_cmp(a, ir_br->cond); // Emit a CMP instruction
+    AsmOpcode op = IR_OP_TO_JXX[ir_br->cond->op];
+    if (a->bb->next == ir_br->true) { // If the true case falls through
+        op = INVERT_COND[op]; // Invert the condition
+    }
+    AsmIns *jmp = emit(a, op); // Emit a conditional JMP instruction
+    jmp->l.type = OP_LABEL;
+    if (a->bb->next == ir_br->true) { // If true case falls through
+        jmp->l.bb = ir_br->false; // Jump to the false block
+    } else { // Otherwise, the false case falls through
+        jmp->l.bb = ir_br->true; // Jump to the true block
+    }
+}
+
 static void asm_ret0(Assembler *a) {
-    AsmIns *pop = emit(a, X86_POP); // Post-amble
+    AsmIns *pop = emit(a, X86_POP); // pop rbp
     pop->l.type = OP_REG;
     pop->l.reg = REG_RBP;
     emit(a, X86_RET);
 }
 
 static void asm_ret1(Assembler *a, IrIns *ir_ret) {
-    AsmOperand discharged = discharge(a, ir_ret->l);
+    AsmOperand result = discharge(a, ir_ret->l);
     AsmIns *mov = emit(a, X86_MOV); // mov rax, <value>
     mov->l.type = OP_REG;
     mov->l.reg = REG_RAX;
-    mov->r = discharged;
+    mov->r = result;
     asm_ret0(a);
 }
 
@@ -341,8 +402,10 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
         case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
         case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
             break; // Don't do anything for comparisons
-        case IR_RET0: asm_ret0(a); break;
-        case IR_RET1: asm_ret1(a, ir_ins); break;
+        case IR_BR:     asm_br(a, ir_ins); break;
+        case IR_CONDBR: asm_cond_br(a, ir_ins); break;
+        case IR_RET0:   asm_ret0(a); break;
+        case IR_RET1:   asm_ret1(a, ir_ins); break;
         default: printf("unsupported IR instruction to assembler\n"); exit(1);
     }
 }
@@ -365,22 +428,18 @@ static void asm_fn_preamble(Assembler *a) {
     ins->r.reg = REG_RSP;
 }
 
-static char * prepend_underscore(char *str) {
-    char *out = malloc(strlen(str) + 2);
-    out[0] = '_';
-    strcpy(&out[1], str);
-    return out;
-}
-
 static AsmFn * asm_fn(FnDef *ir_fn) {
-    Assembler a = new_asm();
     AsmFn *fn = new_fn();
-    fn->name = prepend_underscore(ir_fn->decl->name);
     fn->entry = ir_fn->entry;
-    a.ins = &fn->entry->asm_head;
-    asm_fn_preamble(&a);
-    for (BB *bb = ir_fn->entry; bb; bb = bb->next) {
-        asm_bb(&a, ir_fn->entry);
+
+    Assembler a = new_asm();
+    for (BB *bb = ir_fn->entry; bb; bb = bb->next) { // Assemble each BB
+        a.bb = bb;
+        a.ins = &bb->asm_head;
+        if (bb == ir_fn->entry) {
+            asm_fn_preamble(&a); // Add the function preamble to the entry BB
+        }
+        asm_bb(&a, bb);
     }
     return fn;
 }
@@ -389,7 +448,7 @@ static AsmFn * asm_fn(FnDef *ir_fn) {
 // launches a user-space program, it's the 'start' function. 'start' performs
 // some set-up and shut-down things before and after calling 'main':
 // 1. Puts the arguments to 'main' (argc, argv, envp; given by the kernel on
-//    the stack) into registers according to the System V ABI calling convention
+//    the stack) into registers according to the ABI calling convention
 // 2. Calls the 'exit' syscall after 'main' is finished
 //
 // The full start stub is (see https://en.wikipedia.org/wiki/Crt0):
@@ -405,11 +464,12 @@ static AsmFn * asm_fn(FnDef *ir_fn) {
 //     syscall
 static AsmFn * asm_start(AsmFn *main) {
     AsmFn *start = new_fn();
-    start->name = "_start";
     BB *entry = new_bb();
+    entry->label = "_start";
     start->entry = entry;
 
     Assembler a = new_asm();
+    a.bb = entry;
     a.ins = &entry->asm_head;
 
     AsmIns *i;
@@ -443,9 +503,9 @@ static AsmFn * asm_start(AsmFn *main) {
 AsmModule * assemble(Module *ir_mod) {
     AsmModule *module = malloc(sizeof(AsmModule));
     module->fns = asm_fn(ir_mod->fn);
-    module->main = module->fns; // Only one function so far, so make it 'main'
+    module->main = module->fns;
+
     AsmFn *start = asm_start(module->main); // Insert 'start' stub to call main
-    start->next = module->fns;
-    module->fns = start;
+    module->fns->next = start;
     return module;
 }

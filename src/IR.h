@@ -168,6 +168,17 @@ typedef enum {
     X(POP, "pop", 1)         \
                              \
     /* Control flow */       \
+    X(JMP, "jmp", 1) /* Unconditional jump */ \
+    X(JE, "je", 1)   /* Conditional jumps */ \
+    X(JNE, "jne", 1)         \
+    X(JL, "jl", 1)           \
+    X(JLE, "jle", 1)         \
+    X(JG, "jg", 1)           \
+    X(JGE, "jge", 1)         \
+    X(JB, "jb", 1)           \
+    X(JBE, "jbe", 1)         \
+    X(JA, "ja", 1)           \
+    X(JAE, "jae", 1)         \
     X(CALL, "call", 1)       \
     X(RET, "ret", 0)         \
     X(SYSCALL, "syscall", 0)
@@ -176,6 +187,7 @@ typedef enum {
 #define X(name, _, __) X86_ ## name,
     X86_OPCODES
 #undef X
+    X86_LAST, // Required for hash-maps indexed by assembly opcode
 } AsmOpcode;
 
 typedef enum {
@@ -206,6 +218,10 @@ typedef struct asm_ins {
 
 // ---- Basic Block -----------------------------------------------------------
 
+// Use a unified basic block structure for both the SSA and assembly IR, since
+// this simplifies assembly construction. The CFG structure is the same in
+// each IR (although represented more implicitly in the assembly IR).
+//
 // The ONLY jump allowed in a basic block is the last instruction; this
 // maintains the property that basic blocks are a LINEAR sequence of
 // instructions that always execute in order (useful for optimisation)
@@ -213,7 +229,7 @@ typedef struct bb {
     // Maintain an ordering over basic blocks in a function, the same as the
     // order in which they appear in the C source code
     struct bb *next;
-    int label;
+    char *label;
     IrIns *ir_head;
     AsmIns *asm_head;
 } BB;

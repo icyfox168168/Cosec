@@ -3,8 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <math.h>
 
 #include "Parser.h"
+
+#define BB_PREFIX ".BB_"
 
 typedef struct {
     Type type;
@@ -563,6 +566,29 @@ static void ensure_ret(FnDef *fn) {
     }
 }
 
+static char * generate_bb_label(int idx) {
+    int num_digits = (idx == 0) ? 1 : (int) log10(idx) + 1;
+    char *out = malloc(strlen(BB_PREFIX) + num_digits + 1);
+    sprintf(out, BB_PREFIX "%d", idx);
+    return out;
+}
+
+static void label_bbs(FnDef *fn) {
+    int idx = 0;
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        if (!bb->label) {
+            bb->label = generate_bb_label(idx++);
+        }
+    }
+}
+
+static char * prepend_underscore(char *str) {
+    char *out = malloc(strlen(str) + 2);
+    out[0] = '_';
+    strcpy(&out[1], str);
+    return out;
+}
+
 static FnDef * parse_fn_def(Parser *p) {
     FnDef *fn = malloc(sizeof(FnDef));
     fn->entry = new_bb();
@@ -570,9 +596,11 @@ static FnDef * parse_fn_def(Parser *p) {
     p->ins = &fn->entry->ir_head;
     int num_locals = p->num_locals; // 'parse_fn_args' creates new locals
     fn->decl = parse_fn_decl(p); // Declaration
+    fn->entry->label = prepend_underscore(fn->decl->name);
     parse_braced_block(p); // Body
     p->num_locals = num_locals; // Get rid of the function's arguments
     ensure_ret(fn);
+    label_bbs(fn); // Add a label to BBs without one
     return fn;
 }
 

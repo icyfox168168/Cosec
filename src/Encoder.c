@@ -45,7 +45,7 @@ static void encode_operand(AsmOperand op, FILE *out) {
         }
         fprintf(out, "]");
         break;
-    case OP_LABEL: fprintf(out, ".BB%d", op.bb->label); break;
+    case OP_LABEL: fprintf(out, "%s", op.bb->label); break;
     }
 }
 
@@ -64,15 +64,14 @@ static void encode_ins(AsmIns *ins, FILE *out) {
 }
 
 static void encode_bb(BB *bb, FILE *out) {
-    printf(".BB%d:", bb->label); // BB's label
+    fprintf(out, "%s:\n", bb->label); // BB's label
     for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
         encode_ins(ins, out); // Print every instruction in the BB
     }
 }
 
 static void encode_fn(AsmFn *fn, FILE *out) {
-    fprintf(out, "global %s\n", fn->name); // Make every function global
-    fprintf(out, "%s:\n", fn->name); // Print the label for function entry
+    fprintf(out, "global %s\n", fn->entry->label); // Make every function global
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         encode_bb(bb, out); // Print every basic block in the function
     }
@@ -81,6 +80,8 @@ static void encode_fn(AsmFn *fn, FILE *out) {
 void encode_nasm(AsmModule *m, FILE *out) {
     for (AsmFn *fn = m->fns; fn; fn = fn->next) {
         encode_fn(fn, out); // Print every function in the module
-        printf("\n"); // Separated by a new line
+        if (fn->next) {
+            fprintf(out, "\n"); // Separated by a new line
+        }
     }
 }

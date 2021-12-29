@@ -6,7 +6,7 @@
 BB * new_bb() {
     BB *bb = malloc(sizeof(BB));
     bb->next = NULL;
-    bb->label = -1;
+    bb->label = NULL;
     bb->ir_head = NULL;
     bb->asm_head = NULL;
     return bb;
