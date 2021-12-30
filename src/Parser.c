@@ -21,8 +21,6 @@ typedef struct {
     IrIns **ins;    // Next instruction to emit
     Local *locals;  // Local variables in scope
     int num_locals, max_locals;
-    IrIns *k_true;  // True constant
-    IrIns *k_false; // False constant
 } Parser;
 
 static IrIns * new_ins(IrOpcode op) {
@@ -171,18 +169,20 @@ static IrOpcode BINOP_OPCODES[TK_LAST] = {
 typedef enum {
     EXPR_INS,   // Result of an operation
     EXPR_LOCAL, // Local variable that's yet to be loaded (no IR_LOAD emitted)
+    EXPR_COND,  // Conditional branch (e.g., in an '&&' expression)
 } ExprType;
 
 typedef struct {
     ExprType type;
     union {
-        IrIns *ins;   // For EXPR_INS
+        IrIns *ins;   // For EXPR_INS and EXPR_COND (always points to a CONDBR)
         Local *local; // For EXPR_LOCAL
     };
 } Expr;
 
 // Patches a jump list's empty 'true' cases to the given basic block.
-static void patch_true_case(Expr cond, BB *true) {
+static void patch_true(Expr cond, BB *true) {
+    assert(cond.type == EXPR_COND);
     assert(cond.ins->op == IR_CONDBR);
     IrIns *br = cond.ins;
     while (br) {
@@ -194,7 +194,8 @@ static void patch_true_case(Expr cond, BB *true) {
 }
 
 // Patches a jump list's empty 'false' cases to the given basic block.
-static void patch_false_case(Expr cond, BB *false) {
+static void patch_false(Expr cond, BB *false) {
+    assert(cond.type == EXPR_COND);
     assert(cond.ins->op == IR_CONDBR);
     IrIns *br = cond.ins;
     while (br) {
@@ -205,6 +206,44 @@ static void patch_false_case(Expr cond, BB *false) {
     }
 }
 
+// Patches a jump list's 'true' and 'false' cases to the given basic block, and
+// constructs a phi linked list where the values from the predecessor blocks
+// are either 'true' or 'false', depending on the block.
+static Phi * patch_true_and_false(Parser *p, Expr cond, BB *target) {
+    IrIns *k_false = emit(p, IR_KI32); // True and false constants
+    k_false->ki32 = 0;
+    k_false->type.prim = T_i32;
+    k_false->type.ptrs = 0;
+    IrIns *k_true = emit(p, IR_KI32);
+    k_true->ki32 = 1;
+    k_true->type.prim = T_i32;
+    k_true->type.ptrs = 0;
+
+    Phi *head = NULL;
+    Phi **next_pair = &head;
+    IrIns *br = cond.ins->jmp_list; // Start from the second-last condition
+    while (br) {
+        if (!br->false) {
+            br->false = target;
+            *next_pair = new_phi(br->bb, k_false);
+            next_pair = &(*next_pair)->next;
+        }
+        if (!br->true) {
+            br->true = target;
+            *next_pair = new_phi(br->bb, k_true);
+            next_pair = &(*next_pair)->next;
+        }
+        br = br->jmp_list;
+    }
+    // Handle the final condition separately
+    IrIns *last_cond = cond.ins->cond; // Keep track of the last condition
+    cond.ins->op = IR_BR; // Convert the last conditional branch into an
+    cond.ins->br = target;    // unconditional one
+    *next_pair = new_phi(cond.ins->bb, last_cond);
+    return head;
+}
+
+// Emits an IR_LOAD instruction for a local variable
 static Expr discharge_local(Parser *p, Expr local) {
     IrIns *load = emit(p, IR_LOAD);
     load->l = local.local->alloc;
@@ -215,70 +254,56 @@ static Expr discharge_local(Parser *p, Expr local) {
     return result;
 }
 
+// Creates a new basic block and an IR_PHI instruction for the result of a
+// condition that's used as a boolean variable
 static Expr discharge_cond(Parser *p, Expr cond) {
-    assert(cond.type == EXPR_INS); // Ensure we are discharging a conditional
+    assert(cond.type == EXPR_COND); // Ensure we are discharging a conditional
     assert(cond.ins->op == IR_CONDBR);
 
-    BB *bb = new_bb();
+    BB *bb = new_bb(); // Basic block for the result of the condition
     p->bb->next = bb;
     p->bb = bb;
     p->ins = &bb->ir_head;
 
-    // Construct a PHI chain based on the jump list (and patch the jumps too)
-    IrIns *phi = emit(p, IR_PHI);
-    phi->phi = NULL;
+    Phi *phi_chain = patch_true_and_false(p, cond, bb);
+    IrIns *phi = emit(p, IR_PHI); // Phi instruction for the result
+    phi->phi = phi_chain;
     phi->type.prim = T_i32;
     phi->type.ptrs = 0;
-    Phi **next_pair = &phi->phi;
-    IrIns *br = cond.ins->jmp_list; // Handle 'cond' separately
-    while (br) {
-        if (!br->false) {
-            br->false = bb;
-            *next_pair = new_phi(br->bb, p->k_false);
-            next_pair = &(*next_pair)->next;
-        }
-        if (!br->true) {
-            br->true = bb;
-            *next_pair = new_phi(br->bb, p->k_true);
-            next_pair = &(*next_pair)->next;
-        }
-        br = br->jmp_list;
-    }
-    IrIns *last_cond = cond.ins->cond; // Keep track of the last condition
-    cond.ins->op = IR_BR; // Convert the last conditional branch into an
-    cond.ins->br = bb;    // unconditional one
-    *next_pair = new_phi(cond.ins->bb, last_cond);
-
     Expr result;
     result.type = EXPR_INS;
     result.ins = phi;
     return result;
 }
 
-// Converts all expressions into EXPR_INS. Currently, this only involves
-// emitting an IR_LOAD instruction for EXPR_LOCALs
-static Expr discharge_expr(Parser *p, Expr expr) {
+// Convert all expressions into EXPR_INS
+static Expr discharge(Parser *p, Expr expr) {
     if (expr.type == EXPR_LOCAL) {
         return discharge_local(p, expr);
-    } else if (expr.type == EXPR_INS && expr.ins->op == IR_CONDBR) {
+    } else if (expr.type == EXPR_COND) {
         return discharge_cond(p, expr);
     } else {
         return expr; // Already discharged
     }
 }
 
-// Converts an expression into a condition (e.g., for if or while statements)
-// by emitting a comparison and a branch
+// Convert an expression into a condition (e.g., for an if or while statement)
+// by emitting a comparison (if needed) and a branch
 static Expr to_cond(Parser *p, Expr expr) {
-    if (expr.type == EXPR_INS && expr.ins->op == IR_CONDBR) {
-        return expr; // Already a condition
+    if (expr.type == EXPR_COND) {
+        return expr; // Already a condition, don't need to do anything
     }
-    expr = discharge_expr(p, expr);
+    expr = discharge(p, expr);
     if (!(expr.ins->op >= IR_EQ && expr.ins->op <= IR_UGE)) {
-        // Need to emit a comparison to branch on
+        // 'expr' isn't a comparison that we can branch on; emit a branch on the
+        // truth value of 'expr'
+        IrIns *false = emit(p, IR_KI32);
+        false->ki32 = 0;
+        false->type.prim = T_i32;
+        false->type.ptrs = 0;
         IrIns *cmp = emit(p, IR_NEQ);
         cmp->l = expr.ins;
-        cmp->r = p->k_false;
+        cmp->r = false;
         cmp->type.prim = T_i32;
         cmp->type.ptrs = 0;
         expr.ins = cmp;
@@ -286,7 +311,7 @@ static Expr to_cond(Parser *p, Expr expr) {
     IrIns *br = emit(p, IR_CONDBR); // Emit a branch on the condition
     br->cond = expr.ins;
     Expr result;
-    result.type = EXPR_INS;
+    result.type = EXPR_COND;
     result.ins = br;
     return result;
 }
@@ -349,7 +374,7 @@ static Expr parse_operand(Parser *p) {
 }
 
 static Expr parse_neg(Parser *p, Expr operand) {
-    operand = discharge_expr(p, operand);
+    operand = discharge(p, operand);
     IrIns *zero = emit(p, IR_KI32); // -a is equivalent to '0 - a'
     zero->ki32 = 0;
     IrIns *operation = emit(p, IR_SUB);
@@ -363,7 +388,7 @@ static Expr parse_neg(Parser *p, Expr operand) {
 }
 
 static Expr parse_bit_not(Parser *p, Expr operand) {
-    operand = discharge_expr(p, operand);
+    operand = discharge(p, operand);
     IrIns *neg1 = emit(p, IR_KI32); // ~a is equivalent to 'a ^ -1'
     neg1->ki32 = -1;
     IrIns *operation = emit(p, IR_XOR);
@@ -392,8 +417,8 @@ static Expr parse_unary(Parser *p) {
 }
 
 static Expr parse_operation(Parser *p, Tk binop, Expr left, Expr right) {
-    left = discharge_expr(p, left);
-    right = discharge_expr(p, right);
+    left = discharge(p, left);
+    right = discharge(p, right);
 
     // 'left' and 'right' should have the same type
     assert(left.ins->type.prim == right.ins->type.prim);
@@ -414,7 +439,7 @@ static Expr parse_assign(Parser *p, Tk binop, Expr left, Expr right) {
         right = parse_operation(p, binop, left, right);
     }
     assert(left.type == EXPR_LOCAL); // Can only assign to lvalues
-    right = discharge_expr(p, right);
+    right = discharge(p, right);
     IrIns *store = emit(p, IR_STORE);
     store->l = left.local->alloc;
     store->r = right.ins;
@@ -453,10 +478,10 @@ static Expr parse_binary_left(Parser *p, Tk binop, Expr left) {
         BB *bb = new_bb();
         if (binop == TK_AND) {
             // For '&&', if this condition is true then move on to the next one
-            patch_true_case(left, bb);
+            patch_true(left, bb);
         } else {
             // For '||', if this condition is false then try the next one
-            patch_false_case(left, bb);
+            patch_false(left, bb);
         }
         p->bb->next = bb; // Add basic block for the right operand
         p->bb = bb;
@@ -508,7 +533,7 @@ static void parse_decl(Parser *p) {
     if (p->l.tk == '=') { // Check if we have a definition too
         next_tk(&p->l); // Skip the '=' token
         Expr expr = parse_expr(p); // Value
-        expr = discharge_expr(p, expr);
+        expr = discharge(p, expr);
         IrIns *store = emit(p, IR_STORE);
         store->l = alloc;
         store->r = expr.ins;
@@ -543,7 +568,7 @@ static void parse_if(Parser *p) {
     next_tk(&p->l);
 
     BB *body = new_bb();
-    patch_true_case(cond, body);
+    patch_true(cond, body);
     p->bb->next = body;
     p->bb = body;
     p->ins = &body->ir_head;
@@ -551,7 +576,7 @@ static void parse_if(Parser *p) {
     IrIns *end_br = emit(p, IR_BR); // End the body with a branch to 'after'
 
     BB *after = new_bb();
-    patch_false_case(cond, after);
+    patch_false(cond, after);
     end_br->br = after;
     p->bb->next = after;
     p->bb = after;
@@ -564,7 +589,7 @@ static void parse_ret(Parser *p) {
     IrIns *value = NULL;
     if (p->l.tk != ';') { // If we're returning something
         Expr expr = parse_expr(p);
-        expr = discharge_expr(p, expr);
+        expr = discharge(p, expr);
         value = expr.ins;
     }
     IrIns *ret = emit(p, value ? IR_RET1 : IR_RET0);
@@ -665,16 +690,11 @@ static FnDecl * parse_fn_decl(Parser *p) {
     return decl;
 }
 
-static void parse_fn_body(Parser *p) {
-    p->k_false = emit(p, IR_KI32); // True and false constants
-    p->k_false->ki32 = 0;
-    p->k_false->type.prim = T_i32;
-    p->k_false->type.ptrs = 0;
-    p->k_true = emit(p, IR_KI32);
-    p->k_true->ki32 = 1;
-    p->k_true->type.prim = T_i32;
-    p->k_true->type.ptrs = 0;
-    parse_braced_block(p); // Body
+static char * prepend_underscore(char *str) {
+    char *out = malloc(strlen(str) + 2);
+    out[0] = '_';
+    strcpy(&out[1], str);
+    return out;
 }
 
 static void ensure_ret(FnDef *fn) {
@@ -695,7 +715,7 @@ static void ensure_ret(FnDef *fn) {
     }
 }
 
-static char * generate_bb_label(int idx) {
+static char * bb_label(int idx) {
     int num_digits = (idx == 0) ? 1 : (int) log10(idx) + 1;
     char *out = malloc(strlen(BB_PREFIX) + num_digits + 1);
     sprintf(out, BB_PREFIX "%d", idx);
@@ -706,16 +726,9 @@ static void label_bbs(FnDef *fn) {
     int idx = 0;
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         if (!bb->label) {
-            bb->label = generate_bb_label(idx++);
+            bb->label = bb_label(idx++);
         }
     }
-}
-
-static char * prepend_underscore(char *str) {
-    char *out = malloc(strlen(str) + 2);
-    out[0] = '_';
-    strcpy(&out[1], str);
-    return out;
 }
 
 static FnDef * parse_fn_def(Parser *p) {
@@ -726,7 +739,7 @@ static FnDef * parse_fn_def(Parser *p) {
     int num_locals = p->num_locals; // 'parse_fn_args' creates new locals
     fn->decl = parse_fn_decl(p); // Declaration
     fn->entry->label = prepend_underscore(fn->decl->name);
-    parse_fn_body(p); // Body
+    parse_braced_block(p); // Body
     p->num_locals = num_locals; // Get rid of the function's arguments
     ensure_ret(fn);
     label_bbs(fn); // Add a label to BBs without one
