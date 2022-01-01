@@ -181,6 +181,7 @@ typedef enum {
 // branch targets that need to point to the false case.
 typedef struct jmp_list {
     BB **jmp;
+    IrIns *br; // The IR_CONDBR instruction referred to by 'jmp'
     struct jmp_list *next;
 } JmpList;
 
@@ -202,9 +203,10 @@ static Expr new_expr(ExprType type) {
     return expr;
 }
 
-static JmpList * new_jmp_list(BB **jmp) {
+static JmpList * new_jmp_list(BB **jmp, IrIns *br) {
     JmpList *j = malloc(sizeof(JmpList));
     j->jmp = jmp;
+    j->br = br;
     j->next = NULL;
     return j;
 }
@@ -230,43 +232,6 @@ static void merge_jmp_lists(JmpList **head, JmpList *to_append) {
     *head = to_append;
 }
 
-// Patches a jump list's 'true' and 'false' cases to the given basic block, and
-// constructs a phi linked list where the values from the predecessor blocks
-// are either 'true' or 'false', depending on the block.
-static Phi * patch_true_and_false(Parser *p, Expr cond, BB *target) {
-    IrIns *k_false = emit(p, IR_KI32); // True and false constants
-    k_false->ki32 = 0;
-    k_false->type.prim = T_i32;
-    k_false->type.ptrs = 0;
-    IrIns *k_true = emit(p, IR_KI32);
-    k_true->ki32 = 1;
-    k_true->type.prim = T_i32;
-    k_true->type.ptrs = 0;
-
-    Phi *head = NULL;
-//    Phi **next_pair = &head;
-//    IrIns *br = cond.ins->jmp_list; // Start from the second-last condition
-//    while (br) {
-//        if (!br->false) {
-//            br->false = target;
-//            *next_pair = new_phi(br->bb, k_false);
-//            next_pair = &(*next_pair)->next;
-//        }
-//        if (!br->true) {
-//            br->true = target;
-//            *next_pair = new_phi(br->bb, k_true);
-//            next_pair = &(*next_pair)->next;
-//        }
-//        br = br->jmp_list;
-//    }
-//    // Handle the final condition separately
-//    IrIns *last_cond = cond.ins->cond; // Keep track of the last condition
-//    cond.ins->op = IR_BR; // Convert the last conditional branch into an
-//    cond.ins->br = target;    // unconditional one
-//    *next_pair = new_phi(cond.ins->bb, last_cond);
-    return head;
-}
-
 // Emits an IR_LOAD instruction for a local variable
 static Expr discharge_local(Parser *p, Expr local) {
     IrIns *load = emit(p, IR_LOAD);
@@ -288,13 +253,46 @@ static Expr discharge_cond(Parser *p, Expr cond) {
     p->bb = bb;
     p->ins = &bb->ir_head;
 
-    Phi *phi_chain = patch_true_and_false(p, cond, bb);
-    IrIns *phi = emit(p, IR_PHI); // Phi instruction for the result
-    phi->phi = phi_chain;
-    phi->type.prim = T_i32;
-    phi->type.ptrs = 0;
+    IrIns *k_false = emit(p, IR_KI32); // True and false constants
+    k_false->ki32 = 0;
+    k_false->type.prim = T_i32;
+    k_false->type.ptrs = 0;
+    IrIns *k_true = emit(p, IR_KI32);
+    k_true->ki32 = 1;
+    k_true->type.prim = T_i32;
+    k_true->type.ptrs = 0;
+
+    Phi *phi_head = NULL; // Construct the phi chain
+    Phi **phi = &phi_head;
+    for (JmpList *true = cond.true_list; true; true = true->next) {
+        if (true->br == cond.ins) {
+            continue; // Handle the last instruction separately
+        }
+        *phi = new_phi(true->br->bb, k_true);
+        phi = &(*phi)->next;
+    }
+    for (JmpList *false = cond.false_list; false; false = false->next) {
+        if (false->br == cond.ins) {
+            continue; // Handle the last instruction separately
+        }
+        *phi = new_phi(false->br->bb, k_false);
+        phi = &(*phi)->next;
+    }
+    patch_jmp_list(cond.true_list, bb); // Patch the true and false list here
+    patch_jmp_list(cond.false_list, bb);
+
+    // Handle the last condition in the phi chain separately
+    IrIns *last_cond = cond.ins->cond;
+    cond.ins->op = IR_BR; // Change the last conditional branch into an
+    cond.ins->br = bb;    // unconditional one
+    *phi = new_phi(cond.ins->bb, last_cond);
+
+    IrIns *phi_ins = emit(p, IR_PHI); // Phi instruction for the result
+    phi_ins->phi = phi_head;
+    phi_ins->type.prim = T_i32;
+    phi_ins->type.ptrs = 0;
     Expr result = new_expr(EXPR_INS);
-    result.ins = phi;
+    result.ins = phi_ins;
     return result;
 }
 
@@ -334,8 +332,8 @@ static Expr to_cond(Parser *p, Expr expr) {
     br->cond = expr.ins;
     Expr result = new_expr(EXPR_COND);
     result.ins = br;
-    result.true_list = new_jmp_list(&br->true);
-    result.false_list = new_jmp_list(&br->false);
+    result.true_list = new_jmp_list(&br->true, br);
+    result.false_list = new_jmp_list(&br->false, br);
     return result;
 }
 
