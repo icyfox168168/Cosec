@@ -30,7 +30,6 @@ static IrIns * new_ins(IrOpcode op) {
     ins->next = NULL;
     ins->type.prim = T_void;
     ins->type.ptrs = 0;
-    ins->jmp_list = NULL;
     return ins;
 }
 
@@ -89,6 +88,7 @@ typedef enum {
 static Prec UNOP_PREC[TK_LAST] = {
     ['-'] = PREC_UNARY, // Negation
     ['~'] = PREC_UNARY, // Bitwise not
+    ['!'] = PREC_UNARY, // Logical not
 };
 
 static Prec BINOP_PREC[TK_LAST] = {
@@ -172,38 +172,62 @@ typedef enum {
     EXPR_COND,  // Conditional branch (e.g., in an '&&' expression)
 } ExprType;
 
+// A jump list is a linked list of pointers into 'IR_CONDBR' instruction
+// arguments (either 'ins->true' or 'ins->false' branch targets) that need to
+// be back-filled when the destination for an expression is determined.
+//
+// For an EXPR_COND, the 'true_list' refers to all the branch targets that
+// need to point to the true case, and the 'false_list' refers to all the
+// branch targets that need to point to the false case.
+typedef struct jmp_list {
+    BB **jmp;
+    struct jmp_list *next;
+} JmpList;
+
 typedef struct {
     ExprType type;
     union {
-        IrIns *ins;   // For EXPR_INS and EXPR_COND (always points to a CONDBR)
+        IrIns *ins;   // For EXPR_INS
         Local *local; // For EXPR_LOCAL
+        struct { IrIns *_; JmpList *true_list, *false_list; }; // For EXPR_COND
     };
 } Expr;
 
-// Patches a jump list's empty 'true' cases to the given basic block.
-static void patch_true(Expr cond, BB *true) {
-    assert(cond.type == EXPR_COND);
-    assert(cond.ins->op == IR_CONDBR);
-    IrIns *br = cond.ins;
-    while (br) {
-        if (!br->true) {
-            br->true = true;
-        }
-        br = br->jmp_list;
+static Expr new_expr(ExprType type) {
+    Expr expr;
+    expr.type = type;
+    expr.ins = NULL;
+    expr.true_list = NULL;
+    expr.false_list = NULL;
+    return expr;
+}
+
+static JmpList * new_jmp_list(BB **jmp) {
+    JmpList *j = malloc(sizeof(JmpList));
+    j->jmp = jmp;
+    j->next = NULL;
+    return j;
+}
+
+// Patch the branches in a jump list so that they all point to 'target'
+static void patch_jmp_list(JmpList *head, BB *target) {
+    while (head) {
+        *head->jmp = target;
+        JmpList *next = head->next;
+        free(head); // Free the jump list as we go
+        head = next;
     }
 }
 
-// Patches a jump list's empty 'false' cases to the given basic block.
-static void patch_false(Expr cond, BB *false) {
-    assert(cond.type == EXPR_COND);
-    assert(cond.ins->op == IR_CONDBR);
-    IrIns *br = cond.ins;
-    while (br) {
-        if (!br->false) {
-            br->false = false;
-        }
-        br = br->jmp_list;
+// Append the given jump list to the end of the other
+static void merge_jmp_lists(JmpList **head, JmpList *to_append) {
+    if (!to_append) {
+        return;
     }
+    while (*head) { // Find the end of the jump list
+        head = &(*head)->next;
+    }
+    *head = to_append;
 }
 
 // Patches a jump list's 'true' and 'false' cases to the given basic block, and
@@ -220,26 +244,26 @@ static Phi * patch_true_and_false(Parser *p, Expr cond, BB *target) {
     k_true->type.ptrs = 0;
 
     Phi *head = NULL;
-    Phi **next_pair = &head;
-    IrIns *br = cond.ins->jmp_list; // Start from the second-last condition
-    while (br) {
-        if (!br->false) {
-            br->false = target;
-            *next_pair = new_phi(br->bb, k_false);
-            next_pair = &(*next_pair)->next;
-        }
-        if (!br->true) {
-            br->true = target;
-            *next_pair = new_phi(br->bb, k_true);
-            next_pair = &(*next_pair)->next;
-        }
-        br = br->jmp_list;
-    }
-    // Handle the final condition separately
-    IrIns *last_cond = cond.ins->cond; // Keep track of the last condition
-    cond.ins->op = IR_BR; // Convert the last conditional branch into an
-    cond.ins->br = target;    // unconditional one
-    *next_pair = new_phi(cond.ins->bb, last_cond);
+//    Phi **next_pair = &head;
+//    IrIns *br = cond.ins->jmp_list; // Start from the second-last condition
+//    while (br) {
+//        if (!br->false) {
+//            br->false = target;
+//            *next_pair = new_phi(br->bb, k_false);
+//            next_pair = &(*next_pair)->next;
+//        }
+//        if (!br->true) {
+//            br->true = target;
+//            *next_pair = new_phi(br->bb, k_true);
+//            next_pair = &(*next_pair)->next;
+//        }
+//        br = br->jmp_list;
+//    }
+//    // Handle the final condition separately
+//    IrIns *last_cond = cond.ins->cond; // Keep track of the last condition
+//    cond.ins->op = IR_BR; // Convert the last conditional branch into an
+//    cond.ins->br = target;    // unconditional one
+//    *next_pair = new_phi(cond.ins->bb, last_cond);
     return head;
 }
 
@@ -248,8 +272,7 @@ static Expr discharge_local(Parser *p, Expr local) {
     IrIns *load = emit(p, IR_LOAD);
     load->l = local.local->alloc;
     load->type = local.local->type;
-    Expr result;
-    result.type = EXPR_INS;
+    Expr result = new_expr(EXPR_INS);
     result.ins = load;
     return result;
 }
@@ -270,8 +293,7 @@ static Expr discharge_cond(Parser *p, Expr cond) {
     phi->phi = phi_chain;
     phi->type.prim = T_i32;
     phi->type.ptrs = 0;
-    Expr result;
-    result.type = EXPR_INS;
+    Expr result = new_expr(EXPR_INS);
     result.ins = phi;
     return result;
 }
@@ -310,9 +332,10 @@ static Expr to_cond(Parser *p, Expr expr) {
     }
     IrIns *br = emit(p, IR_CONDBR); // Emit a branch on the condition
     br->cond = expr.ins;
-    Expr result;
-    result.type = EXPR_COND;
+    Expr result = new_expr(EXPR_COND);
     result.ins = br;
+    result.true_list = new_jmp_list(&br->true);
+    result.false_list = new_jmp_list(&br->false);
     return result;
 }
 
@@ -324,8 +347,7 @@ static Expr parse_const_int(Parser *p) {
     k->ki32 = (int32_t) value;
     k->type.prim = T_i32;
     k->type.ptrs = 0;
-    Expr result;
-    result.type = EXPR_INS;
+    Expr result = new_expr(EXPR_INS);
     result.ins = k;
     return result;
 }
@@ -347,8 +369,7 @@ static Expr parse_local(Parser *p) {
         exit(1);
     }
     next_tk(&p->l);
-    Expr result;
-    result.type = EXPR_LOCAL;
+    Expr result = new_expr(EXPR_LOCAL);
     result.local = local;
     return result;
 }
@@ -381,8 +402,7 @@ static Expr parse_neg(Parser *p, Expr operand) {
     operation->l = zero;
     operation->r = operand.ins;
     operation->type = operand.ins->type;
-    Expr result;
-    result.type = EXPR_INS;
+    Expr result = new_expr(EXPR_INS);
     result.ins = operation;
     return result;
 }
@@ -395,10 +415,17 @@ static Expr parse_bit_not(Parser *p, Expr operand) {
     operation->l = operand.ins;
     operation->r = neg1;
     operation->type = operand.ins->type;
-    Expr result;
-    result.type = EXPR_INS;
+    Expr result = new_expr(EXPR_INS);
     result.ins = operation;
     return result;
+}
+
+static Expr parse_not(Parser *p, Expr operand) {
+    operand = to_cond(p, operand);
+    JmpList *true_list = operand.true_list; // Swap true and false lists
+    operand.true_list = operand.false_list;
+    operand.false_list = true_list;
+    return operand;
 }
 
 static Expr parse_unary(Parser *p) {
@@ -409,6 +436,7 @@ static Expr parse_unary(Parser *p) {
         switch (unop) {
             case '-': return parse_neg(p, operand);
             case '~': return parse_bit_not(p, operand);
+            case '!': return parse_not(p, operand);
             default: UNREACHABLE();
         }
     } else {
@@ -428,8 +456,7 @@ static Expr parse_operation(Parser *p, Tk binop, Expr left, Expr right) {
     operation->l = left.ins;
     operation->r = right.ins;
     operation->type = left.ins->type; // Same as 'right.ins->type'
-    Expr result;
-    result.type = EXPR_INS;
+    Expr result = new_expr(EXPR_INS);
     result.ins = operation;
     return result;
 }
@@ -447,13 +474,21 @@ static Expr parse_assign(Parser *p, Tk binop, Expr left, Expr right) {
     return right; // Assignment evaluates to its right operand
 }
 
-static Expr parse_and_or(Parser *p, Expr left, Expr right) {
+static Expr parse_and(Parser *p, Expr left, Expr right) {
     right = to_cond(p, right);
-    IrIns **jmp_head = &right.ins->jmp_list;
-    while (*jmp_head) { // Find the head of 'right's jump list
-        jmp_head = &((*jmp_head)->jmp_list);
-    }
-    *jmp_head = left.ins; // Patch 'left' into 'right's jump list
+    // Left's true case should target the right operand
+    patch_jmp_list(left.true_list, left.ins->bb->next);
+    // Merge left's false list onto the right operand's false list
+    merge_jmp_lists(&right.false_list, left.false_list);
+    return right;
+}
+
+static Expr parse_or(Parser *p, Expr left, Expr right) {
+    right = to_cond(p, right);
+    // Left's false case should target the right operand
+    patch_jmp_list(left.false_list, left.ins->bb->next);
+    // Merge left's true list onto the right operand's true list
+    merge_jmp_lists(&right.true_list, left.true_list);
     return right;
 }
 
@@ -465,8 +500,10 @@ static Expr parse_binary(Parser *p, Tk binop, Expr left, Expr right) {
     case TK_AND_ASSIGN: case TK_OR_ASSIGN:  case TK_XOR_ASSIGN:
     case TK_LSHIFT_ASSIGN: case TK_RSHIFT_ASSIGN:
         return parse_assign(p, binop, left, right);
-    case TK_AND: case TK_OR:
-        return parse_and_or(p, left, right);
+    case TK_AND:
+        return parse_and(p, left, right);
+    case TK_OR:
+        return parse_or(p, left, right);
     default:
         return parse_operation(p, binop, left, right);
     }
@@ -475,15 +512,8 @@ static Expr parse_binary(Parser *p, Tk binop, Expr left, Expr right) {
 static Expr parse_binary_left(Parser *p, Tk binop, Expr left) {
     if (binop == TK_AND || binop == TK_OR) {
         left = to_cond(p, left);
-        BB *bb = new_bb();
-        if (binop == TK_AND) {
-            // For '&&', if this condition is true then move on to the next one
-            patch_true(left, bb);
-        } else {
-            // For '||', if this condition is false then try the next one
-            patch_false(left, bb);
-        }
-        p->bb->next = bb; // Add basic block for the right operand
+        BB *bb = new_bb(); // New basic block for the right operand
+        p->bb->next = bb;
         p->bb = bb;
         p->ins = &bb->ir_head;
     }
@@ -568,7 +598,7 @@ static void parse_if(Parser *p) {
     next_tk(&p->l);
 
     BB *body = new_bb();
-    patch_true(cond, body);
+    patch_jmp_list(cond.true_list, body);
     p->bb->next = body;
     p->bb = body;
     p->ins = &body->ir_head;
@@ -576,7 +606,7 @@ static void parse_if(Parser *p) {
     IrIns *end_br = emit(p, IR_BR); // End the body with a branch to 'after'
 
     BB *after = new_bb();
-    patch_false(cond, after);
+    patch_jmp_list(cond.false_list, after);
     end_br->br = after;
     p->bb->next = after;
     p->bb = after;

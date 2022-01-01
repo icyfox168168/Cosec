@@ -45,11 +45,11 @@ static void print_ins(IrIns *ins) {
     case IR_FARG:   printf("%d", ins->arg_num); break;
     case IR_KI32:   printf("%+d", ins->ki32); break;
     case IR_ALLOC:  printf("%s", IR_PRIM_NAMES[ins->type.prim]); break;
-    case IR_BR:     printf("%s", ins->br->label); break;
+    case IR_BR:     printf("%s", ins->br ? ins->br->label : "NULL"); break;
     case IR_CONDBR:
         printf("%.4d\t", ins->cond->debug_idx); // Condition
-        printf("%s\t", ins->true->label); // True branch
-        printf("%s", ins->false->label); // False branch
+        printf("%s\t", ins->true ? ins->true->label : "NULL"); // True branch
+        printf("%s", ins->false ? ins->false->label : "NULL"); // False branch
         break;
     case IR_PHI: print_phi(ins); break;
     default:

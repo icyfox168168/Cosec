@@ -99,11 +99,6 @@ typedef struct ir_ins {
             struct bb *true, *false;
         };
     };
-    // The jump list maintains a linked list of IR_CONDBR instructions
-    // corresponding to each of the conditions in an expression involving '&&'
-    // and '||'. 'jmp_list' refers to the PREVIOUS IR_CONDBR instruction in the
-    // chain, so all the jumps are backwards to earlier-emitted instructions.
-    struct ir_ins *jmp_list;
 
     // Assembler info
     int stack_slot; // For IR_ALLOC; location on the stack relative to rbp
