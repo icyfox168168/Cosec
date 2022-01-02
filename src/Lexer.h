@@ -33,6 +33,7 @@
     /* All keyword tokens must be together! */ \
     K(INT, "int")                   \
     K(IF, "if")                     \
+    K(ELSE, "else")                 \
     K(RETURN, "return")
 
 typedef int Tk;

@@ -678,22 +678,48 @@ static void parse_body(Parser *p) {
 
 static void parse_if(Parser *p) {
     expect_tk(&p->l, TK_IF);
-    next_tk(&p->l);
-    expect_tk(&p->l, '(');
-    next_tk(&p->l);
-    Expr cond = parse_expr(p);
-    cond = to_cond(p, cond);
-    expect_tk(&p->l, ')');
-    next_tk(&p->l);
+    JmpList *jmp_list_head = NULL;
+    JmpList **jmp_list = &jmp_list_head;
+    BB *after;
+    int has_else = 0;
+    while (p->l.tk == TK_IF) { // Parse 'if' and 'else if's
+        next_tk(&p->l);
+        expect_tk(&p->l, '(');
+        next_tk(&p->l);
+        Expr cond = parse_expr(p); // Condition
+        cond = to_cond(p, cond);
+        expect_tk(&p->l, ')');
+        next_tk(&p->l);
 
-    BB *body = emit_bb(p);
-    patch_jmp_list(cond.true_list, body);
-    parse_body(p);
-    IrIns *end_br = emit(p, IR_BR); // End body with branch to 'after'
+        BB *body = emit_bb(p); // Body
+        patch_jmp_list(cond.true_list, body);
+        parse_body(p);
+        IrIns *end_br = emit(p, IR_BR); // End body with branch
+        // Add the body's end branch to the jump list
+        *jmp_list = new_jmp_list(&end_br->br, end_br);
+        jmp_list = &((*jmp_list)->next);
 
-    BB *after = emit_bb(p);
-    patch_jmp_list(cond.false_list, after);
-    end_br->br = after;
+        after = emit_bb(p);
+        patch_jmp_list(cond.false_list, after);
+
+        has_else = 0;
+        if (p->l.tk == TK_ELSE) { // Check for an 'else'
+            has_else = 1;
+            next_tk(&p->l); // Skip over 'else'
+        } else {
+            break;
+        }
+    }
+    if (has_else) { // Deal with 'else'
+        parse_body(p);
+        IrIns *end_br = emit(p, IR_BR); // End body with branch
+        // Add the body's end branch to the jump list
+        *jmp_list = new_jmp_list(&end_br->br, end_br);
+        jmp_list = &((*jmp_list)->next);
+        after = emit_bb(p); // New BB for everything after the if statement
+    }
+    // Patch the branches at the end of all the bodies to here
+    patch_jmp_list(jmp_list_head, after);
 }
 
 static void parse_ret(Parser *p) {
