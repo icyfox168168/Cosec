@@ -149,6 +149,7 @@ typedef enum {
 #define X86_OPCODES          \
     /* Memory access */      \
     X(MOV, "mov", 2)         \
+    X(MOVZX, "movzx", 2) /* zero extend, for unsigned ints */ \
     X(LEA, "lea", 2)         \
                              \
     /* Arithmetic */         \
@@ -236,7 +237,7 @@ typedef struct asm_ins {
 // this simplifies assembly construction. The CFG structure is the same in
 // each IR (although represented more implicitly in the assembly IR).
 //
-// The ONLY jump allowed in a basic block is the last_bb instruction; this
+// The ONLY jump allowed in a basic block is the last instruction; this
 // maintains the property that basic blocks are a LINEAR sequence of
 // instructions that always execute in order (useful for optimisation)
 typedef struct bb {

@@ -12,7 +12,7 @@ typedef struct {
 
 typedef struct {
     FnDecl *decl;
-    BB *entry, *last_bb;
+    BB *entry, *last;
 } FnDef;
 
 typedef struct {

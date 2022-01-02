@@ -37,30 +37,30 @@ static FnDef * new_fn() {
     FnDef *fn = malloc(sizeof(FnDef));
     fn->decl = NULL;
     fn->entry = NULL;
-    fn->last_bb = NULL;
+    fn->last = NULL;
     return fn;
 }
 
 static BB * emit_bb(Parser *p) {
     BB *bb = new_bb();
-    bb->prev = p->fn->last_bb;
-    if (p->fn->last_bb) {
-        p->fn->last_bb->next = bb;
+    bb->prev = p->fn->last;
+    if (p->fn->last) {
+        p->fn->last->next = bb;
     }
-    p->fn->last_bb = bb;
+    p->fn->last = bb;
     return bb;
 }
 
 static void delete_bb(Parser *p, BB *bb) {
     assert(bb->prev); // CAN'T delete the entry BB!
     bb->prev->next = bb->next;
-    if (p->fn->last_bb == bb) {
-        p->fn->last_bb = bb->prev;
+    if (p->fn->last == bb) {
+        p->fn->last = bb->prev;
     }
 }
 
 static IrIns * emit(Parser *p, IrOpcode op) { // Wrapper
-    return emit_ir(p->fn->last_bb, op);
+    return emit_ir(p->fn->last, op);
 }
 
 static void def_local(Parser *p, Local local) {
@@ -296,19 +296,33 @@ static Expr discharge_cond(Parser *p, Expr cond) {
         *phi = new_phi(false->br->bb, k_false);
         phi = &(*phi)->next;
     }
-    patch_jmp_list(cond.true_list, bb); // Patch the true and false list here
-    patch_jmp_list(cond.false_list, bb);
 
     IrIns *last_cond = cond.ins->cond;
     // If there's only one predecessor block (empty phi), then roll back the
     // conditional
     if (!phi_head) {
         delete_bb(p, bb); // Roll back the new BB we created
+        int is_neg = *(cond.true_list->jmp) == cond.ins->false;
         delete_ir(cond.ins); // Delete the IR_CONDBR instruction
+        IrIns *result_ins = last_cond;
+        if (is_neg) { // If we need to negate the condition
+            k_true = emit(p, IR_KI32);
+            k_true->ki32 = 1;
+            k_true->type.prim = T_i32;
+            k_true->type.ptrs = 0;
+            IrIns *xor = emit(p, IR_XOR);
+            xor->l = result_ins;
+            xor->r = k_true;
+            xor->type = result_ins->type;
+            result_ins = xor;
+        }
         Expr result = new_expr(EXPR_INS);
-        result.ins = last_cond; // Result is the condition instruction
+        result.ins = result_ins; // Result is the condition instruction
         return result;
     }
+
+    patch_jmp_list(cond.true_list, bb); // Patch the true and false list here
+    patch_jmp_list(cond.false_list, bb);
 
     // Handle the last condition in the phi chain separately
     cond.ins->op = IR_BR; // Change the last conditional branch into an
@@ -345,13 +359,13 @@ static Expr to_cond(Parser *p, Expr expr) {
     if (!(expr.ins->op >= IR_EQ && expr.ins->op <= IR_UGE)) {
         // 'expr' isn't a comparison that we can branch on; emit a branch on the
         // truth value of 'expr'
-        IrIns *false = emit(p, IR_KI32);
-        false->ki32 = 0;
-        false->type.prim = T_i32;
-        false->type.ptrs = 0;
+        IrIns *k_false = emit(p, IR_KI32);
+        k_false->ki32 = 0;
+        k_false->type.prim = T_i32;
+        k_false->type.ptrs = 0;
         IrIns *cmp = emit(p, IR_NEQ);
         cmp->l = expr.ins;
-        cmp->r = false;
+        cmp->r = k_false;
         cmp->type.prim = T_i32;
         cmp->type.ptrs = 0;
         expr.ins = cmp;

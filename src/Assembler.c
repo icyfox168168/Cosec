@@ -155,7 +155,7 @@ static AsmOperand discharge_rel(Assembler *a, IrIns *ir_rel) {
     and->r.type = OP_IMM;
     and->r.imm = 1;
 
-    AsmIns *movzx = emit(a, X86_MOV); // Sign extend the lowest 8 bits
+    AsmIns *movzx = emit(a, X86_MOVZX); // Zero extend the lowest 8 bits
     movzx->l.type = OP_VREG;
     movzx->l.vreg = ir_rel->vreg;
     movzx->r.type = OP_VREG;
