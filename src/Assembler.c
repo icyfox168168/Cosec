@@ -111,6 +111,7 @@ static AsmOperand discharge_load(Assembler *a, IrIns *ir_load) {
     mov->r.type = OP_MEM; // Load from memory
     mov->r.base = REG_RBP; // Offset relative to rbp
     mov->r.scale = 1;
+    mov->r.size = 4;
     mov->r.index = -ir_load->l->stack_slot;
     AsmOperand result;
     result.type = OP_VREG;
@@ -130,6 +131,7 @@ static AsmIns * asm_cmp(Assembler *a, IrIns *ir_cmp) {
         r.type = OP_MEM;
         r.base = REG_RBP;
         r.scale = 1;
+        r.size = 4;
         r.index = -ir_load->l->stack_slot;
     } else {
         r = discharge(a, ir_cmp->r);
@@ -228,6 +230,7 @@ static void asm_store(Assembler *a, IrIns *ir_store) {
     mov->l.type = OP_MEM;
     mov->l.base = REG_RBP;
     mov->l.scale = 1;
+    mov->l.size = 4;
     mov->l.index = -ir_store->l->stack_slot;
     mov->r = r;
 }
@@ -243,6 +246,7 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
         r.type = OP_MEM;
         r.base = REG_RBP;
         r.scale = 1;
+        r.size = 4;
         r.index = -ir_load->l->stack_slot;
     } else {
         r = discharge(a, ir_arith->r);
@@ -272,6 +276,7 @@ static void asm_div(Assembler *a, IrIns *ir_div) {
         divisor.type = OP_MEM;
         divisor.base = REG_RBP;
         divisor.scale = 1;
+        divisor.size = 4;
         divisor.index = -ir_load->l->stack_slot;
     } else { // Including immediate (can't divide by immediate)
         divisor = discharge(a, ir_div->r);
@@ -330,6 +335,7 @@ static void asm_br(Assembler *a, IrIns *ir_br) {
         return; // Don't emit_ins a JMP to the very next instruction
     }
     AsmIns *jmp = emit(a, X86_JMP);
+    jmp->l.type = OP_LABEL;
     jmp->l.bb = ir_br->br;
 }
 
@@ -458,12 +464,15 @@ static AsmFn * asm_start(AsmFn *main) {
     i = emit(&a, X86_MOV); // Take argc off the stack
     i->l.type = OP_REG; i->l.reg = REG_EDI;
     i->r.type = OP_MEM; i->r.base = REG_RSP; i->r.scale = 1; i->r.index = 0;
-    i = emit(&a, X86_LEA); // Take argc off the stack
+    i->r.size = 4;
+    i = emit(&a, X86_LEA); // Take argv off the stack
     i->l.type = OP_REG; i->l.reg = REG_RSI;
     i->r.type = OP_MEM; i->r.base = REG_RSP; i->r.scale = 1; i->r.index = 8;
+    i->r.size = 8;
     i = emit(&a, X86_LEA); // Take envp off the stack
     i->l.type = OP_REG; i->l.reg = REG_RDX;
     i->r.type = OP_MEM; i->r.base = REG_RSP; i->r.scale = 1; i->r.index = 16;
+    i->r.size = 8;
     i = emit(&a, X86_XOR); // Zero eax (convention per ABI)
     i->l.type = OP_REG; i->l.reg = REG_EAX;
     i->r.type = OP_REG; i->r.reg = REG_EAX;

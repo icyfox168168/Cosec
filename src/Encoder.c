@@ -19,6 +19,13 @@ static int X86_OPCODE_NARGS[] = {
 #undef X
 };
 
+static char * NASM_MEM_PREFIX[] = {
+    [1] = "byte",
+    [2] = "word",
+    [4] = "dword",
+    [8] = "qword",
+};
+
 static void encode_operand(AsmOperand op, FILE *out) {
     switch (op.type) {
     case OP_IMM: fprintf(out, "%llu", op.imm); break;
@@ -34,6 +41,7 @@ static void encode_operand(AsmOperand op, FILE *out) {
         }
         break;
     case OP_MEM:
+        fprintf(out, "%s ", NASM_MEM_PREFIX[op.size]);
         fprintf(out, "[%s", REG_NAMES[op.base]); // Base
         if (op.scale > 1) { // Scale
             fprintf(out, "*%d", op.scale);

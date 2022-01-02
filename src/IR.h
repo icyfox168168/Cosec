@@ -216,11 +216,11 @@ typedef enum {
 typedef struct {
     AsmOperandType type;
     union {
-        uint64_t imm;                           // For OP_IMM
-        Reg reg;                                // For OP_REG
-        struct { int vreg, subsection; };       // For OP_VREG
-        struct { int scale, index; Reg base; }; // For OP_MEM (SIB)
-        struct bb *bb;                          // For OP_LABEL
+        uint64_t imm;                                 // For OP_IMM
+        Reg reg;                                      // For OP_REG
+        struct { int vreg, subsection; };             // For OP_VREG
+        struct { int scale, index, size; Reg base; }; // For OP_MEM (SIB)
+        struct bb *bb;                                // For OP_LABEL
     };
 } AsmOperand;
 
