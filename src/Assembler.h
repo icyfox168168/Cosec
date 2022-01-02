@@ -12,7 +12,7 @@
 
 typedef struct asm_fn {
     struct asm_fn *next; // Linked list of functions
-    BB *entry;  // First basic block
+    BB *entry;
 } AsmFn;
 
 typedef struct {

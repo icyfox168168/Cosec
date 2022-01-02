@@ -6,9 +6,12 @@
 BB * new_bb() {
     BB *bb = malloc(sizeof(BB));
     bb->next = NULL;
+    bb->prev = NULL;
     bb->label = NULL;
     bb->ir_head = NULL;
+    bb->ir_last = NULL;
     bb->asm_head = NULL;
+    bb->asm_last = NULL;
     return bb;
 }
 
@@ -20,4 +23,65 @@ int size_of(Type t) {
         case T_void: return 0;
         case T_i32:  return 4;
     }
+}
+
+static IrIns * new_ir(IrOpcode op) {
+    IrIns *ins = malloc(sizeof(IrIns));
+    ins->bb = NULL;
+    ins->op = op;
+    ins->next = NULL;
+    ins->prev = NULL;
+    ins->type.prim = T_void;
+    ins->type.ptrs = 0;
+    return ins;
+}
+
+IrIns * emit_ir(BB *bb, IrOpcode op) {
+    IrIns *ins = new_ir(op);
+    ins->bb = bb;
+    ins->prev = bb->ir_last;
+    if (bb->ir_last) {
+        bb->ir_last->next = ins;
+    } else {
+        bb->ir_head = ins; // Head of the basic block
+    }
+    bb->ir_last = ins;
+    return ins;
+}
+
+void delete_ir(IrIns *ins) {
+    if (ins->prev) {
+        ins->prev->next = ins->next;
+    } else { // Head of the linked list
+        ins->bb->ir_head = ins->next;
+    }
+    if (ins->bb->ir_last == ins) {
+        ins->bb->ir_last = ins->prev;
+    }
+}
+
+static AsmIns * new_asm(AsmOpcode op) {
+    AsmIns *ins = malloc(sizeof(AsmIns));
+    ins->next = NULL;
+    ins->prev = NULL;
+    ins->op = op;
+    ins->l.type = 0;
+    ins->l.vreg = 0;
+    ins->l.subsection = REG_64;
+    ins->r.type = 0;
+    ins->r.vreg = 0;
+    ins->r.subsection = REG_64;
+    return ins;
+}
+
+AsmIns * emit_asm(BB *bb, AsmOpcode op) {
+    AsmIns *ins = new_asm(op);
+    ins->prev = bb->asm_last;
+    if (bb->asm_last) {
+        bb->asm_last->next = ins;
+    } else {
+        bb->asm_head = ins;
+    }
+    bb->asm_last = ins;
+    return ins;
 }

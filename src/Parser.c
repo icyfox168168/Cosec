@@ -17,28 +17,50 @@ typedef struct {
 
 typedef struct {
     Lexer l;
-    BB *bb;         // Current basic block
-    IrIns **ins;    // Next instruction to emit
-    Local *locals;  // Local variables in scope
+    FnDef *fn; // Function we're parsing
+    Local *locals; // Local variables in scope
     int num_locals, max_locals;
 } Parser;
 
-static IrIns * new_ins(IrOpcode op) {
-    IrIns *ins = malloc(sizeof(IrIns));
-    ins->bb = NULL;
-    ins->op = op;
-    ins->next = NULL;
-    ins->type.prim = T_void;
-    ins->type.ptrs = 0;
-    return ins;
+static Parser new_parser(char *source) {
+    Parser p;
+    p.l = new_lexer(source);
+    next_tk(&p.l); // Lex the first token in the file
+    p.fn = NULL;
+    p.num_locals = 0;
+    p.max_locals = 8;
+    p.locals = malloc(sizeof(Local) * p.max_locals);
+    return p;
 }
 
-static IrIns * emit(Parser *p, IrOpcode op) {
-    IrIns *ins = new_ins(op);
-    ins->bb = p->bb;
-    *p->ins = ins;
-    p->ins = &ins->next;
-    return ins;
+static FnDef * new_fn() {
+    FnDef *fn = malloc(sizeof(FnDef));
+    fn->decl = NULL;
+    fn->entry = NULL;
+    fn->last_bb = NULL;
+    return fn;
+}
+
+static BB * emit_bb(Parser *p) {
+    BB *bb = new_bb();
+    bb->prev = p->fn->last_bb;
+    if (p->fn->last_bb) {
+        p->fn->last_bb->next = bb;
+    }
+    p->fn->last_bb = bb;
+    return bb;
+}
+
+static void delete_bb(Parser *p, BB *bb) {
+    assert(bb->prev); // CAN'T delete the entry BB!
+    bb->prev->next = bb->next;
+    if (p->fn->last_bb == bb) {
+        p->fn->last_bb = bb->prev;
+    }
+}
+
+static IrIns * emit(Parser *p, IrOpcode op) { // Wrapper
+    return emit_ir(p->fn->last_bb, op);
 }
 
 static void def_local(Parser *p, Local local) {
@@ -248,11 +270,7 @@ static Expr discharge_cond(Parser *p, Expr cond) {
     assert(cond.type == EXPR_COND); // Ensure we are discharging a conditional
     assert(cond.ins->op == IR_CONDBR);
 
-    BB *bb = new_bb(); // Basic block for the result of the condition
-    p->bb->next = bb;
-    p->bb = bb;
-    p->ins = &bb->ir_head;
-
+    BB *bb = emit_bb(p); // Basic block for the result of the condition
     IrIns *k_false = emit(p, IR_KI32); // True and false constants
     k_false->ki32 = 0;
     k_false->type.prim = T_i32;
@@ -281,8 +299,18 @@ static Expr discharge_cond(Parser *p, Expr cond) {
     patch_jmp_list(cond.true_list, bb); // Patch the true and false list here
     patch_jmp_list(cond.false_list, bb);
 
-    // Handle the last condition in the phi chain separately
     IrIns *last_cond = cond.ins->cond;
+    // If there's only one predecessor block (empty phi), then roll back the
+    // conditional
+    if (!phi_head) {
+        delete_bb(p, bb); // Roll back the new BB we created
+        delete_ir(cond.ins); // Delete the IR_CONDBR instruction
+        Expr result = new_expr(EXPR_INS);
+        result.ins = last_cond; // Result is the condition instruction
+        return result;
+    }
+
+    // Handle the last condition in the phi chain separately
     cond.ins->op = IR_BR; // Change the last conditional branch into an
     cond.ins->br = bb;    // unconditional one
     *phi = new_phi(cond.ins->bb, last_cond);
@@ -510,10 +538,7 @@ static Expr parse_binary(Parser *p, Tk binop, Expr left, Expr right) {
 static Expr parse_binary_left(Parser *p, Tk binop, Expr left) {
     if (binop == TK_AND || binop == TK_OR) {
         left = to_cond(p, left);
-        BB *bb = new_bb(); // New basic block for the right operand
-        p->bb->next = bb;
-        p->bb = bb;
-        p->ins = &bb->ir_head;
+        emit_bb(p); // New BB for the right operand
     }
     return left;
 }
@@ -595,20 +620,14 @@ static void parse_if(Parser *p) {
     expect_tk(&p->l, ')');
     next_tk(&p->l);
 
-    BB *body = new_bb();
+    BB *body = emit_bb(p);
     patch_jmp_list(cond.true_list, body);
-    p->bb->next = body;
-    p->bb = body;
-    p->ins = &body->ir_head;
     parse_body(p);
-    IrIns *end_br = emit(p, IR_BR); // End the body with a branch to 'after'
+    IrIns *end_br = emit(p, IR_BR); // End body with branch to 'after'
 
-    BB *after = new_bb();
+    BB *after = emit_bb(p);
     patch_jmp_list(cond.false_list, after);
     end_br->br = after;
-    p->bb->next = after;
-    p->bb = after;
-    p->ins = &after->ir_head;
 }
 
 static void parse_ret(Parser *p) {
@@ -729,16 +748,16 @@ static void ensure_ret(FnDef *fn) {
     for (BB *bb = fn->entry; bb; bb = bb->next) { // Iterate over all BBs
         IrIns *end = bb->ir_head;
         if (!end) { // BB is empty, put RET0 in it
-            bb->ir_head = new_ins(IR_RET0);
-            bb->ir_head->bb = bb;
-            return;
+            emit_ir(bb, IR_RET0);
+            continue;
         }
-        while (end->next) { end = end->next; } // Find the last instruction
+        while (end->next) { // Find the last instruction
+            end = end->next;
+        }
         // The last instruction in a basic block must be a branch or ret
         if (end->op != IR_BR && end->op != IR_CONDBR &&
                 end->op != IR_RET0 && end->op != IR_RET1) {
-            end->next = new_ins(IR_RET0);
-            end->next->bb = bb;
+            emit_ir(bb, IR_RET0);
         }
     }
 }
@@ -760,10 +779,9 @@ static void label_bbs(FnDef *fn) {
 }
 
 static FnDef * parse_fn_def(Parser *p) {
-    FnDef *fn = malloc(sizeof(FnDef));
-    fn->entry = new_bb();
-    p->bb = fn->entry;
-    p->ins = &fn->entry->ir_head;
+    FnDef *fn = new_fn();
+    p->fn = fn;
+    fn->entry = emit_bb(p);
     int num_locals = p->num_locals; // 'parse_fn_args' creates new locals
     fn->decl = parse_fn_decl(p); // Declaration
     fn->entry->label = prepend_underscore(fn->decl->name);
@@ -801,16 +819,8 @@ Module * parse(char *file) {
         printf("couldn't read file\n");
         exit(1);
     }
-    Parser p;
-    p.l = new_lexer(source);
-    next_tk(&p.l); // Lex the first token in the file
-    p.bb = NULL;
-    p.ins = NULL;
-    p.num_locals = 0;
-    p.max_locals = 8;
-    p.locals = malloc(sizeof(Local) * p.max_locals);
+    Parser p = new_parser(source);
     Module *module = parse_module(&p);
     free(source);
-    free(p.locals);
     return module;
 }

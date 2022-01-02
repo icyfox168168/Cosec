@@ -6,8 +6,7 @@
 #include "Assembler.h"
 
 typedef struct {
-    BB *bb;         // Current basic block that we're assembling
-    AsmIns **ins;   // Spot for the next-emitted instruction to go
+    BB *bb;         // Current basic block we're assembling
     int stack_size; // Number of bytes allocated on the stack by 'IR_ALLOC's
     int vreg;       // Next virtual register slot to use
 } Assembler;
@@ -70,7 +69,6 @@ static AsmOpcode INVERT_COND[X86_LAST] = { // Invert a conditional opcode
 static Assembler new_asm() {
     Assembler a;
     a.bb = NULL;
-    a.ins = NULL;
     a.stack_size = 0;
     a.vreg = 0;
     return a;
@@ -83,24 +81,8 @@ static AsmFn * new_fn() {
     return fn;
 }
 
-static AsmIns * new_ins(AsmOpcode op) {
-    AsmIns *ins = malloc(sizeof(AsmIns));
-    ins->next = NULL;
-    ins->op = op;
-    ins->l.type = 0;
-    ins->l.vreg = 0;
-    ins->l.subsection = REG_64;
-    ins->r.type = 0;
-    ins->r.vreg = 0;
-    ins->r.subsection = REG_64;
-    return ins;
-}
-
 static AsmIns * emit(Assembler *a, AsmOpcode op) {
-    AsmIns *ins = new_ins(op);
-    *a->ins = ins;
-    a->ins = &ins->next;
-    return ins;
+    return emit_asm(a->bb, op);
 }
 
 static AsmOperand discharge(Assembler *a, IrIns *ins); // Forward declaration
@@ -345,7 +327,7 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
 
 static void asm_br(Assembler *a, IrIns *ir_br) {
     if (ir_br->br == a->bb->next) { // If the branch is to the next BB
-        return; // Don't emit a JMP to the very next instruction
+        return; // Don't emit_ins a JMP to the very next instruction
     }
     AsmIns *jmp = emit(a, X86_JMP);
     jmp->l.bb = ir_br->br;
@@ -433,12 +415,10 @@ static AsmFn * asm_fn(FnDef *ir_fn) {
     fn->entry = ir_fn->entry;
 
     Assembler a = new_asm();
+    a.bb = ir_fn->entry;
+    asm_fn_preamble(&a); // Add the function preamble to the entry BB
     for (BB *bb = ir_fn->entry; bb; bb = bb->next) { // Assemble each BB
         a.bb = bb;
-        a.ins = &bb->asm_head;
-        if (bb == ir_fn->entry) {
-            asm_fn_preamble(&a); // Add the function preamble to the entry BB
-        }
         asm_bb(&a, bb);
     }
     return fn;
@@ -470,7 +450,6 @@ static AsmFn * asm_start(AsmFn *main) {
 
     Assembler a = new_asm();
     a.bb = entry;
-    a.ins = &entry->asm_head;
 
     AsmIns *i;
     i = emit(&a, X86_XOR); // Zero rbp

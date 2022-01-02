@@ -83,7 +83,7 @@ typedef struct phi {
 } Phi;
 
 typedef struct ir_ins {
-    struct ir_ins *next;
+    struct ir_ins *next, *prev;
     struct bb *bb; // The basic block this instruction is in
 
     IrOpcode op;
@@ -224,7 +224,7 @@ typedef struct {
 } AsmOperand;
 
 typedef struct asm_ins {
-    struct asm_ins *next;
+    struct asm_ins *next, *prev;
     AsmOpcode op;
     AsmOperand l, r;
 } AsmIns;
@@ -236,19 +236,22 @@ typedef struct asm_ins {
 // this simplifies assembly construction. The CFG structure is the same in
 // each IR (although represented more implicitly in the assembly IR).
 //
-// The ONLY jump allowed in a basic block is the last instruction; this
+// The ONLY jump allowed in a basic block is the last_bb instruction; this
 // maintains the property that basic blocks are a LINEAR sequence of
 // instructions that always execute in order (useful for optimisation)
 typedef struct bb {
     // Maintain an ordering over basic blocks in a function, the same as the
     // order in which they appear in the source code
-    struct bb *next;
+    struct bb *next, *prev;
     char *label;
-    IrIns *ir_head;
-    AsmIns *asm_head;
+    IrIns *ir_head, *ir_last;
+    AsmIns *asm_head, *asm_last;
 } BB;
 
 BB * new_bb();       // Creates a new empty basic block
 int size_of(Type t); // Returns the size of a type in bytes
+IrIns * emit_ir(BB *bb, IrOpcode op);
+void delete_ir(IrIns *ins);
+AsmIns * emit_asm(BB *bb, AsmOpcode op);
 
 #endif
