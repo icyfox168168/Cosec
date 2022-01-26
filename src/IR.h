@@ -105,46 +105,43 @@ typedef struct ir_ins {
     int vreg; // Virtual register that the instruction's result is assigned to
 
     // Debug info
-    int debug_idx;
+    int idx;
 } IrIns;
 
 
 // ---- Assembly IR -----------------------------------------------------------
 
-#define X86_REGS  \
-    X(RAX, "rax") \
-    X(RCX, "rcx") \
-    X(RDX, "rdx") \
-    X(RBX, "rbx") \
-    X(RSP, "rsp") \
-    X(RBP, "rbp") \
-    X(RSI, "rsi") \
-    X(RDI, "rdi") \
-    X(R8, "r8")   \
-    X(R9, "r9")   \
-    X(EAX, "eax") \
-    X(ECX, "ecx") \
-    X(EDX, "edx") \
-    X(EBX, "ebx") \
-    X(ESP, "esp") \
-    X(EBP, "ebp") \
-    X(ESI, "esi") \
-    X(EDI, "edi") \
-    X(CL, "cl")
+#define X86_REGS                                \
+    X(RAX, "rax", "eax",  "ax",   "ah", "al")   \
+    X(RCX, "rcx", "ecx",  "cx",   "ch", "cl")   \
+    X(RDX, "rdx", "edx",  "dx",   "dh", "dl")   \
+    X(RBX, "rbx", "ebx",  "bx",   "bh", "bl")   \
+    X(RSP, "rsp", "esp",  "sp",   NULL, "spl")  \
+    X(RBP, "rbp", "ebp",  "bp",   NULL, "bpl")  \
+    X(RSI, "rsi", "esi",  "si",   NULL, "sil")  \
+    X(RDI, "rdi", "edi",  "di",   NULL, "dil")  \
+    X(R8,  "r8",  "r8d",  "r8w",  NULL, "r8b")  \
+    X(R9,  "r9",  "r9d",  "r9w",  NULL, "r9b")  \
+    X(R10, "r10", "r10d", "r10w", NULL, "r10b") \
+    X(R11, "r11", "r11d", "r11w", NULL, "r11b") \
+    X(R12, "r12", "r12d", "r12w", NULL, "r12b") \
+    X(R13, "r13", "r13d", "r13w", NULL, "r13b") \
+    X(R14, "r14", "r14d", "r14w", NULL, "r14b") \
+    X(R15, "r15", "r15d", "r15w", NULL, "r15b")
 
 typedef enum {
-#define X(name, _) REG_ ## name,
+#define X(name, _, __, ___, ____, _____) REG_ ## name,
     X86_REGS
 #undef X
 } Reg;
 
 typedef enum {
-    REG_64, // All 64 bits (e.g., rax)
-    REG_32, // Lowest 32 bits (e.g., eax)
-    REG_16, // Lowest 16 bits (e.g., ax)
-    REG_8H, // Highest 8 bits of the lowest 16 bits (e.g., ah)
-    REG_8L, // Lowest 8 bits (e.g., al)
-} RegSubsection;
+    REG_Q, // All 64 bits (e.g., rax)
+    REG_D, // Lowest 32 bits (e.g., eax)
+    REG_W, // Lowest 16 bits (e.g., ax)
+    REG_H, // Highest 8 bits of the lowest 16 bits (e.g., ah)
+    REG_L, // Lowest 8 bits (e.g., al)
+} RegBits;
 
 #define X86_OPCODES          \
     /* Memory access */      \
@@ -154,7 +151,7 @@ typedef enum {
                              \
     /* Arithmetic */         \
     X(ADD, "add", 2)         \
-    X(SUB, "sub", 2)         \
+    X(SUB, "bits", 2)         \
     X(MUL, "mul", 2)         \
     X(CDQ, "cdq", 0) /* Sign extend eax into edx, specifically for idiv */ \
     X(IDIV, "idiv", 1)       \
@@ -222,11 +219,11 @@ typedef enum {
 typedef struct {
     AsmOperandType type;
     union {
-        uint64_t imm;                                 // For OP_IMM
-        Reg reg;                                      // For OP_REG
-        struct { int vreg, subsection; };             // For OP_VREG
-        struct { int scale, index, size; Reg base; }; // For OP_MEM (SIB)
-        struct bb *bb;                                // For OP_LABEL
+        uint64_t imm;                         // OP_IMM
+        struct { RegBits bits; Reg reg; };    // OP_REG
+        struct { RegBits _bits1; int vreg; }; // OP_VREG
+        struct { RegBits _bits2; int scale, index, size; Reg base; }; // OP_MEM
+        struct bb *bb;                        // OP_LABEL
     };
 } AsmOperand;
 

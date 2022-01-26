@@ -7,6 +7,7 @@
 #include "RegisterAllocator.h"
 #include "Encoder.h"
 #include "Debug.h"
+#include "analysis/CFG.h"
 
 // Cosec compiler structure:
 // 1. Lexer -- splits a module's source code up into tokens
@@ -76,7 +77,9 @@ int main(int argc, char *argv[]) {
         encode_nasm(asm_module, stdout);
 
         printf("\n---- Register allocated assembly\n");
-        reg_alloc(asm_module->fns);
+        analysis_cfg(asm_module->fns->entry);
+        LiveRange *live_ranges = analysis_liveness(asm_module->fns);
+        reg_alloc(asm_module->fns, live_ranges);
 
         FILE *output = fopen("out.s", "w");
         encode_nasm(asm_module, output);

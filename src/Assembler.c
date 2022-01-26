@@ -94,12 +94,13 @@ static AsmOperand discharge_imm(Assembler *a, IrIns *ir_k) {
     AsmIns *mov = emit(a, X86_MOV);
     mov->l.type = OP_VREG;
     mov->l.vreg = ir_k->vreg;
+    mov->l.bits = REG_Q;
     mov->r.type = OP_IMM;
     mov->r.imm = ir_k->ki32;
     AsmOperand result;
     result.type = OP_VREG;
     result.vreg = ir_k->vreg;
-    result.subsection = REG_64;
+    result.bits = REG_Q;
     return result;
 }
 
@@ -110,15 +111,17 @@ static AsmOperand discharge_load(Assembler *a, IrIns *ir_load) {
     AsmIns *mov = emit(a, X86_MOV);
     mov->l.type = OP_VREG; // Load into a vreg
     mov->l.vreg = ir_load->vreg;
+    mov->l.bits = REG_Q;
     mov->r.type = OP_MEM; // Load from memory
     mov->r.base = REG_RBP; // Offset relative to rbp
+    mov->r.bits = REG_Q;
     mov->r.scale = 1;
     mov->r.size = 4;
     mov->r.index = -ir_load->l->stack_slot;
     AsmOperand result;
     result.type = OP_VREG;
     result.vreg = ir_load->vreg;
-    result.subsection = REG_64;
+    result.bits = REG_Q;
     return result;
 }
 
@@ -132,6 +135,7 @@ static AsmIns * asm_cmp(Assembler *a, IrIns *ir_cmp) {
         IrIns *ir_load = ir_cmp->r;
         r.type = OP_MEM;
         r.base = REG_RBP;
+        r.bits = REG_Q;
         r.scale = 1;
         r.size = 4;
         r.index = -ir_load->l->stack_slot;
@@ -150,25 +154,26 @@ static AsmOperand discharge_rel(Assembler *a, IrIns *ir_rel) {
     AsmIns *set = emit(a, IR_OP_TO_SETXX[ir_rel->op]); // SETcc operation
     set->l.type = OP_VREG;
     set->l.vreg = ir_rel->vreg;
-    set->l.subsection = REG_8L; // Lowest 8 bits of the vreg
+    set->l.bits = REG_L; // Lowest 8 bits of the vreg
 
     AsmIns *and = emit(a, X86_AND); // Clear the rest of the vreg
     and->l.type = OP_VREG;
     and->l.vreg = ir_rel->vreg;
-    and->l.subsection = REG_8L; // Lowest 8 bits of the vreg
+    and->l.bits = REG_L; // Lowest 8 bits of the vreg
     and->r.type = OP_IMM;
     and->r.imm = 1;
 
     AsmIns *movzx = emit(a, X86_MOVZX); // Zero extend the lowest 8 bits
     movzx->l.type = OP_VREG;
     movzx->l.vreg = ir_rel->vreg;
+    movzx->l.bits = REG_Q;
     movzx->r.type = OP_VREG;
     movzx->r.vreg = ir_rel->vreg;
-    movzx->r.subsection = REG_8L; // Lowest 8 bits of the vreg
+    movzx->r.bits = REG_L; // Lowest 8 bits of the vreg
     AsmOperand result;
     result.type = OP_VREG;
     result.vreg = ir_rel->vreg;
-    result.subsection = REG_64;
+    result.bits = REG_Q;
     return result;
 }
 
@@ -180,7 +185,7 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
         AsmOperand result;
         result.type = OP_VREG;
         result.vreg = ins->vreg;
-        result.subsection = REG_64;
+        result.bits = REG_Q;
         return result; // Already in a virtual register
     }
     switch (ins->op) {
@@ -201,9 +206,11 @@ static void asm_farg(Assembler *a, IrIns *ir_farg) {
     ir_farg->vreg = a->vreg++;
     mov->l.type = OP_VREG;
     mov->l.vreg = ir_farg->vreg;
+    mov->l.bits = REG_Q;
     mov->r.type = OP_REG;
     // Pull the argument out of the register specified by the ABI
     mov->r.reg = FN_ARGS_REGS[ir_farg->arg_num];
+    mov->r.bits = REG_Q;
 }
 
 static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
@@ -231,6 +238,7 @@ static void asm_store(Assembler *a, IrIns *ir_store) {
     AsmIns *mov = emit(a, X86_MOV); // Store into memory
     mov->l.type = OP_MEM;
     mov->l.base = REG_RBP;
+    mov->l.bits = REG_Q;
     mov->l.scale = 1;
     mov->l.size = 4;
     mov->l.index = -ir_store->l->stack_slot;
@@ -247,6 +255,7 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
         IrIns *ir_load = ir_arith->r;
         r.type = OP_MEM;
         r.base = REG_RBP;
+        r.bits = REG_Q;
         r.scale = 1;
         r.size = 4;
         r.index = -ir_load->l->stack_slot;
@@ -277,6 +286,7 @@ static void asm_div(Assembler *a, IrIns *ir_div) {
         IrIns *ir_load = ir_div->r;
         divisor.type = OP_MEM;
         divisor.base = REG_RBP;
+        divisor.bits = REG_Q;
         divisor.scale = 1;
         divisor.size = 4;
         divisor.index = -ir_load->l->stack_slot;
@@ -287,6 +297,7 @@ static void asm_div(Assembler *a, IrIns *ir_div) {
     AsmIns *mov1 = emit(a, X86_MOV); // Mov dividend into eax
     mov1->l.type = OP_REG;
     mov1->l.reg = REG_RAX;
+    mov1->l.bits = REG_D;
     mov1->r = dividend;
     emit(a, X86_CDQ); // Sign extend eax into edx
     AsmIns *div = emit(a, X86_IDIV); // Performs edx:eax / <operand>
@@ -295,12 +306,14 @@ static void asm_div(Assembler *a, IrIns *ir_div) {
     AsmIns *mov2 = emit(a, X86_MOV); // Move the result into a new vreg
     mov2->l.type = OP_VREG;
     mov2->l.vreg = ir_div->vreg;
+    mov2->l.bits = REG_Q;
     mov2->r.type = OP_REG;
     if (ir_div->op == IR_DIV) {
         mov2->r.reg = REG_RAX; // Division (quotient in rax)
     } else {
         mov2->r.reg = REG_RDX; // Modulo (remainder in rdx)
     }
+    mov2->r.bits = REG_Q;
 }
 
 static void asm_shift(Assembler *a, IrIns *ir_shift) {
@@ -314,9 +327,11 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
         AsmIns *mov = emit(a, X86_MOV); // Mov shift count into rcx
         mov->l.type = OP_REG;
         mov->l.reg = REG_RCX;
+        mov->l.bits = REG_Q;
         mov->r = discharged;
         r.type = OP_REG;
-        r.reg = REG_CL;
+        r.reg = REG_RCX; // Use cl
+        r.bits = REG_L;
     }
 
     AsmOpcode op;
@@ -363,6 +378,7 @@ static void asm_ret0(Assembler *a) {
     AsmIns *pop = emit(a, X86_POP); // pop rbp
     pop->l.type = OP_REG;
     pop->l.reg = REG_RBP;
+    pop->l.bits = REG_Q;
     emit(a, X86_RET);
 }
 
@@ -371,6 +387,7 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
     AsmIns *mov = emit(a, X86_MOV); // mov rax, <value>
     mov->l.type = OP_REG;
     mov->l.reg = REG_RAX;
+    mov->l.bits = REG_Q;
     mov->r = result;
     asm_ret0(a);
 }
@@ -411,11 +428,14 @@ static void asm_fn_preamble(Assembler *a) {
     ins = emit(a, X86_PUSH); // push rbp
     ins->l.type = OP_REG;
     ins->l.reg = REG_RBP;
+    ins->l.bits = REG_Q;
     ins = emit(a, X86_MOV); // mov rbp, rsp
     ins->l.type = OP_REG;
     ins->l.reg = REG_RBP;
+    ins->l.bits = REG_Q;
     ins->r.type = OP_REG;
     ins->r.reg = REG_RSP;
+    ins->r.bits = REG_Q;
 }
 
 static AsmFn * asm_fn(FnDef *ir_fn) {
@@ -464,30 +484,30 @@ static AsmFn * asm_start(AsmFn *main) {
 
     AsmIns *i;
     i = emit(&a, X86_XOR); // Zero rbp
-    i->l.type = OP_REG; i->l.reg = REG_EBP;
-    i->r.type = OP_REG; i->r.reg = REG_EBP;
+    i->l.type = OP_REG; i->l.reg = REG_RBP; i->l.bits = REG_D;
+    i->r.type = OP_REG; i->r.reg = REG_RBP; i->r.bits = REG_D;
     i = emit(&a, X86_MOV); // Take argc off the stack
-    i->l.type = OP_REG; i->l.reg = REG_EDI;
-    i->r.type = OP_MEM; i->r.base = REG_RSP; i->r.scale = 1; i->r.index = 0;
-    i->r.size = 4;
+    i->l.type = OP_REG; i->l.reg = REG_RDI; i->l.bits = REG_D;
+    i->r.type = OP_MEM; i->r.base = REG_RSP; i->r.bits = REG_Q; i->r.scale = 1;
+    i->r.index = 0; i->r.size = 4;
     i = emit(&a, X86_LEA); // Take argv off the stack
-    i->l.type = OP_REG; i->l.reg = REG_RSI;
-    i->r.type = OP_MEM; i->r.base = REG_RSP; i->r.scale = 1; i->r.index = 8;
-    i->r.size = 8;
+    i->l.type = OP_REG; i->l.reg = REG_RSI; i->l.bits = REG_Q;
+    i->r.type = OP_MEM; i->r.base = REG_RSP; i->r.bits = REG_Q; i->r.scale = 1;
+    i->r.index = 8; i->r.size = 8;
     i = emit(&a, X86_LEA); // Take envp off the stack
-    i->l.type = OP_REG; i->l.reg = REG_RDX;
-    i->r.type = OP_MEM; i->r.base = REG_RSP; i->r.scale = 1; i->r.index = 16;
-    i->r.size = 8;
+    i->l.type = OP_REG; i->l.reg = REG_RDX; i->l.bits = REG_Q;
+    i->r.type = OP_MEM; i->r.base = REG_RSP; i->r.bits = REG_Q; i->r.scale = 1;
+    i->r.index = 16; i->r.size = 8;
     i = emit(&a, X86_XOR); // Zero eax (convention per ABI)
-    i->l.type = OP_REG; i->l.reg = REG_EAX;
-    i->r.type = OP_REG; i->r.reg = REG_EAX;
+    i->l.type = OP_REG; i->l.reg = REG_RAX; i->l.bits = REG_D;
+    i->r.type = OP_REG; i->r.reg = REG_RAX; i->r.bits = REG_D;
     i = emit(&a, X86_CALL); // Call main
     i->l.type = OP_LABEL; i->l.bb = main->entry;
     i = emit(&a, X86_MOV); // syscall to exit
-    i->l.type = OP_REG; i->l.reg = REG_RDI;
-    i->r.type = OP_REG; i->r.reg = REG_RAX;
+    i->l.type = OP_REG; i->l.reg = REG_RDI; i->l.bits = REG_Q;
+    i->r.type = OP_REG; i->r.reg = REG_RAX; i->l.bits = REG_Q;
     i = emit(&a, X86_MOV);
-    i->l.type = OP_REG; i->l.reg = REG_RAX;
+    i->l.type = OP_REG; i->l.reg = REG_RAX; i->l.bits = REG_Q;
     i->r.type = OP_IMM; i->r.imm = 0x2000001;
     emit(&a, X86_SYSCALL);
     return start;

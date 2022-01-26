@@ -76,10 +76,10 @@ static AsmIns * new_asm(AsmOpcode op) {
     ins->op = op;
     ins->l.type = 0;
     ins->l.vreg = 0;
-    ins->l.subsection = REG_64;
+    ins->l.bits = REG_Q;
     ins->r.type = 0;
     ins->r.vreg = 0;
-    ins->r.subsection = REG_64;
+    ins->r.bits = REG_Q;
     return ins;
 }
 

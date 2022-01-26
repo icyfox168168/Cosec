@@ -1,8 +1,8 @@
 
 #include "Encoder.h"
 
-static char *REG_NAMES[] = {
-#define X(_, str) str,
+static char *REG_NAMES[][5] = {
+#define X(name, q, d, w, h, l) {q, d, w, h, l},
     X86_REGS
 #undef X
 };
@@ -23,20 +23,20 @@ static char * NASM_MEM_PREFIX[] = {
 static void encode_operand(AsmOperand op, FILE *out) {
     switch (op.type) {
     case OP_IMM: fprintf(out, "%llu", op.imm); break;
-    case OP_REG: fprintf(out, "%s", REG_NAMES[op.reg]); break;
+    case OP_REG: fprintf(out, "%s", REG_NAMES[op.reg][op.bits]); break;
     case OP_VREG:
         fprintf(out, "%%%d", op.vreg);
-        switch (op.subsection) {
-            case REG_64: break; // Don't print anything for REG_64
-            case REG_32: fprintf(out, "(32)"); break;
-            case REG_16: fprintf(out, "(16)"); break;
-            case REG_8H: fprintf(out, "(8h)"); break;
-            case REG_8L: fprintf(out, "(8l)"); break;
+        switch (op.bits) {
+            case REG_Q: break; // Don't print anything for REG_64
+            case REG_D: fprintf(out, "(d)"); break;
+            case REG_W: fprintf(out, "(w)"); break;
+            case REG_H: fprintf(out, "(h)"); break;
+            case REG_L: fprintf(out, "(l)"); break;
         }
         break;
     case OP_MEM:
         fprintf(out, "%s ", NASM_MEM_PREFIX[op.size]);
-        fprintf(out, "[%s", REG_NAMES[op.base]); // Base
+        fprintf(out, "[%s", REG_NAMES[op.base][op.bits]); // Base
         if (op.scale > 1) { // Scale
             fprintf(out, "*%d", op.scale);
         }

@@ -11,4 +11,4 @@ add_executable(Cosec
         src/Assembler.c src/Assembler.h
         src/Encoder.c src/Encoder.h
         src/Debug.c src/Debug.h
-        src/opt/Fold.c src/opt/Fold.h src/RegisterAllocator.c src/RegisterAllocator.h)
+        src/opt/Fold.c src/opt/Fold.h src/RegisterAllocator.c src/RegisterAllocator.h src/analysis/CFG.c src/analysis/CFG.h src/analysis/Liveness.c src/analysis/Liveness.h)
