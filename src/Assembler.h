@@ -7,12 +7,14 @@
 // ASSEMBLER -- lowers the SSA IR into target-specific machine code
 // instructions. Target-specific optimisations can then be made to the
 // generated assembly code (e.g., peep-hole optimisations not possible on the
-// SSA IR).  Variables are still modelled by virtual registers in the assembly,
+// SSA IR). Variables are still modelled by virtual registers in the assembly,
 // which are later lowered to physical registers by the register allocator.
 
 typedef struct asm_fn {
     struct asm_fn *next; // Linked list of functions
-    BB *entry;
+    BB *entry, *last;    // Linked list of basic blocks
+    int num_bbs;
+    int num_vregs;
 } AsmFn;
 
 typedef struct {

@@ -4,6 +4,7 @@
 
 #include "Parser.h"
 #include "Assembler.h"
+#include "RegisterAllocator.h"
 #include "Encoder.h"
 #include "Debug.h"
 
@@ -73,6 +74,9 @@ int main(int argc, char *argv[]) {
         AsmModule *asm_module = assemble(ir_module);
         printf("\n---- Assembly\n");
         encode_nasm(asm_module, stdout);
+
+        printf("\n---- Register allocated assembly\n");
+        reg_alloc(asm_module->fns);
 
         FILE *output = fopen("out.s", "w");
         encode_nasm(asm_module, output);

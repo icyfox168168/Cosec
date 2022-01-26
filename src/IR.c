@@ -12,6 +12,14 @@ BB * new_bb() {
     bb->ir_last = NULL;
     bb->asm_head = NULL;
     bb->asm_last = NULL;
+
+    bb->predecessors = NULL;
+    bb->successors = NULL;
+    bb->num_pred = 0;
+    bb->num_succ = 0;
+    bb->max_pred = 0;
+
+    bb->live_in = NULL;
     return bb;
 }
 
@@ -64,6 +72,7 @@ static AsmIns * new_asm(AsmOpcode op) {
     AsmIns *ins = malloc(sizeof(AsmIns));
     ins->next = NULL;
     ins->prev = NULL;
+    ins->idx = -1;
     ins->op = op;
     ins->l.type = 0;
     ins->l.vreg = 0;

@@ -13,12 +13,6 @@ static char *X86_OPCODE_NAMES[] = {
 #undef X
 };
 
-static int X86_OPCODE_NARGS[] = {
-#define X(_, __, nargs) nargs,
-    X86_OPCODES
-#undef X
-};
-
 static char * NASM_MEM_PREFIX[] = {
     [1] = "byte",
     [2] = "word",

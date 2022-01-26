@@ -38,6 +38,7 @@ static FnDef * new_fn() {
     fn->decl = NULL;
     fn->entry = NULL;
     fn->last = NULL;
+    fn->num_bbs = 0;
     return fn;
 }
 
@@ -48,6 +49,7 @@ static BB * emit_bb(Parser *p) {
         p->fn->last->next = bb;
     }
     p->fn->last = bb;
+    p->fn->num_bbs++;
     return bb;
 }
 

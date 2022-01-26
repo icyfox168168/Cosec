@@ -205,6 +205,12 @@ typedef enum {
     X86_LAST, // Required for hash-maps indexed by assembly opcode
 } AsmOpcode;
 
+static int X86_OPCODE_NARGS[] = { // Number of arguments each opcode takes
+#define X(_, __, nargs) nargs,
+    X86_OPCODES
+#undef X
+};
+
 typedef enum {
     OP_IMM,   // Immediate (constant)
     OP_REG,   // Physical register (e.g., rax, etc.)
@@ -226,6 +232,7 @@ typedef struct {
 
 typedef struct asm_ins {
     struct asm_ins *next, *prev;
+    int idx;
     AsmOpcode op;
     AsmOperand l, r;
 } AsmIns;
@@ -245,14 +252,24 @@ typedef struct bb {
     // order in which they appear in the source code
     struct bb *next, *prev;
     char *label;
-    IrIns *ir_head, *ir_last;
-    AsmIns *asm_head, *asm_last;
+    IrIns *ir_head, *ir_last;    // IR instructions
+    AsmIns *asm_head, *asm_last; // Assembly instructions
+
+    // ---- Analysis info
+    // Predecessor and successor blocks
+    struct bb **predecessors, **successors;
+    int num_pred, max_pred, num_succ;
+
+    // Liveness info
+    int *live_in;
 } BB;
 
 BB * new_bb();       // Creates a new empty basic block
 int size_of(Type t); // Returns the size of a type in bytes
+
 IrIns * emit_ir(BB *bb, IrOpcode op);
 void delete_ir(IrIns *ins);
+
 AsmIns * emit_asm(BB *bb, AsmOpcode op);
 
 #endif

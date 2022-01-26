@@ -78,6 +78,8 @@ static AsmFn * new_fn() {
     AsmFn *fn = malloc(sizeof(AsmFn));
     fn->next = NULL;
     fn->entry = NULL;
+    fn->last = NULL;
+    fn->num_vregs = 0;
     return fn;
 }
 
@@ -419,6 +421,8 @@ static void asm_fn_preamble(Assembler *a) {
 static AsmFn * asm_fn(FnDef *ir_fn) {
     AsmFn *fn = new_fn();
     fn->entry = ir_fn->entry;
+    fn->last = ir_fn->last;
+    fn->num_bbs = ir_fn->num_bbs;
 
     Assembler a = new_asm();
     a.bb = ir_fn->entry;
@@ -427,6 +431,7 @@ static AsmFn * asm_fn(FnDef *ir_fn) {
         a.bb = bb;
         asm_bb(&a, bb);
     }
+    fn->num_vregs = a.vreg;
     return fn;
 }
 
