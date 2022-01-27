@@ -19,11 +19,17 @@ typedef struct {
     int num_intervals, max_intervals;
 } LiveRange;
 
+typedef struct {
+    LiveRange *vregs; // Virtual registers
+    LiveRange *pregs; // Physical registers
+} LiveRanges;
+
 // Returns an array of 'LiveRange' indexed by vreg. E.g., live_ranges[3] is the
 // live range for vreg 3.
-LiveRange * analysis_liveness(AsmFn *fn);
+LiveRanges analysis_liveness(AsmFn *fn);
 
 int ranges_intersect(LiveRange r1, LiveRange r2);
-void print_live_ranges(AsmFn *fn, LiveRange *ranges);
+void print_live_range(LiveRange ranges);
+void print_live_ranges(AsmFn *fn, LiveRanges ranges);
 
 #endif

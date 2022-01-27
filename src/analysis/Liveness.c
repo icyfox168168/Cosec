@@ -17,7 +17,7 @@ static void number_ins(AsmFn *fn) {
 
 // Extend an existing live range interval to include the given program point
 // (if a suitable interval exists), or create a new interval
-static void add_program_point_to_live_range(LiveRange *range, int point) {
+static void add_program_point(LiveRange *range, int point) {
     // Try to find an interval we can extend
     for (int i = 0; i < range->num_intervals; i++) {
         Interval *interval = &range->intervals[i];
@@ -104,7 +104,7 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
         // Add the live vregs to the 'live ranges' structure
         for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
             if (live[vreg]) {
-                add_program_point_to_live_range(&ranges[vreg], ins->idx);
+                add_program_point(&ranges[vreg], ins->idx);
             }
         }
 
@@ -125,9 +125,7 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
     return changed;
 }
 
-LiveRange * analysis_liveness(AsmFn *fn) {
-    number_ins(fn);
-
+LiveRange * vreg_live_ranges(AsmFn *fn) {
     // Allocate the live ranges array
     LiveRange *ranges = malloc(sizeof(LiveRange) * fn->num_vregs);
     for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
@@ -160,6 +158,36 @@ LiveRange * analysis_liveness(AsmFn *fn) {
     return ranges;
 }
 
+static LiveRange * preg_live_ranges(AsmFn *fn) {
+    LiveRange *ranges = malloc(sizeof(LiveRange) * REG_MAX);
+    for (int preg = 0; preg < REG_MAX; preg++) {
+        ranges[preg].num_intervals = 0;
+        ranges[preg].max_intervals = 4;
+        ranges[preg].intervals = malloc(sizeof(Interval) * ranges->max_intervals);
+    }
+
+    // Iterate over all instructions in all blocks
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
+            if ((uses_left(ins) || defs_left(ins)) && ins->l.type == OP_REG) {
+                add_program_point(&ranges[ins->l.reg], ins->idx);
+            }
+            if (uses_right(ins) && ins->r.type == OP_REG) {
+                add_program_point(&ranges[ins->r.reg], ins->idx);
+            }
+        }
+    }
+    return ranges;
+}
+
+LiveRanges analysis_liveness(AsmFn *fn) {
+    number_ins(fn);
+    LiveRanges ranges;
+    ranges.vregs = vreg_live_ranges(fn); // Virtual and physical regs separately
+    ranges.pregs = preg_live_ranges(fn);
+    return ranges;
+}
+
 int intervals_intersect(Interval i1, Interval i2) {
     return !(i1.end < i2.start || i1.start > i2.end);
 }
@@ -175,19 +203,31 @@ int ranges_intersect(LiveRange r1, LiveRange r2) {
     return 0;
 }
 
-void print_live_ranges(AsmFn *fn, LiveRange *ranges) {
+void print_live_range(LiveRange range) {
+    for (int i = 0; i < range.num_intervals; i++) {
+        Interval *interval = &range.intervals[i];
+        printf("[%d, %d]", interval->start, interval->end);
+        if (i < range.num_intervals - 1) {
+            printf(", ");
+        }
+    }
+}
+
+void print_live_ranges(AsmFn *fn, LiveRanges ranges) {
     for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
-        if (ranges[vreg].num_intervals == 0) {
+        if (ranges.vregs[vreg].num_intervals == 0) {
             continue;
         }
-        printf("Vreg %d live at: ", vreg);
-        for (int i = 0; i < ranges[vreg].num_intervals; i++) {
-            Interval *interval = &ranges[vreg].intervals[i];
-            printf("[%d, %d]", interval->start, interval->end);
-            if (i < ranges[vreg].num_intervals - 1) {
-                printf(", ");
-            }
+        printf("%%%d live at: ", vreg);
+        print_live_range(ranges.vregs[vreg]);
+        printf("\n");
+    }
+    for (int preg = 0; preg < REG_MAX; preg++) {
+        if (ranges.pregs[preg].num_intervals == 0) {
+            continue;
         }
+        printf("%s live at: ", REG_NAMES[preg][REG_Q]);
+        print_live_range(ranges.pregs[preg]);
         printf("\n");
     }
 }

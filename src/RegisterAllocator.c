@@ -17,31 +17,30 @@
 // * Useful practical information on implementing liveness analysis:
 //   https://engineering.purdue.edu/~milind/ece573/2015fall/project/step7/step7.html
 
-static int * interference_graph(AsmFn *fn, LiveRange *ranges) {
+static int * interference_graph(AsmFn *fn, LiveRanges ranges) {
     int *graph = calloc(fn->num_vregs * fn->num_vregs, sizeof(int));
 
     // Build the graph by iterating over all the vregs twice
     for (int vreg1 = 0; vreg1 < fn->num_vregs; vreg1++) {
-        if (ranges[vreg1].num_intervals == 0) {
+        if (ranges.vregs[vreg1].num_intervals == 0) {
             continue; // vreg1 isn't used
         }
         for (int vreg2 = 0; vreg2 < fn->num_vregs; vreg2++) {
-            if (ranges[vreg2].num_intervals == 0) {
+            if (ranges.vregs[vreg2].num_intervals == 0) {
                 continue; // vreg2 isn't used
             }
-            if (ranges_intersect(ranges[vreg1], ranges[vreg2])) {
+            if (ranges_intersect(ranges.vregs[vreg1], ranges.vregs[vreg2])) {
                 graph[IG_IDX(vreg1, vreg2)] = 1;
-                printf("vreg %d interferes with %d\n", vreg1, vreg2);
             }
         }
     }
     return graph;
 }
 
-void reg_alloc(AsmFn *fn, LiveRange *ranges) {
+void reg_alloc(AsmFn *fn, LiveRanges ranges) {
     if (fn->num_vregs <= 0 || !fn->last) {
         return; // No vregs to allocate, or the function is empty
     }
     print_live_ranges(fn, ranges);
-    int *ig = interference_graph(fn, ranges);
+    int *graph = interference_graph(fn, ranges);
 }

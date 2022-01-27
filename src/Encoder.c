@@ -1,12 +1,6 @@
 
 #include "Encoder.h"
 
-static char *REG_NAMES[][5] = {
-#define X(name, q, d, w, h, l) {q, d, w, h, l},
-    X86_REGS
-#undef X
-};
-
 static char *X86_OPCODE_NAMES[] = {
 #define X(_, str, __) str,
     X86_OPCODES

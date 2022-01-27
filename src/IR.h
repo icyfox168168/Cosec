@@ -2,6 +2,7 @@
 #ifndef COSEC_IR_H
 #define COSEC_IR_H
 
+#include <stdlib.h>
 #include <stdint.h>
 
 #define UNREACHABLE() exit(1)
@@ -133,6 +134,7 @@ typedef enum {
 #define X(name, _, __, ___, ____, _____) REG_ ## name,
     X86_REGS
 #undef X
+    REG_MAX,
 } Reg;
 
 typedef enum {
@@ -142,6 +144,12 @@ typedef enum {
     REG_H, // Highest 8 bits of the lowest 16 bits (e.g., ah)
     REG_L, // Lowest 8 bits (e.g., al)
 } RegBits;
+
+static char *REG_NAMES[][5] = {
+#define X(name, q, d, w, h, l) {q, d, w, h, l},
+        X86_REGS
+#undef X
+};
 
 #define X86_OPCODES          \
     /* Memory access */      \
