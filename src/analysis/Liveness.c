@@ -21,12 +21,12 @@ static void add_program_point_to_live_range(LiveRange *range, int point) {
     // Try to find an interval we can extend
     for (int i = 0; i < range->num_intervals; i++) {
         Interval *interval = &range->intervals[i];
-        if (point >= interval->start && point < interval->end) {
+        if (point >= interval->start && point <= interval->end) {
             return; // Already inside an interval
         } else if (point == interval->start - 1) {
             interval->start--; // Right before an existing interval
             return;
-        } else if (point == interval->end) {
+        } else if (point == interval->end + 1) {
             interval->end++; // Right after an existing interval
             return;
         }
@@ -38,7 +38,7 @@ static void add_program_point_to_live_range(LiveRange *range, int point) {
         range->intervals = realloc(range->intervals,
                                    sizeof(Interval) * range->max_intervals);
     }
-    Interval new_interval = {point, point + 1};
+    Interval new_interval = {point, point};
     range->intervals[range->num_intervals++] = new_interval;
 }
 
@@ -160,6 +160,21 @@ LiveRange * analysis_liveness(AsmFn *fn) {
     return ranges;
 }
 
+int intervals_intersect(Interval i1, Interval i2) {
+    return !(i1.end < i2.start || i1.start > i2.end);
+}
+
+int ranges_intersect(LiveRange r1, LiveRange r2) {
+    for (int i = 0; i < r1.num_intervals; i++) {
+        for (int j = 0; j < r2.num_intervals; j++) {
+            if (intervals_intersect(r1.intervals[i], r2.intervals[j])) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 void print_live_ranges(AsmFn *fn, LiveRange *ranges) {
     for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
         if (ranges[vreg].num_intervals == 0) {
@@ -168,7 +183,7 @@ void print_live_ranges(AsmFn *fn, LiveRange *ranges) {
         printf("Vreg %d live at: ", vreg);
         for (int i = 0; i < ranges[vreg].num_intervals; i++) {
             Interval *interval = &ranges[vreg].intervals[i];
-            printf("[%d, %d)", interval->start, interval->end);
+            printf("[%d, %d]", interval->start, interval->end);
             if (i < ranges[vreg].num_intervals - 1) {
                 printf(", ");
             }
