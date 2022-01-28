@@ -112,7 +112,7 @@ typedef struct ir_ins {
 
 // ---- Assembly IR -----------------------------------------------------------
 
-#define X86_REGS                                \
+#define X86_REGS \
     X(RAX, "rax", "eax",  "ax",   "ah", "al")   \
     X(RCX, "rcx", "ecx",  "cx",   "ch", "cl")   \
     X(RDX, "rdx", "edx",  "dx",   "dh", "dl")   \

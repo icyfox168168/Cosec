@@ -1,9 +1,10 @@
 
-#include <stdio.h>
+#include <assert.h>
+#include <string.h>
 
 #include "RegisterAllocator.h"
 
-#define IG_IDX(vreg1, vreg2) (vreg1 * fn->num_vregs + vreg2)
+#define IG(graph, reg1, reg2) ((reg1) * (REG_MAX + graph.num_vregs) + (reg2))
 
 // Resources:
 // * An overview of the graph colouring algorithm in the book:
@@ -17,30 +18,151 @@
 // * Useful practical information on implementing liveness analysis:
 //   https://engineering.purdue.edu/~milind/ece573/2015fall/project/step7/step7.html
 
-static int * interference_graph(AsmFn *fn, LiveRanges ranges) {
-    int *graph = calloc(fn->num_vregs * fn->num_vregs, sizeof(int));
+typedef struct {
+    int num_vregs;
+    int *matrix; // Bit matrix of edges
+    int *num_neighbours; // Number of edges for each node in the graph
+} InterferenceGraph;
 
-    // Build the graph by iterating over all the vregs twice
-    for (int vreg1 = 0; vreg1 < fn->num_vregs; vreg1++) {
-        if (ranges.vregs[vreg1].num_intervals == 0) {
-            continue; // vreg1 isn't used
+static InterferenceGraph build_graph(AsmFn *fn, LiveRange *ranges) {
+    int num_regs = fn->num_vregs + REG_MAX;
+    InterferenceGraph graph;
+    graph.num_vregs = fn->num_vregs;
+    graph.matrix = calloc(num_regs * num_regs, sizeof(int));
+    graph.num_neighbours = calloc(num_regs, sizeof(int));
+
+    // Intersect all physical and virtual registers with each other to build
+    // the intersection graph (represented as a matrix)
+    for (int reg1 = 0; reg1 < num_regs; reg1++) {
+        if (ranges[reg1].num_intervals == 0) {
+            continue; // reg1 isn't used
         }
-        for (int vreg2 = 0; vreg2 < fn->num_vregs; vreg2++) {
-            if (ranges.vregs[vreg2].num_intervals == 0) {
-                continue; // vreg2 isn't used
+        for (int reg2 = 0; reg2 < num_regs; reg2++) {
+            if (ranges[reg2].num_intervals == 0) {
+                continue; // reg2 isn't used
             }
-            if (ranges_intersect(ranges.vregs[vreg1], ranges.vregs[vreg2])) {
-                graph[IG_IDX(vreg1, vreg2)] = 1;
+            if (ranges_intersect(ranges[reg1], ranges[reg2])) {
+                graph.matrix[IG(graph, reg1, reg2)] = 1;
+                graph.num_neighbours[reg1]++;
             }
         }
     }
     return graph;
 }
 
-void reg_alloc(AsmFn *fn, LiveRanges ranges) {
+static InterferenceGraph copy_graph(InterferenceGraph graph) {
+    int num_regs = graph.num_vregs + REG_MAX;
+    InterferenceGraph copy;
+    copy.num_vregs = graph.num_vregs;
+    size_t matrix_size = num_regs * num_regs * sizeof(int);
+    copy.matrix = malloc(matrix_size);
+    size_t neighbours_size = num_regs * sizeof(int);
+    copy.num_neighbours = malloc(neighbours_size);
+    memcpy(copy.matrix, graph.matrix, matrix_size);
+    memcpy(copy.num_neighbours, graph.num_neighbours, neighbours_size);
+    return copy;
+}
+
+static int node_exists(InterferenceGraph graph, int vreg) {
+    return graph.matrix[IG(graph, REG_MAX + vreg, REG_MAX + vreg)];
+}
+
+static int num_neighbours(InterferenceGraph graph, int vreg) {
+    return graph.num_neighbours[REG_MAX + vreg];
+}
+
+static void remove_node(InterferenceGraph graph, int vreg) {
+    graph.num_neighbours[REG_MAX + vreg] = 0;
+    for (int reg = 0; reg < REG_MAX + graph.num_vregs; reg++) {
+        if (graph.matrix[IG(graph, REG_MAX + vreg, reg)]) {
+            graph.num_neighbours[reg]--; // Decrement neighbours
+        }
+        graph.matrix[IG(graph, REG_MAX + vreg, reg)] = 0; // Zero row and column
+        graph.matrix[IG(graph, reg, REG_MAX + vreg)] = 0;
+    }
+}
+
+// Makes 'reg' interfere with everything that 'vreg' interferes with
+static void copy_interference(InterferenceGraph graph, int vreg, int reg) {
+    for (int other_vreg = 0; other_vreg < graph.num_vregs; other_vreg++) {
+        if (graph.matrix[IG(graph, REG_MAX + vreg, REG_MAX + other_vreg)]) {
+            graph.matrix[IG(graph, reg, REG_MAX + other_vreg)] = 1;
+            graph.matrix[IG(graph, REG_MAX + other_vreg, reg)] = 1;
+        }
+    }
+}
+
+// Returns NULL (and populates 'to_spill') if the graph isn't colourable with
+// REG_MAX registers. Otherwise, returns a mapping from vregs to 'Reg's
+static Reg * colour_graph(AsmFn *fn, InterferenceGraph graph) {
+    // NOTE: assumes we don't need to handle spilling yet
+    InterferenceGraph copy = copy_graph(graph);
+
+    // Stack of vregs which we'll allocate colours to in the order they appear
+    int stack[fn->num_vregs];
+    int num_stack = 0;
+
+    // Keep adding to the stack
+    while (1) {
+        // Find the next vreg with less than REG_MAX neighbours
+        int found = 0;
+        for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
+            if (!node_exists(copy, vreg)) {
+                continue;
+            }
+            if (num_neighbours(copy, vreg) < REG_MAX) { // Found a reg
+                stack[num_stack++] = vreg; // Add to the stack
+                remove_node(copy, vreg);  // Remove from the graph
+                found = 1;
+                break; // Start again
+            }
+        }
+        if (!found) { // No more vregs with <REG_MAX neighbours
+            break;
+        }
+    }
+
+    // Now work our way up the stack allocating registers
+    Reg *regs = malloc(fn->num_vregs * sizeof(Reg)); // Init REG_NONE
+    while (num_stack) {
+        int vreg = stack[--num_stack]; // Remove from the stack
+
+        // Find the first reg not interfering with 'vreg'
+        int found = 0;
+        for (int reg = 0; reg < REG_MAX; reg++) {
+            if (!graph.matrix[IG(graph, REG_MAX + vreg, reg)]) {
+                regs[vreg] = reg; // Found a reg
+                copy_interference(graph, vreg, reg);
+                found = 1;
+                break;
+            }
+        }
+        assert(found); // No spilling yet
+    }
+    return regs;
+}
+
+static void replace_vregs(AsmFn *fn, Reg *reg_map) {
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
+            if (ins->l.type == OP_VREG) {
+                ins->l.reg = reg_map[ins->l.vreg];
+                ins->l.type = OP_REG;
+            }
+            if (ins->r.type == OP_VREG) {
+                ins->r.reg = reg_map[ins->r.vreg];
+                ins->r.type = OP_REG;
+            }
+        }
+    }
+}
+
+void reg_alloc(AsmFn *fn, LiveRange *ranges) {
     if (fn->num_vregs <= 0 || !fn->last) {
         return; // No vregs to allocate, or the function is empty
     }
     print_live_ranges(fn, ranges);
-    int *graph = interference_graph(fn, ranges);
+    InterferenceGraph graph = build_graph(fn, ranges);
+    Reg *reg_map = colour_graph(fn, graph);
+    replace_vregs(fn, reg_map);
 }

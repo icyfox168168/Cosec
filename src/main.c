@@ -78,8 +78,9 @@ int main(int argc, char *argv[]) {
 
         printf("\n---- Register allocated assembly\n");
         analysis_cfg(asm_module->fns->entry);
-        LiveRanges live_ranges = analysis_liveness(asm_module->fns);
+        LiveRange *live_ranges = analysis_liveness(asm_module->fns);
         reg_alloc(asm_module->fns, live_ranges);
+        encode_nasm(asm_module, stdout);
 
         FILE *output = fopen("out.s", "w");
         encode_nasm(asm_module, output);
