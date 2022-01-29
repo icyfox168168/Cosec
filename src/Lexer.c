@@ -37,6 +37,24 @@ static void lex_whitespace(Lexer *l) {
     }
 }
 
+static void lex_comments(Lexer *l) {
+    if (*l->c == '/' && *(l->c + 1) == '/') {
+        while (*l->c != 0 && *l->c != '\n' && *l->c != '\r') {
+            l->c++;
+        }
+    } else if (*l->c == '/' && *(l->c + 1) == '*') {
+        while (*l->c != 0 && *l->c != '*' && *(l->c + 1) != '/') {
+            l->c++;
+        }
+        if (!l->c) {
+            printf("unclosed multiline comment\n");
+            exit(1);
+        }
+        l->c += 2; // Skip final '*/'
+    }
+    lex_whitespace(l);
+}
+
 static void lex_ident(Lexer *l) {
     char *start = l->c;
     while (isalnum(*l->c) || *l->c == '_') { // Find the end of the identifier
@@ -94,6 +112,7 @@ static void lex_symbol(Lexer *l) {
 
 void next_tk(Lexer *l) {
     lex_whitespace(l);
+    lex_comments(l);
     if (isalpha(*l->c) || *l->c == '_') { // Identifiers
         lex_ident(l);
     } else if (isnumber(*l->c)) { // Numbers
