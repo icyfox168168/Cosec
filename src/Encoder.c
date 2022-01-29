@@ -17,10 +17,10 @@ static char * NASM_MEM_PREFIX[] = {
 static void encode_operand(AsmOperand op, FILE *out) {
     switch (op.type) {
     case OP_IMM: fprintf(out, "%llu", op.imm); break;
-    case OP_REG: fprintf(out, "%s", REG_NAMES[op.reg][op.bits]); break;
+    case OP_REG: fprintf(out, "%s", REG_NAMES[op.reg][op.size]); break;
     case OP_VREG:
         fprintf(out, "%%%d", op.vreg);
-        switch (op.bits) {
+        switch (op.size) {
             case REG_Q: break; // Don't print anything for REG_64
             case REG_D: fprintf(out, "(d)"); break;
             case REG_W: fprintf(out, "(w)"); break;
@@ -29,8 +29,8 @@ static void encode_operand(AsmOperand op, FILE *out) {
         }
         break;
     case OP_MEM:
-        fprintf(out, "%s ", NASM_MEM_PREFIX[op.size]);
-        fprintf(out, "[%s", REG_NAMES[op.base][op.bits]); // Base
+        fprintf(out, "%s ", NASM_MEM_PREFIX[op.bytes]);
+        fprintf(out, "[%s", REG_NAMES[op.base][op.size]); // Base
         if (op.scale > 1) { // Scale
             fprintf(out, "*%d", op.scale);
         }

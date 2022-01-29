@@ -3,6 +3,16 @@
 
 #include "IR.h"
 
+int size_of(Type t) {
+    if (t.ptrs > 0) {
+        return 8; // Pointers are always 8 bytes
+    }
+    switch (t.prim) {
+        case T_void: return 0;
+        case T_i32:  return 4;
+    }
+}
+
 BB * new_bb() {
     BB *bb = malloc(sizeof(BB));
     bb->next = NULL;
@@ -21,16 +31,6 @@ BB * new_bb() {
 
     bb->live_in = NULL;
     return bb;
-}
-
-int size_of(Type t) {
-    if (t.ptrs > 0) {
-        return 8; // Pointers are always 8 bytes
-    }
-    switch (t.prim) {
-        case T_void: return 0;
-        case T_i32:  return 4;
-    }
 }
 
 static IrIns * new_ir(IrOpcode op) {
@@ -76,15 +76,16 @@ static AsmIns * new_asm(AsmOpcode op) {
     ins->op = op;
     ins->l.type = 0;
     ins->l.vreg = 0;
-    ins->l.bits = REG_Q;
+    ins->l.size = REG_Q;
     ins->r.type = 0;
     ins->r.vreg = 0;
-    ins->r.bits = REG_Q;
+    ins->r.size = REG_Q;
     return ins;
 }
 
 AsmIns * emit_asm(BB *bb, AsmOpcode op) {
     AsmIns *ins = new_asm(op);
+    ins->bb = bb;
     ins->prev = bb->asm_last;
     if (bb->asm_last) {
         bb->asm_last->next = ins;
@@ -93,4 +94,15 @@ AsmIns * emit_asm(BB *bb, AsmOpcode op) {
     }
     bb->asm_last = ins;
     return ins;
+}
+
+void delete_asm(AsmIns *ins) {
+    if (ins->prev) {
+        ins->prev->next = ins->next;
+    } else { // Head of linked list
+        ins->bb->asm_head = ins->next;
+    }
+    if (ins->bb->asm_last == ins) {
+        ins->bb->asm_last = ins->prev;
+    }
 }

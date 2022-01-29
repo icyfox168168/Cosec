@@ -113,7 +113,7 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
         if ((uses_left(ins) || defs_left(ins)) && ins->l.type == OP_REG) {
             add_program_point(&ranges[ins->l.reg], ins->idx);
         }
-        if (uses_right(ins) && ins->l.type == OP_REG) {
+        if (uses_right(ins) && ins->r.type == OP_REG) {
             add_program_point(&ranges[ins->r.reg], ins->idx);
         }
 

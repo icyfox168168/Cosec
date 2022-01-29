@@ -19,15 +19,15 @@
 //   https://engineering.purdue.edu/~milind/ece573/2015fall/project/step7/step7.html
 
 typedef struct {
-    int num_vregs;
-    int *matrix; // Bit matrix of edges
+    int num_vregs;       // Size of matrix is (num_vreg + REG_MAX)^2
+    int *matrix;         // Bit matrix of edges
     int *num_neighbours; // Number of edges for each node in the graph
 } InterferenceGraph;
 
-static InterferenceGraph build_graph(AsmFn *fn, LiveRange *ranges) {
-    int num_regs = fn->num_vregs + REG_MAX;
+static InterferenceGraph build_graph(LiveRange *ranges, int num_vregs) {
+    int num_regs = num_vregs + REG_MAX;
     InterferenceGraph graph;
-    graph.num_vregs = fn->num_vregs;
+    graph.num_vregs = num_vregs;
     graph.matrix = calloc(num_regs * num_regs, sizeof(int));
     graph.num_neighbours = calloc(num_regs, sizeof(int));
 
@@ -63,6 +63,8 @@ static InterferenceGraph copy_graph(InterferenceGraph graph) {
     return copy;
 }
 
+// A node exists in the graph if its value along the diagonal (i.e. whether it
+// intersects with itself) is 1
 static int node_exists(InterferenceGraph graph, int vreg) {
     return graph.matrix[IG(graph, REG_MAX + vreg, REG_MAX + vreg)];
 }
@@ -71,15 +73,18 @@ static int num_neighbours(InterferenceGraph graph, int vreg) {
     return graph.num_neighbours[REG_MAX + vreg];
 }
 
+// Remove a node from the graph by setting its value along the diagonal (i.e.
+// matrix[IG(vreg, vreg)]) to 0
 static void remove_node(InterferenceGraph graph, int vreg) {
-    graph.num_neighbours[REG_MAX + vreg] = 0;
+    // Zero the row and column to remove edges with all the other nodes
     for (int reg = 0; reg < REG_MAX + graph.num_vregs; reg++) {
         if (graph.matrix[IG(graph, REG_MAX + vreg, reg)]) {
             graph.num_neighbours[reg]--; // Decrement neighbours
         }
-        graph.matrix[IG(graph, REG_MAX + vreg, reg)] = 0; // Zero row and column
+        graph.matrix[IG(graph, REG_MAX + vreg, reg)] = 0;
         graph.matrix[IG(graph, reg, REG_MAX + vreg)] = 0;
     }
+    graph.num_neighbours[REG_MAX + vreg] = 0;
 }
 
 // Makes 'reg' interfere with everything that 'vreg' interferes with
@@ -117,7 +122,7 @@ static Reg * colour_graph(AsmFn *fn, InterferenceGraph graph) {
                 break; // Start again
             }
         }
-        if (!found) { // No more vregs with <REG_MAX neighbours
+        if (!found) { // No more vregs with less than REG_MAX neighbours
             break;
         }
     }
@@ -142,6 +147,7 @@ static Reg * colour_graph(AsmFn *fn, InterferenceGraph graph) {
     return regs;
 }
 
+// Change all the vreg operands in the assembly to their allocated registers
 static void replace_vregs(AsmFn *fn, Reg *reg_map) {
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
@@ -153,6 +159,12 @@ static void replace_vregs(AsmFn *fn, Reg *reg_map) {
                 ins->r.reg = reg_map[ins->r.vreg];
                 ins->r.type = OP_REG;
             }
+
+            // Remove redundant movs
+            if (ins->op == X86_MOV && ins->l.type == OP_REG &&
+                    ins->r.type == OP_REG && ins->l.reg == ins->r.reg) {
+                delete_asm(ins);
+            }
         }
     }
 }
@@ -162,7 +174,7 @@ void reg_alloc(AsmFn *fn, LiveRange *ranges) {
         return; // No vregs to allocate, or the function is empty
     }
     print_live_ranges(fn, ranges);
-    InterferenceGraph graph = build_graph(fn, ranges);
+    InterferenceGraph graph = build_graph(ranges, fn->num_vregs);
     Reg *reg_map = colour_graph(fn, graph);
     replace_vregs(fn, reg_map);
 }

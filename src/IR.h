@@ -143,12 +143,20 @@ typedef enum {
     REG_W, // Lowest 16 bits (e.g., ax)
     REG_H, // Highest 8 bits of the lowest 16 bits (e.g., ah)
     REG_L, // Lowest 8 bits (e.g., al)
-} RegBits;
+} RegSize;
 
 static char *REG_NAMES[][5] = {
 #define X(name, q, d, w, h, l) {q, d, w, h, l},
         X86_REGS
 #undef X
+};
+
+// Tells us the RegSize to use for a 'Type' of a certain number of BYTES.
+static RegSize REG_SIZE[] = {
+    [8] = REG_Q,
+    [4] = REG_D,
+    [2] = REG_W,
+    [1] = REG_L,
 };
 
 #define X86_OPCODES          \
@@ -159,8 +167,8 @@ static char *REG_NAMES[][5] = {
                              \
     /* Arithmetic */         \
     X(ADD, "add", 2)         \
-    X(SUB, "bits", 2)         \
-    X(MUL, "mul", 2)         \
+    X(SUB, "sub", 2)         \
+    X(MUL, "imul", 2)        \
     X(CDQ, "cdq", 0) /* Sign extend eax into edx, specifically for idiv */ \
     X(IDIV, "idiv", 1)       \
     X(AND, "and", 2)         \
@@ -228,15 +236,16 @@ typedef struct {
     AsmOperandType type;
     union {
         uint64_t imm;                         // OP_IMM
-        struct { RegBits bits; Reg reg; };    // OP_REG
-        struct { RegBits _bits1; int vreg; }; // OP_VREG
-        struct { RegBits _bits2; int scale, index, size; Reg base; }; // OP_MEM
+        struct { RegSize size; Reg reg; };    // OP_REG
+        struct { RegSize _size1; int vreg; }; // OP_VREG
+        struct { RegSize _size2; Reg base; int scale, index, bytes; }; // OP_MEM
         struct bb *bb;                        // OP_LABEL
     };
 } AsmOperand;
 
 typedef struct asm_ins {
     struct asm_ins *next, *prev;
+    struct bb *bb;
     int idx;
     AsmOpcode op;
     AsmOperand l, r;
@@ -270,11 +279,12 @@ typedef struct bb {
 } BB;
 
 BB * new_bb();       // Creates a new empty basic block
-int size_of(Type t); // Returns the size of a type in bytes
+int size_of(Type t); // Returns the bytes of a type in bytes
 
 IrIns * emit_ir(BB *bb, IrOpcode op);
 void delete_ir(IrIns *ins);
 
 AsmIns * emit_asm(BB *bb, AsmOpcode op);
+void delete_asm(AsmIns *ins);
 
 #endif
