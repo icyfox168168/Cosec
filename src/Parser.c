@@ -796,8 +796,8 @@ static void parse_for(Parser *p) {
     patch_jmp_list(cond.true_list, body);
     parse_body(p);
     // Attach the increment BB to the end of the body
-    IrIns *end_br = emit(p, IR_BR); // End body with branch to increment_bb
-    end_br->br = increment_bb;
+    IrIns *body_br = emit(p, IR_BR); // End body with branch to increment_bb
+    body_br->br = increment_bb;
     p->fn->last->next = increment_bb;
     increment_bb->prev = p->fn->last;
     p->fn->last = increment_bb;
