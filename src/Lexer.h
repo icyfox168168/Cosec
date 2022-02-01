@@ -36,6 +36,7 @@
     K(ELSE, "else")                 \
     K(WHILE, "while")               \
     K(FOR, "for")                   \
+    K(DO, "do")                     \
     K(BREAK, "break")               \
     K(RETURN, "return")
 

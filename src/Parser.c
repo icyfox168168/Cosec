@@ -812,6 +812,37 @@ static void parse_for(Parser *p) {
     p->num_locals = num_locals; // Get rid of locals declared
 }
 
+static void parse_do_while(Parser *p) {
+    expect_tk(&p->l, TK_DO);
+    next_tk(&p->l);
+    IrIns *before_br = emit(p, IR_BR);
+
+    Loop loop;
+    loop.break_list = NULL;
+    loop.outer = p->loop;
+    p->loop = &loop;
+    BB *body = emit_bb(p); // Body
+    before_br->br = body;
+    parse_body(p);
+    p->loop = loop.outer;
+
+    expect_tk(&p->l, TK_WHILE);
+    next_tk(&p->l);
+    expect_tk(&p->l, '(');
+    next_tk(&p->l);
+    Expr cond = parse_expr(p); // Condition
+    cond = to_cond(p, cond);
+    expect_tk(&p->l, ')');
+    next_tk(&p->l);
+    expect_tk(&p->l, ';');
+    next_tk(&p->l);
+
+    patch_jmp_list(cond.true_list, body);
+    BB *after = emit_bb(p);
+    patch_jmp_list(cond.false_list, after);
+    patch_jmp_list(loop.break_list, after);
+}
+
 static void parse_break(Parser *p) {
     expect_tk(&p->l, TK_BREAK);
     next_tk(&p->l);
@@ -843,6 +874,7 @@ static void parse_stmt(Parser *p) {
         case TK_IF:     parse_if(p); return;           // If statement
         case TK_WHILE:  parse_while(p); return;        // While loop
         case TK_FOR:    parse_for(p); return;          // For loop
+        case TK_DO:     parse_do_while(p); return;     // Do-while loop
         case TK_BREAK:  parse_break(p); break;         // Break
         case TK_RETURN: parse_ret(p); break;           // Return
         case TK_INT:    parse_decl(p); break;          // Declaration
