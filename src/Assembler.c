@@ -254,7 +254,7 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
         case IR_SUB: op = X86_SUB; break;
         case IR_MUL: op = X86_MUL; break;
         case IR_AND: op = X86_AND; break;
-        case IR_OR:  op = X86_OR; break;
+        case IR_OR:  op = X86_OR;  break;
         case IR_XOR: op = X86_XOR; break;
         default: UNREACHABLE();
     }

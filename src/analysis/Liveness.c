@@ -121,7 +121,7 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
 
     // Everything left over is now live-in for the BB
     size_t live_in_size = sizeof(int) * fn->num_vregs;
-    int changed = memcmp(live, bb->live_in, live_in_size);
+    int changed = (memcmp(live, bb->live_in, live_in_size) == 0);
     memcpy(bb->live_in, live, live_in_size);
     return changed;
 }

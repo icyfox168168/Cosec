@@ -254,6 +254,10 @@ typedef struct asm_ins {
 
 // ---- Basic Block -----------------------------------------------------------
 
+// Each basic block can have a maximum of 2 successor blocks (if it ends with a
+// CONDBR instruction)
+#define MAX_SUCCESSORS 2
+
 // Use a unified basic block structure for both the SSA and assembly IR, since
 // this simplifies assembly construction. The CFG structure is the same in
 // each IR (although represented more implicitly in the assembly IR).
@@ -271,7 +275,7 @@ typedef struct bb {
 
     // ---- Analysis info
     // Predecessor and successor blocks
-    struct bb **predecessors, **successors;
+    struct bb **predecessors, *successors[MAX_SUCCESSORS];
     int num_pred, max_pred, num_succ;
 
     // Liveness info

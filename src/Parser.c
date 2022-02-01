@@ -92,7 +92,7 @@ static Phi * new_phi(BB *bb, IrIns *def) {
 typedef enum {
     PREC_NONE,
     PREC_COMMA,   // Comma operator
-    PREC_ASSIGN,  // =, +=, -=, *=, /=, %=
+    PREC_ASSIGN,  // =, +=, -=, *=, /=, %=, &=, |=, ^=, >>=, <<=
     PREC_TERNARY, // ?
     PREC_OR,      // ||
     PREC_AND,     // &&
@@ -441,6 +441,8 @@ static Expr parse_neg(Parser *p, Expr operand) {
     operand = discharge(p, operand);
     IrIns *zero = emit(p, IR_KI32); // -a is equivalent to '0 - a'
     zero->ki32 = 0;
+    zero->type.prim = T_i32;
+    zero->type.ptrs = 0;
     IrIns *operation = emit(p, IR_SUB);
     operation->l = zero;
     operation->r = operand.ins;
@@ -454,6 +456,8 @@ static Expr parse_bit_not(Parser *p, Expr operand) {
     operand = discharge(p, operand);
     IrIns *neg1 = emit(p, IR_KI32); // ~a is equivalent to 'a ^ -1'
     neg1->ki32 = -1;
+    neg1->type.prim = T_i32;
+    neg1->type.ptrs = 0;
     IrIns *operation = emit(p, IR_XOR);
     operation->l = operand.ins;
     operation->r = neg1;

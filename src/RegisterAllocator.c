@@ -41,7 +41,7 @@ static InterferenceGraph build_graph(LiveRange *ranges, int num_vregs) {
             continue; // reg1 isn't used
         }
         graph.matrix[IG(graph, reg1, reg1)] = 1; // This reg is used
-        for (int reg2 = 0; reg2 < reg1; reg2++) {
+        for (int reg2 = 0; reg2 < reg1; reg2++) { // Only iterate the upper half
             LiveRange r2 = ranges[reg2];
             if (!r2) {
                 continue; // reg2 isn't used
@@ -115,7 +115,7 @@ static Reg * colour_graph(AsmFn *fn, InterferenceGraph g) {
                 min_neighbours = num_neighbours;
             }
         }
-        if (min_vreg < 0) { // No more vregs in the graph
+        if (min_vreg < 0) { // No more vregs in the graph; all on the stack
             break;
         }
         stack[num_stack++] = min_vreg; // Add to the stack
@@ -132,21 +132,21 @@ static Reg * colour_graph(AsmFn *fn, InterferenceGraph g) {
         // Find all physical regs interfering with 'vreg'
         int interference[REG_MAX];
         memset(interference, 0, sizeof(int) * REG_MAX);
-        for (int preg = 0; preg < REG_MAX; preg++) {
+        for (int preg = 0; preg < REG_MAX; preg++) { // Physical regs
             interference[preg] |= g.matrix[IG(g, REG_MAX + vreg, preg)];
         }
-        for (int other = 0; other < fn->num_vregs; other++) {
+        for (int other = 0; other < fn->num_vregs; other++) { // Vregs
             int interferes = g.matrix[IG(g, REG_MAX + vreg, REG_MAX + other)];
-            if (allocated[other]) {
-                interference[regs[other]] |= interferes;
+            if (allocated[other] && interferes) {
+                interference[regs[other]] = 1;
             }
         }
 
         // Find the first physical reg not interfering with 'vreg'
         int reg = 0;
         while (interference[reg]) { reg++; }
-        if (reg >= REG_MAX) {
-            assert(0); // No spilling allowed yet
+        if (reg >= REG_MAX) { // All registers interfere -> spill
+            assert(0); // Spilling not yet implemented
         }
         regs[vreg] = reg;
         allocated[vreg] = 1;
