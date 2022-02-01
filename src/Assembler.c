@@ -427,7 +427,6 @@ static AsmFn * asm_fn(FnDef *ir_fn) {
     AsmFn *fn = new_fn();
     fn->entry = ir_fn->entry;
     fn->last = ir_fn->last;
-    fn->num_bbs = ir_fn->num_bbs;
 
     Assembler a = new_asm();
     a.bb = ir_fn->entry;

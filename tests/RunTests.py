@@ -19,6 +19,7 @@ def run_test(cosec_exec, test_file):
     else:
         print("Test '" + test_file + "' PASSED")
 
+# Recursively finds all '.c' files within a directory and runs them as tests
 def run_tests_in(cosec_exec, dir):
     print("Running tests in '" + dir + "'...")
     for file in os.listdir(dir):
@@ -32,6 +33,8 @@ def run_tests_in(cosec_exec, dir):
 
 cosec_exec = sys.argv[1]
 run_tests_in(cosec_exec, ".")
+
+# Remove temporary files that were written during testing
 os.remove("./out.s")
 os.remove("./out.o")
 os.remove("./a.out")

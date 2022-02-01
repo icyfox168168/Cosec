@@ -10,22 +10,22 @@
 // REQUIRES:
 // * CFG analysis (for successors and predecessors)
 
-typedef struct {
+typedef struct interval {
     int start, end;
+    struct interval *next;
 } Interval;
 
-typedef struct {
-    Interval *intervals;
-    int num_intervals, max_intervals;
-} LiveRange;
+// Each live range is a linked list of intervals; a 'LiveRange' refers to the
+// head of the linked list
+typedef Interval * LiveRange;
 
-// Returns an array of 'LiveRange' indexed by physical or virtual register,
-// where the first REG_MAX values are physical register live ranges, and the
-// rest are vregs (e.g., vreg 3 can be accessed by live_range[REG_MAX + 3])
+// In the returned array, the first REG_MAX are physical register live ranges,
+// and the rest are vregs. E.g. vreg 3 is at live_range[REG_MAX + 3].
+// Total size is REG_MAX + num_vregs
 LiveRange * analysis_liveness(AsmFn *fn);
 
 int ranges_intersect(LiveRange r1, LiveRange r2);
-void print_live_range(LiveRange ranges);
-void print_live_ranges(AsmFn *fn, LiveRange *ranges);
+void print_live_range(LiveRange range);
+void print_live_ranges(LiveRange *ranges, int num_vregs);
 
 #endif

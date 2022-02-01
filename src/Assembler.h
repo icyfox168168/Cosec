@@ -13,7 +13,6 @@
 typedef struct asm_fn {
     struct asm_fn *next; // Linked list of functions
     BB *entry, *last;    // Linked list of basic blocks
-    int num_bbs;
     int num_vregs;
 } AsmFn;
 

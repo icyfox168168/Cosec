@@ -3,8 +3,8 @@
 Cosec is a toy optimising C compiler, written to learn more about compiler 
 theory.
 
-The compiler is designed to work only on my computer's architecture. Specifically,
-it generates x86-64 NASM assembly code.
+Cosec only generates x86-64 NASM assembly code (which is my MacBook Pro's 
+architecture) for the moment.
 
 My goals for the project are:
 

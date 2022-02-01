@@ -17,29 +17,30 @@ static void number_ins(AsmFn *fn) {
 
 // Extend an existing live range interval to include the given program point
 // (if a suitable interval exists), or create a new interval
+//
+// Points are always added in reverse order (since we only loop over
+// instructions in reverse), there's no jumping around. So, this method is
+// guaranteed to produce the minimum number of intervals required to represent
+// the live range.
 static void add_program_point(LiveRange *range, int point) {
     // Try to find an interval we can extend
-    for (int i = 0; i < range->num_intervals; i++) {
-        Interval *interval = &range->intervals[i];
-        if (point >= interval->start && point <= interval->end) {
+    for (Interval *i = *range; i; i = i->next) {
+        if (point >= i->start && point <= i->end) {
             return; // Already inside an interval
-        } else if (point == interval->start - 1) {
-            interval->start--; // Right before an existing interval
+        } else if (point == i->start - 1) {
+            i->start--; // Right before an existing interval
             return;
-        } else if (point == interval->end + 1) {
-            interval->end++; // Right after an existing interval
+        } else if (point == i->end + 1) {
+            i->end++; // Right after an existing interval
             return;
         }
     }
-
-    // Otherwise, create a new interval
-    if (range->num_intervals >= range->max_intervals) {
-        range->max_intervals *= 2;
-        range->intervals = realloc(range->intervals,
-                                   sizeof(Interval) * range->max_intervals);
-    }
-    Interval new_interval = {point, point};
-    range->intervals[range->num_intervals++] = new_interval;
+    // Otherwise, prepend a new interval to the linked list
+    Interval *i = malloc(sizeof(Interval));
+    i->start = point;
+    i->end = point;
+    i->next = *range;
+    *range = i;
 }
 
 // Returns true if the instruction defines its left operand
@@ -72,10 +73,14 @@ static int uses_right(AsmIns *ins) {
 //
 // Live out is the union of all the live-in lists for all successors of the
 // basic block
+// live out = union over all successors { live in(successor) }
 //
 // Live in is everything that's used inside this basic block, plus everything
 // that's live out minus what's defined in this block
 // live in = { use(bb) } union { live out(bb) \ defn(bb) }
+//
+// This method is guaranteed to work since the live in set on one iteration of
+// a basic block is a subset of the live in set on the next iteration.
 static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
     // Keep track of vregs that are live at each program point
     int live[fn->num_vregs];
@@ -85,9 +90,7 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
     for (int i = 0; i < bb->num_succ; i++) {
         BB *successor = bb->successors[i];
         for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
-            if (successor->live_in[vreg]) {
-                live[vreg] = 1;
-            }
+            live[vreg] |= successor->live_in[vreg];
         }
     }
 
@@ -103,19 +106,12 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
 
         // Add the live vregs to the 'live ranges' structure
         for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
+            LiveRange *range = &ranges[REG_MAX + vreg];
             if (live[vreg]) {
-                add_program_point(&ranges[REG_MAX + vreg], ins->idx);
+                add_program_point(range, ins->idx);
             }
         }
 
-        // Add live pregs to the 'live ranges' too. Pregs are only marked as
-        // live for the single instructions they're used in
-        if ((uses_left(ins) || defs_left(ins)) && ins->l.type == OP_REG) {
-            add_program_point(&ranges[ins->l.reg], ins->idx);
-        }
-        if (uses_right(ins) && ins->r.type == OP_REG) {
-            add_program_point(&ranges[ins->r.reg], ins->idx);
-        }
 
         // Regs defined are no longer live before the current instruction
         if (defs_left(ins) && ins->l.type == OP_VREG) {
@@ -124,49 +120,65 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
     }
 
     // Everything left over is now live-in for the BB
-    int changed = 0;
-    for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
-        if (live[vreg]) {
-            changed |= !bb->live_in[vreg];
-            bb->live_in[vreg] = 1;
-        }
-    }
+    size_t live_in_size = sizeof(int) * fn->num_vregs;
+    int changed = memcmp(live, bb->live_in, live_in_size);
+    memcpy(bb->live_in, live, live_in_size);
     return changed;
 }
 
-LiveRange * analysis_liveness(AsmFn *fn) {
-    number_ins(fn);
-
-    // Allocate the live ranges array
-    int num_regs = REG_MAX + fn->num_vregs;
-    LiveRange *ranges = malloc(sizeof(LiveRange) * num_regs);
-    for (int reg = 0; reg < num_regs; reg++) {
-        ranges[reg].num_intervals = 0;
-        ranges[reg].max_intervals = 4;
-        ranges[reg].intervals = malloc(sizeof(Interval) * ranges->max_intervals);
-    }
-
-    // Allocate the live-in arrays for each basic block
-    for (BB *bb = fn->entry; bb; bb = bb->next) {
-        bb->live_in = calloc(fn->num_vregs, sizeof(int));
-    }
+static void live_ranges_for_vregs(AsmFn *fn, LiveRange *ranges) {
+    // Count the basic blocks
+    int num_bbs = 0;
+    for (BB *bb = fn->entry; bb; bb = bb->next) { num_bbs++; }
 
     // Create a worklist of basic blocks
-    BB **worklist = malloc(sizeof(BB *) * fn->num_bbs);
+    BB **worklist = malloc(sizeof(BB *) * num_bbs);
     int num_worklist = 0;
     worklist[num_worklist++] = fn->last; // Start with the LAST BB in the fn
 
     // Iterate until the worklist is empty
     while (num_worklist > 0) {
         BB *bb = worklist[--num_worklist]; // Pull the last BB off the worklist
-        int updated_live_in = live_ranges_for_bb(fn, ranges, bb);
-        if (updated_live_in) { // If the live-in list was changed
+        int changed = live_ranges_for_bb(fn, ranges, bb);
+        if (changed) { // If the live-in list was changed
             // Add all the predecessors of this block to the worklist
             for (int pred_idx = 0; pred_idx < bb->num_pred; pred_idx++) {
                 worklist[num_worklist++] = bb->predecessors[pred_idx];
             }
         }
     }
+}
+
+static void live_ranges_for_pregs(AsmFn *fn, LiveRange *ranges) {
+    // Iterate over all instructions
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
+            // Physical registers are only marked live for the single
+            // instruction that uses them
+            if ((uses_left(ins) || defs_left(ins)) && ins->l.type == OP_REG) {
+                add_program_point(&ranges[ins->l.reg], ins->idx);
+            }
+            if (uses_right(ins) && ins->r.type == OP_REG) {
+                add_program_point(&ranges[ins->r.reg], ins->idx);
+            }
+        }
+    }
+}
+
+LiveRange * analysis_liveness(AsmFn *fn) {
+    number_ins(fn);
+
+    // Allocate the live ranges array, all starting with NULL
+    int num_regs = REG_MAX + fn->num_vregs;
+    LiveRange *ranges = calloc(num_regs, sizeof(LiveRange));
+
+    // Allocate the live-in array for each basic block
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        bb->live_in = calloc(fn->num_vregs, sizeof(int));
+    }
+
+    live_ranges_for_vregs(fn, ranges);
+    live_ranges_for_pregs(fn, ranges);
     return ranges;
 }
 
@@ -175,9 +187,9 @@ static int intervals_intersect(Interval i1, Interval i2) {
 }
 
 int ranges_intersect(LiveRange r1, LiveRange r2) {
-    for (int i = 0; i < r1.num_intervals; i++) {
-        for (int j = 0; j < r2.num_intervals; j++) {
-            if (intervals_intersect(r1.intervals[i], r2.intervals[j])) {
+    for (Interval *i1 = r1; i1; i1 = i1->next) {
+        for (Interval *i2 = r2; i2; i2 = i2->next) {
+            if (intervals_intersect(*i1, *i2)) {
                 return 1;
             }
         }
@@ -186,19 +198,18 @@ int ranges_intersect(LiveRange r1, LiveRange r2) {
 }
 
 void print_live_range(LiveRange range) {
-    for (int i = 0; i < range.num_intervals; i++) {
-        Interval *interval = &range.intervals[i];
-        printf("[%d, %d]", interval->start, interval->end);
-        if (i < range.num_intervals - 1) {
+    for (Interval *i = range; i; i = i->next) {
+        printf("[%d, %d]", i->start, i->end);
+        if (i->next) {
             printf(", ");
         }
     }
 }
 
-void print_live_ranges(AsmFn *fn, LiveRange *ranges) {
-    for (int reg = 0; reg < REG_MAX + fn->num_vregs; reg++) {
-        if (ranges[reg].num_intervals == 0) {
-            continue;
+void print_live_ranges(LiveRange *ranges, int num_vregs) {
+    for (int reg = 0; reg < REG_MAX + num_vregs; reg++) {
+        if (!ranges[reg]) {
+            continue; // Reg not used (no live range)
         }
         if (reg < REG_MAX) { // Physical register
             printf("%s", REG_NAMES[reg][REG_Q]);
