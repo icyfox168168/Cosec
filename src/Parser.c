@@ -15,10 +15,25 @@ typedef struct {
     IrIns *alloc; // The IR_ALLOC instruction that created this local
 } Local;
 
+// A jump list is a linked list of pointers into 'IR_BR' or 'IR_CONDBR'
+// arguments (either 'ins->true' or 'ins->false' branch targets) that need to
+// be back-filled when the destination for an expression is determined.
+typedef struct jmp_list {
+    BB **jmp;
+    IrIns *br; // The IR_BR or IR_CONDBR instruction referred to by 'jmp'
+    struct jmp_list *next;
+} JmpList;
+
+typedef struct loop {
+    JmpList *break_list;
+    struct loop *outer;
+} Loop;
+
 typedef struct {
     Lexer l;
-    FnDef *fn; // Function we're parsing
+    FnDef *fn;     // Function we're parsing
     Local *locals; // Local variables in scope
+    Loop *loop;    // Innermost loop that we're parsing (for breaks)
     int num_locals, max_locals;
 } Parser;
 
@@ -197,19 +212,9 @@ typedef enum {
     EXPR_COND,  // Conditional branch (e.g., in an '&&' expression)
 } ExprType;
 
-// A jump list is a linked list of pointers into 'IR_CONDBR' instruction
-// arguments (either 'ins->true' or 'ins->false' branch targets) that need to
-// be back-filled when the destination for an expression is determined.
-//
 // For an EXPR_COND, the 'true_list' refers to all the branch targets that
 // need to point to the true case, and the 'false_list' refers to all the
 // branch targets that need to point to the false case.
-typedef struct jmp_list {
-    BB **jmp;
-    IrIns *br; // The IR_CONDBR instruction referred to by 'jmp'
-    struct jmp_list *next;
-} JmpList;
-
 typedef struct {
     ExprType type;
     union {
@@ -740,14 +745,80 @@ static void parse_while(Parser *p) {
     expect_tk(&p->l, ')');
     next_tk(&p->l);
 
+    Loop loop;
+    loop.break_list = NULL;
+    loop.outer = p->loop;
+    p->loop = &loop;
     BB *body = emit_bb(p); // Body
     patch_jmp_list(cond.true_list, body);
     parse_body(p);
     IrIns *end_br = emit(p, IR_BR); // End body with branch to cond_bb
     end_br->br = cond_bb;
+    p->loop = loop.outer;
 
     BB *after = emit_bb(p);
     patch_jmp_list(cond.false_list, after);
+    patch_jmp_list(loop.break_list, after);
+}
+
+static void parse_for(Parser *p) {
+    expect_tk(&p->l, TK_FOR);
+    next_tk(&p->l);
+
+    expect_tk(&p->l, '(');
+    next_tk(&p->l);
+    int num_locals = p->num_locals; // Create a new variable scope
+    parse_decl(p); // Declaration
+    expect_tk(&p->l, ';');
+    next_tk(&p->l);
+
+    IrIns *before_br = emit(p, IR_BR);
+    BB *cond_bb = emit_bb(p);
+    before_br->br = cond_bb;
+    Expr cond = parse_expr(p); // Condition
+    cond = to_cond(p, cond);
+    expect_tk(&p->l, ';');
+    next_tk(&p->l);
+
+    BB *increment_bb = emit_bb(p); // Increment
+    parse_expr(p);
+    p->fn->last = increment_bb->prev; // Un-attach the increment BB
+    p->fn->last->next = NULL;
+    expect_tk(&p->l, ')');
+    next_tk(&p->l);
+
+    Loop loop;
+    loop.break_list = NULL;
+    loop.outer = p->loop;
+    p->loop = &loop;
+
+    BB *body = emit_bb(p); // Body
+    patch_jmp_list(cond.true_list, body);
+    parse_body(p);
+    // Attach the increment BB to the end of the body
+    IrIns *end_br = emit(p, IR_BR); // End body with branch to increment_bb
+    end_br->br = increment_bb;
+    p->fn->last->next = increment_bb;
+    increment_bb->prev = p->fn->last;
+    p->fn->last = increment_bb;
+    IrIns *inc_br = emit(p, IR_BR); // Branch to cond_bb
+    inc_br->br = cond_bb;
+
+    p->loop = loop.outer;
+
+    BB *after = emit_bb(p);
+    patch_jmp_list(cond.false_list, after);
+    patch_jmp_list(loop.break_list, after);
+    p->num_locals = num_locals; // Get rid of locals declared
+}
+
+static void parse_break(Parser *p) {
+    expect_tk(&p->l, TK_BREAK);
+    next_tk(&p->l);
+    IrIns *br = emit(p, IR_BR);
+    JmpList *jmp_list = new_jmp_list(&br->br, br);
+    merge_jmp_lists(&p->loop->break_list, jmp_list);
+    emit_bb(p); // For everything after the break
 }
 
 static void parse_ret(Parser *p) {
@@ -771,8 +842,10 @@ static void parse_stmt(Parser *p) {
         case '{':       parse_braced_block(p); return; // Block
         case TK_IF:     parse_if(p); return;           // If statement
         case TK_WHILE:  parse_while(p); return;        // While loop
-        case TK_INT:    parse_decl(p); break;          // Declaration
+        case TK_FOR:    parse_for(p); return;          // For loop
+        case TK_BREAK:  parse_break(p); break;         // Break
         case TK_RETURN: parse_ret(p); break;           // Return
+        case TK_INT:    parse_decl(p); break;          // Declaration
         default:        parse_expr(p); break;          // Expression statement
     }
     expect_tk(&p->l, ';');

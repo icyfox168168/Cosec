@@ -35,6 +35,8 @@
     K(IF, "if")                     \
     K(ELSE, "else")                 \
     K(WHILE, "while")               \
+    K(FOR, "for")                   \
+    K(BREAK, "break")               \
     K(RETURN, "return")
 
 typedef int Tk;

@@ -78,4 +78,7 @@ test(if7 if/7.c)
 test(if8 if/8.c)
 test(if9 if/9.c)
 
-test(while1 while/1.c)
+test(loop1 loop/1.c)
+test(loop2 loop/2.c)
+test(loop3 loop/3.c)
+test(loop4 loop/4.c)

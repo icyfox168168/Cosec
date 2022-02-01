@@ -16,23 +16,24 @@ static void number_ins(AsmFn *fn) {
 }
 
 // Extend an existing live range interval to include the given program point
-// (if a suitable interval exists), or create a new interval
+// (if a suitable interval exists), or create a new interval. Returns 1 if the
+// live range was updated, or 0 otherwise.
 //
 // Points are always added in reverse order (since we only loop over
 // instructions in reverse), there's no jumping around. So, this method is
 // guaranteed to produce the minimum number of intervals required to represent
 // the live range.
-static void add_program_point(LiveRange *range, int point) {
+static int add_program_point(LiveRange *range, int point) {
     // Try to find an interval we can extend
     for (Interval *i = *range; i; i = i->next) {
         if (point >= i->start && point <= i->end) {
-            return; // Already inside an interval
+            return 0; // Already inside an interval
         } else if (point == i->start - 1) {
             i->start--; // Right before an existing interval
-            return;
+            return 1;
         } else if (point == i->end + 1) {
             i->end++; // Right after an existing interval
-            return;
+            return 1;
         }
     }
     // Otherwise, prepend a new interval to the linked list
@@ -41,6 +42,7 @@ static void add_program_point(LiveRange *range, int point) {
     i->end = point;
     i->next = *range;
     *range = i;
+    return 1;
 }
 
 // Returns true if the instruction defines its left operand
@@ -95,6 +97,7 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
     }
 
     // Iterate over all instructions in reverse order
+    int changed = 0;
     for (AsmIns *ins = bb->asm_last; ins; ins = ins->prev) {
         // Vregs used or defined are live
         if ((uses_left(ins) || defs_left(ins)) && ins->l.type == OP_VREG) {
@@ -108,10 +111,9 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
         for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
             LiveRange *range = &ranges[REG_MAX + vreg];
             if (live[vreg]) {
-                add_program_point(range, ins->idx);
+                changed |= add_program_point(range, ins->idx);
             }
         }
-
 
         // Regs defined are no longer live before the current instruction
         if (defs_left(ins) && ins->l.type == OP_VREG) {
@@ -120,7 +122,6 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
     }
 
     // Everything left over is now live-in for the BB
-    int changed = 0;
     for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
         if (live[vreg]) {
             changed |= !bb->live_in[vreg];
