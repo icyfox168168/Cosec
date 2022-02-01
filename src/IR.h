@@ -275,7 +275,7 @@ typedef struct bb {
 
     // ---- Analysis info
     // Predecessor and successor blocks
-    struct bb **predecessors, *successors[MAX_SUCCESSORS];
+    struct bb **pred, *succ[MAX_SUCCESSORS];
     int num_pred, max_pred, num_succ;
 
     // Liveness info

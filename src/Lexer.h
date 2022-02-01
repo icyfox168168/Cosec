@@ -34,6 +34,7 @@
     K(INT, "int")                   \
     K(IF, "if")                     \
     K(ELSE, "else")                 \
+    K(WHILE, "while")               \
     K(RETURN, "return")
 
 typedef int Tk;

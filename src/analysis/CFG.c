@@ -3,25 +3,24 @@
 
 #include "CFG.h"
 
-void add_pair(BB *predecessor, BB *successor) {
-    // Make some more room in the predecessors array if needed
-    if (successor->num_pred >= successor->max_pred) {
-        successor->max_pred *= 2;
-        successor->predecessors = realloc(successor->predecessors,
-                                          sizeof(BB *) * successor->max_pred);
+void add_pair(BB *pred, BB *succ) {
+    // Make some more room in the pred array if needed
+    if (succ->num_pred >= succ->max_pred) {
+        succ->max_pred *= 2;
+        succ->pred = realloc(succ->pred,
+                                     sizeof(BB *) * succ->max_pred);
     }
-    // Add 'successor' as a successor to 'predecessor', and 'predecessor' as a
-    // predecessor to 'successor'
-    predecessor->successors[predecessor->num_succ++] = successor;
-    successor->predecessors[successor->num_pred++] = predecessor;
+    // Add 'succ' as a successor to 'pred' and 'pred' as a predecessor to 'succ'
+    pred->succ[pred->num_succ++] = succ;
+    succ->pred[succ->num_pred++] = pred;
 }
 
 void analysis_cfg(BB *head) {
-    // Allocate the predecessors and successors arrays
+    // Allocate the predecessor and successor arrays
     for (BB *bb = head; bb; bb = bb->next) {
-        bb->max_pred = 4; // Could be an unlimited number of predecessors
+        bb->max_pred = 4; // Could be an unlimited number of pred
         bb->num_pred = 0;
-        bb->predecessors = malloc(sizeof(BB *) * bb->max_pred);
+        bb->pred = malloc(sizeof(BB *) * bb->max_pred);
         bb->num_succ = 0; // Can ONLY have a max of 2 successors
     }
 

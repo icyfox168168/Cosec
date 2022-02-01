@@ -23,7 +23,7 @@ BB * new_bb() {
     bb->asm_head = NULL;
     bb->asm_last = NULL;
 
-    bb->predecessors = NULL;
+    bb->pred = NULL;
     bb->num_pred = 0;
     bb->num_succ = 0;
     bb->max_pred = 0;

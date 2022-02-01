@@ -124,7 +124,7 @@ void next_tk(Lexer *l) {
 
 void expect_tk(Lexer *l, Tk tk) {
     if (l->tk != tk) {
-        printf("expected token '%c', found '%c'\n", tk, l->tk);
+        printf("expected token '%d', found '%d'\n", tk, l->tk);
         exit(1);
     }
 }

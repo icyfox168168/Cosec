@@ -8,7 +8,7 @@
 // range of each virtual register in the assembly.
 //
 // REQUIRES:
-// * CFG analysis (for successors and predecessors)
+// * CFG analysis (for succ and pred)
 
 typedef struct interval {
     int start, end;

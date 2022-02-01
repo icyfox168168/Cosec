@@ -88,7 +88,7 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
 
     // Find everything that's live out for the BB
     for (int i = 0; i < bb->num_succ; i++) {
-        BB *successor = bb->successors[i];
+        BB *successor = bb->succ[i];
         for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
             live[vreg] |= successor->live_in[vreg];
         }
@@ -120,9 +120,13 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
     }
 
     // Everything left over is now live-in for the BB
-    size_t live_in_size = sizeof(int) * fn->num_vregs;
-    int changed = (memcmp(live, bb->live_in, live_in_size) == 0);
-    memcpy(bb->live_in, live, live_in_size);
+    int changed = 0;
+    for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
+        if (live[vreg]) {
+            changed |= !bb->live_in[vreg];
+            bb->live_in[vreg] = 1;
+        }
+    }
     return changed;
 }
 
@@ -141,9 +145,9 @@ static void live_ranges_for_vregs(AsmFn *fn, LiveRange *ranges) {
         BB *bb = worklist[--num_worklist]; // Pull the last BB off the worklist
         int changed = live_ranges_for_bb(fn, ranges, bb);
         if (changed) { // If the live-in list was changed
-            // Add all the predecessors of this block to the worklist
+            // Add all the pred of this block to the worklist
             for (int pred_idx = 0; pred_idx < bb->num_pred; pred_idx++) {
-                worklist[num_worklist++] = bb->predecessors[pred_idx];
+                worklist[num_worklist++] = bb->pred[pred_idx];
             }
         }
     }

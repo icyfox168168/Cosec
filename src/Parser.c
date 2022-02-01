@@ -726,6 +726,30 @@ static void parse_if(Parser *p) {
     patch_jmp_list(jmp_list_head, after);
 }
 
+static void parse_while(Parser *p) {
+    expect_tk(&p->l, TK_WHILE);
+    next_tk(&p->l);
+    IrIns *before_br = emit(p, IR_BR);
+    BB *cond_bb = emit_bb(p);
+    before_br->br = cond_bb;
+
+    expect_tk(&p->l, '(');
+    next_tk(&p->l);
+    Expr cond = parse_expr(p); // Condition
+    cond = to_cond(p, cond);
+    expect_tk(&p->l, ')');
+    next_tk(&p->l);
+
+    BB *body = emit_bb(p); // Body
+    patch_jmp_list(cond.true_list, body);
+    parse_body(p);
+    IrIns *end_br = emit(p, IR_BR); // End body with branch to cond_bb
+    end_br->br = cond_bb;
+
+    BB *after = emit_bb(p);
+    patch_jmp_list(cond.false_list, after);
+}
+
 static void parse_ret(Parser *p) {
     expect_tk(&p->l, TK_RETURN);
     next_tk(&p->l);
@@ -746,6 +770,7 @@ static void parse_stmt(Parser *p) {
         case ';':       next_tk(&p->l); return;        // Empty statement
         case '{':       parse_braced_block(p); return; // Block
         case TK_IF:     parse_if(p); return;           // If statement
+        case TK_WHILE:  parse_while(p); return;        // While loop
         case TK_INT:    parse_decl(p); break;          // Declaration
         case TK_RETURN: parse_ret(p); break;           // Return
         default:        parse_expr(p); break;          // Expression statement
@@ -833,13 +858,6 @@ static FnDecl * parse_fn_decl(Parser *p) {
     return decl;
 }
 
-static char * prepend_underscore(char *str) {
-    char *out = malloc(strlen(str) + 2);
-    out[0] = '_';
-    strcpy(&out[1], str);
-    return out;
-}
-
 static void ensure_ret(FnDef *fn) {
     for (BB *bb = fn->entry; bb; bb = bb->next) { // Iterate over all BBs
         IrIns *end = bb->ir_head;
@@ -872,6 +890,13 @@ static void label_bbs(FnDef *fn) {
             bb->label = bb_label(idx++);
         }
     }
+}
+
+static char * prepend_underscore(char *str) {
+    char *out = malloc(strlen(str) + 2);
+    out[0] = '_';
+    strcpy(&out[1], str);
+    return out;
 }
 
 static FnDef * parse_fn_def(Parser *p) {
