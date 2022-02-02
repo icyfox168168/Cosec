@@ -124,9 +124,16 @@ typedef enum {
 } Prec;
 
 static Prec UNOP_PREC[TK_LAST] = {
-    ['-'] = PREC_UNARY, // Negation
+    ['-'] = PREC_UNARY,  // Negation
     ['~'] = PREC_UNARY, // Bitwise not
-    ['!'] = PREC_UNARY, // Logical not
+    ['!'] = PREC_UNARY,  // Logical not
+    [TK_INC] = PREC_UNARY, // Increment
+    [TK_DEC] = PREC_UNARY, // Decrement
+};
+
+static Prec POSTOP_PREC[TK_LAST] = {
+    [TK_INC] = PREC_POSTFIX, // Increment
+    [TK_DEC] = PREC_POSTFIX, // Decrement
 };
 
 static Prec BINOP_PREC[TK_LAST] = {
@@ -329,7 +336,8 @@ static Expr discharge_cond(Parser *p, Expr cond) {
         return result;
     }
 
-    patch_jmp_list(cond.true_list, bb); // Patch the true and false list here
+    // Patch the true and false list here
+    patch_jmp_list(cond.true_list, bb);
     patch_jmp_list(cond.false_list, bb);
 
     // Handle the last condition in the phi chain separately
@@ -387,6 +395,130 @@ static Expr to_cond(Parser *p, Expr expr) {
     return result;
 }
 
+static Expr parse_subexpr(Parser *p, Prec min_prec); // Forward declaration
+
+static Expr parse_ternary(Parser *p, Expr cond, Expr true_val) {
+    true_val = discharge(p, true_val);
+    IrIns *true_br = emit(p, IR_BR);
+
+    expect_tk(&p->l, ':');
+    next_tk(&p->l);
+    BB *false_bb = emit_bb(p); // New BB for the false value
+    patch_jmp_list(cond.false_list, false_bb);
+    // '- 1' since '?' is right associative
+    Expr false_val = parse_subexpr(p, PREC_TERNARY - 1);
+    false_val = discharge(p, false_val);
+    IrIns *false_br = emit(p, IR_BR);
+
+    // Create a new BB for everything after, because phis can only occur at the
+    // start of BBs
+    BB *after_bb = emit_bb(p);
+    true_br->br = after_bb;
+    false_br->br = after_bb;
+
+    // Emit a phi
+    IrIns *phi_ins = emit(p, IR_PHI);
+    BB *true_bb = cond.ins->bb->next; // The true value is right after cond
+    phi_ins->phi = new_phi(cond.ins->bb->next, true_val.ins);
+    phi_ins->phi->next = new_phi(false_bb, false_val.ins);
+    phi_ins->type = true_val.ins->type;
+    Expr result = new_expr(EXPR_INS);
+    result.ins = phi_ins;
+    return result;
+}
+
+static Expr parse_operation(Parser *p, Tk binop, Expr left, Expr right) {
+    left = discharge(p, left);
+    right = discharge(p, right);
+
+    // 'left' and 'right' should have the same type
+    assert(left.ins->type.prim == right.ins->type.prim);
+    assert(left.ins->type.ptrs == right.ins->type.ptrs);
+
+    IrIns *operation = emit(p, BINOP_OPCODES[binop]);
+    operation->l = left.ins;
+    operation->r = right.ins;
+    operation->type = left.ins->type; // Same as 'right.ins->type'
+    Expr result = new_expr(EXPR_INS);
+    result.ins = operation;
+    return result;
+}
+
+static Expr parse_assign(Parser *p, Tk binop, Expr left, Expr right) {
+    if (binop != '=') {
+        right = parse_operation(p, binop, left, right);
+    }
+    assert(left.type == EXPR_LOCAL); // Can only assign to lvalues
+    right = discharge(p, right);
+    IrIns *store = emit(p, IR_STORE);
+    store->l = left.local->alloc;
+    store->r = right.ins;
+    store->type = left.local->type;
+    return right; // Assignment evaluates to its right operand
+}
+
+static Expr parse_and(Parser *p, Expr left, Expr right) {
+    right = to_cond(p, right);
+    // Merge left's false list onto the right operand's false list
+    merge_jmp_lists(&right.false_list, left.false_list);
+    return right;
+}
+
+static Expr parse_or(Parser *p, Expr left, Expr right) {
+    right = to_cond(p, right);
+    // Merge left's true list onto the right operand's true list
+    merge_jmp_lists(&right.true_list, left.true_list);
+    return right;
+}
+
+static Expr parse_binary(Parser *p, Tk binop, Expr left, Expr right) {
+    switch (binop) {
+    case '=':
+    case TK_ADD_ASSIGN: case TK_SUB_ASSIGN:
+    case TK_MUL_ASSIGN: case TK_DIV_ASSIGN: case TK_MOD_ASSIGN:
+    case TK_AND_ASSIGN: case TK_OR_ASSIGN:  case TK_XOR_ASSIGN:
+    case TK_LSHIFT_ASSIGN: case TK_RSHIFT_ASSIGN:
+        return parse_assign(p, binop, left, right);
+    case TK_AND: return parse_and(p, left, right);
+    case TK_OR:  return parse_or(p, left, right);
+    case '?':    return parse_ternary(p, left, right);
+    default:     return parse_operation(p, binop, left, right);
+    }
+}
+
+static Expr parse_and_left(Parser *p, Expr left) {
+    left = to_cond(p, left);
+    BB *right_bb = emit_bb(p); // New BB for the right operand
+    // Left's true case should target the right operand
+    patch_jmp_list(left.true_list, right_bb);
+    return left;
+}
+
+static Expr parse_or_left(Parser *p, Expr left) {
+    left = to_cond(p, left);
+    BB *right_bb = emit_bb(p); // New BB for the right operand
+    // Left's false case should target the right operand
+    patch_jmp_list(left.false_list, right_bb);
+    return left;
+}
+
+static Expr parse_ternary_left(Parser *p, Expr cond) {
+    cond = to_cond(p, cond);
+    BB *true_bb = emit_bb(p); // New BB for the false value
+    // The condition's true case should target the true value
+    patch_jmp_list(cond.true_list, true_bb);
+    return cond;
+}
+
+static Expr parse_binary_left(Parser *p, Tk binop, Expr left) {
+    switch (binop) {
+        case TK_AND: return parse_and_left(p, left);
+        case TK_OR:  return parse_or_left(p, left);
+        case '?':    return parse_ternary_left(p, left);
+        default:     return left;
+    }
+}
+
 static Expr parse_const_int(Parser *p) {
     expect_tk(&p->l, TK_NUM);
     long value = p->l.num;
@@ -421,8 +553,6 @@ static Expr parse_local(Parser *p) {
     result.local = local;
     return result;
 }
-
-static Expr parse_subexpr(Parser *p, Prec min_prec); // Forward declaration
 
 static Expr parse_braced_subexpr(Parser *p) {
     expect_tk(&p->l, '(');
@@ -480,6 +610,39 @@ static Expr parse_not(Parser *p, Expr operand) {
     return operand;
 }
 
+static Expr parse_inc_dec(Parser *p, Tk op, Expr operand, int is_prefix) {
+    IrIns *one = emit(p, IR_KI32); // i++ is equivalent to 'i = i + 1'
+    one->ki32 = 1;
+    one->type.prim = T_i32;
+    one->type.ptrs = 0;
+    Expr one_expr = new_expr(EXPR_INS);
+    one_expr.ins = one;
+    // Can't use add-assign/sub-assign here since only want to discharge ONCE
+    Expr discharged = discharge(p, operand);
+    Tk binop = op == TK_INC ? '+' : '-';
+    Expr operation = parse_operation(p, binop, discharged, one_expr);
+    Expr assign = parse_assign(p, '=', operand, operation);
+    if (is_prefix) {
+        return assign; // Prefix evaluates to the result of the assignment
+    } else {
+        return discharged; // Postfix evaluates to the operand itself
+    }
+}
+
+static Expr parse_postfix(Parser *p, Expr operand) {
+    Tk postop = p->l.tk;
+    if (POSTOP_PREC[postop]) { // Is there a postfix operator
+        next_tk(&p->l); // Skip the postfix operator
+        switch (postop) {
+            case TK_INC: case TK_DEC:
+                return parse_inc_dec(p, postop, operand, 0);
+            default: UNREACHABLE();
+        }
+    } else {
+        return operand;
+    }
+}
+
 static Expr parse_unary(Parser *p) {
     Tk unop = p->l.tk;
     if (UNOP_PREC[unop]) {
@@ -489,132 +652,13 @@ static Expr parse_unary(Parser *p) {
             case '-': return parse_neg(p, operand);
             case '~': return parse_bit_not(p, operand);
             case '!': return parse_not(p, operand);
+            case TK_INC: case TK_DEC:
+                return parse_inc_dec(p, unop, operand, 1);
             default: UNREACHABLE();
         }
-    } else {
-        return parse_operand(p);
-    }
-}
-
-static Expr parse_operation(Parser *p, Tk binop, Expr left, Expr right) {
-    left = discharge(p, left);
-    right = discharge(p, right);
-
-    // 'left' and 'right' should have the same type
-    assert(left.ins->type.prim == right.ins->type.prim);
-    assert(left.ins->type.ptrs == right.ins->type.ptrs);
-
-    IrIns *operation = emit(p, BINOP_OPCODES[binop]);
-    operation->l = left.ins;
-    operation->r = right.ins;
-    operation->type = left.ins->type; // Same as 'right.ins->type'
-    Expr result = new_expr(EXPR_INS);
-    result.ins = operation;
-    return result;
-}
-
-static Expr parse_assign(Parser *p, Tk binop, Expr left, Expr right) {
-    if (binop != '=') {
-        right = parse_operation(p, binop, left, right);
-    }
-    assert(left.type == EXPR_LOCAL); // Can only assign to lvalues
-    right = discharge(p, right);
-    IrIns *store = emit(p, IR_STORE);
-    store->l = left.local->alloc;
-    store->r = right.ins;
-    store->type = left.local->type;
-    return right; // Assignment evaluates to its right operand
-}
-
-static Expr parse_and(Parser *p, Expr left, Expr right) {
-    right = to_cond(p, right);
-    // Merge left's false list onto the right operand's false list
-    merge_jmp_lists(&right.false_list, left.false_list);
-    return right;
-}
-
-static Expr parse_or(Parser *p, Expr left, Expr right) {
-    right = to_cond(p, right);
-    // Merge left's true list onto the right operand's true list
-    merge_jmp_lists(&right.true_list, left.true_list);
-    return right;
-}
-
-static Expr parse_ternary(Parser *p, Expr cond, Expr true_val) {
-    true_val = discharge(p, true_val);
-    IrIns *true_br = emit(p, IR_BR);
-
-    expect_tk(&p->l, ':');
-    next_tk(&p->l);
-    BB *false_bb = emit_bb(p); // New BB for the false value
-    patch_jmp_list(cond.false_list, false_bb);
-    // '- 1' since '?' is right associative
-    Expr false_val = parse_subexpr(p, PREC_TERNARY - 1);
-    false_val = discharge(p, false_val);
-    IrIns *false_br = emit(p, IR_BR);
-
-    // Create a new BB for everything after, because phis can only occur at the
-    // start of BBs
-    BB *after_bb = emit_bb(p);
-    true_br->br = after_bb;
-    false_br->br = after_bb;
-
-    // Emit a phi
-    IrIns *phi_ins = emit(p, IR_PHI);
-    BB *true_bb = cond.ins->bb->next; // The true value is right after cond
-    phi_ins->phi = new_phi(cond.ins->bb->next, true_val.ins);
-    phi_ins->phi->next = new_phi(false_bb, false_val.ins);
-    phi_ins->type = true_val.ins->type;
-    Expr result = new_expr(EXPR_INS);
-    result.ins = phi_ins;
-    return result;
-}
-
-static Expr parse_binary(Parser *p, Tk binop, Expr left, Expr right) {
-    switch (binop) {
-    case '=':
-    case TK_ADD_ASSIGN: case TK_SUB_ASSIGN:
-    case TK_MUL_ASSIGN: case TK_DIV_ASSIGN: case TK_MOD_ASSIGN:
-    case TK_AND_ASSIGN: case TK_OR_ASSIGN:  case TK_XOR_ASSIGN:
-    case TK_LSHIFT_ASSIGN: case TK_RSHIFT_ASSIGN:
-        return parse_assign(p, binop, left, right);
-    case TK_AND: return parse_and(p, left, right);
-    case TK_OR:  return parse_or(p, left, right);
-    case '?':    return parse_ternary(p, left, right);
-    default:     return parse_operation(p, binop, left, right);
-    }
-}
-
-static Expr parse_and_left(Parser *p, Expr left) {
-    left = to_cond(p, left);
-    BB *right_bb = emit_bb(p); // New BB for the right operand
-    // Left's true case should target the right operand
-    patch_jmp_list(left.true_list, right_bb);
-    return left;
-}
-
-static Expr parse_or_left(Parser *p, Expr left) {
-    left = to_cond(p, left);
-    BB *right_bb = emit_bb(p); // New BB for the right operand
-    // Left's false case should target the right operand
-    patch_jmp_list(left.false_list, right_bb);
-    return left;
-}
-
-static Expr parse_ternary_left(Parser *p, Expr cond) {
-    cond = to_cond(p, cond);
-    BB *true_bb = emit_bb(p); // New BB for the false value
-    // The condition's true case should target the true value
-    patch_jmp_list(cond.true_list, true_bb);
-    return cond;
-}
-
-static Expr parse_binary_left(Parser *p, Tk binop, Expr left) {
-    switch (binop) {
-        case TK_AND: return parse_and_left(p, left);
-        case TK_OR:  return parse_or_left(p, left);
-        case '?':    return parse_ternary_left(p, left);
-        default:     return left;
+    } else { // No unary operator, try parsing a postfix operator
+        Expr operand = parse_operand(p);
+        return parse_postfix(p, operand);
     }
 }
 

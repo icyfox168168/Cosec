@@ -4,8 +4,10 @@ project(Cosec C)
 set(CMAKE_C_STANDARD 99)
 
 add_executable(Cosec
+        src/analysis/Analysis.h
         src/analysis/CFG.c src/analysis/CFG.h
         src/analysis/Liveness.c src/analysis/Liveness.h
+        src/analysis/UseChain.c src/analysis/UseChain.h
         src/opt/Fold.c src/opt/Fold.h
         src/Assembler.c src/Assembler.h
         src/Debug.c src/Debug.h
@@ -14,8 +16,7 @@ add_executable(Cosec
         src/Lexer.c src/Lexer.h
         src/main.c
         src/Parser.c src/Parser.h
-        src/RegisterAllocator.c src/RegisterAllocator.h
-)
+        src/RegAlloc.c src/RegAlloc.h)
 
 include(CTest)
 include(FindPython3)
@@ -39,6 +40,8 @@ test(arith6 expressions/arithmetic/6.c)
 test(arith7 expressions/arithmetic/7.c)
 test(arith8 expressions/arithmetic/8.c)
 test(arith9 expressions/arithmetic/9.c)
+test(arith10 expressions/arithmetic/10.c)
+test(arith11 expressions/arithmetic/11.c)
 
 test(assign1 expressions/assignment/1.c)
 test(assign2 expressions/assignment/2.c)

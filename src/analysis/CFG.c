@@ -5,23 +5,23 @@
 
 void add_pair(BB *pred, BB *succ) {
     // Make some more room in the pred array if needed
-    if (succ->num_pred >= succ->max_pred) {
-        succ->max_pred *= 2;
-        succ->pred = realloc(succ->pred,
-                                     sizeof(BB *) * succ->max_pred);
+    if (succ->cfg.num_pred >= succ->cfg.max_pred) {
+        succ->cfg.max_pred *= 2;
+        succ->cfg.pred = realloc(succ->cfg.pred,
+                                     sizeof(BB *) * succ->cfg.max_pred);
     }
     // Add 'succ' as a successor to 'pred' and 'pred' as a predecessor to 'succ'
-    pred->succ[pred->num_succ++] = succ;
-    succ->pred[succ->num_pred++] = pred;
+    pred->cfg.succ[pred->cfg.num_succ++] = succ;
+    succ->cfg.pred[succ->cfg.num_pred++] = pred;
 }
 
-void analysis_cfg(BB *head) {
+void analyse_cfg(BB *head) {
     // Allocate the predecessor and successor arrays
     for (BB *bb = head; bb; bb = bb->next) {
-        bb->max_pred = 4; // Could be an unlimited number of pred
-        bb->num_pred = 0;
-        bb->pred = malloc(sizeof(BB *) * bb->max_pred);
-        bb->num_succ = 0; // Can ONLY have a max of 2 successors
+        bb->cfg.max_pred = 4; // Could be an unlimited number of pred
+        bb->cfg.num_pred = 0;
+        bb->cfg.pred = malloc(sizeof(BB *) * bb->cfg.max_pred);
+        bb->cfg.num_succ = 0; // Can ONLY have a max of 2 successors
     }
 
     // Calculate predecessor and successor blocks

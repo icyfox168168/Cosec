@@ -17,7 +17,8 @@ static void number_ins(AsmFn *fn) {
 
 // Extend an existing live range interval to include the given program point
 // (if a suitable interval exists), or create a new interval. Returns 1 if the
-// live range was updated, or 0 otherwise.
+// live range was updated, or 0 otherwise (i.e. the point is already contained
+// in some existing interval).
 //
 // Points are always added in reverse order (since we only loop over
 // instructions in reverse), there's no jumping around. So, this method is
@@ -89,10 +90,10 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
     memset(live, 0, sizeof(int) * fn->num_vregs);
 
     // Find everything that's live out for the BB
-    for (int i = 0; i < bb->num_succ; i++) {
-        BB *successor = bb->succ[i];
+    for (int i = 0; i < bb->cfg.num_succ; i++) {
+        BB *successor = bb->cfg.succ[i];
         for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
-            live[vreg] |= successor->live_in[vreg];
+            live[vreg] |= successor->live.in[vreg];
         }
     }
 
@@ -124,8 +125,8 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
     // Everything left over is now live-in for the BB
     for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
         if (live[vreg]) {
-            changed |= !bb->live_in[vreg];
-            bb->live_in[vreg] = 1;
+            changed |= !bb->live.in[vreg];
+            bb->live.in[vreg] = 1;
         }
     }
     return changed;
@@ -147,8 +148,8 @@ static void live_ranges_for_vregs(AsmFn *fn, LiveRange *ranges) {
         int changed = live_ranges_for_bb(fn, ranges, bb);
         if (changed) { // If the live-in list was changed
             // Add all the pred of this block to the worklist
-            for (int pred_idx = 0; pred_idx < bb->num_pred; pred_idx++) {
-                worklist[num_worklist++] = bb->pred[pred_idx];
+            for (int pred_idx = 0; pred_idx < bb->cfg.num_pred; pred_idx++) {
+                worklist[num_worklist++] = bb->cfg.pred[pred_idx];
             }
         }
     }
@@ -170,7 +171,7 @@ static void live_ranges_for_pregs(AsmFn *fn, LiveRange *ranges) {
     }
 }
 
-LiveRange * analysis_liveness(AsmFn *fn) {
+LiveRange * analyse_live_ranges(AsmFn *fn) {
     number_ins(fn);
 
     // Allocate the live ranges array, all starting with NULL
@@ -179,7 +180,7 @@ LiveRange * analysis_liveness(AsmFn *fn) {
 
     // Allocate the live-in array for each basic block
     for (BB *bb = fn->entry; bb; bb = bb->next) {
-        bb->live_in = calloc(fn->num_vregs, sizeof(int));
+        bb->live.in = calloc(fn->num_vregs, sizeof(int));
     }
 
     live_ranges_for_vregs(fn, ranges);

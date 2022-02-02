@@ -1,6 +1,6 @@
 
-#ifndef COSEC_REGISTERALLOCATOR_H
-#define COSEC_REGISTERALLOCATOR_H
+#ifndef COSEC_REGALLOC_H
+#define COSEC_REGALLOC_H
 
 #include "IR.h"
 #include "Assembler.h"

@@ -22,13 +22,6 @@ BB * new_bb() {
     bb->ir_last = NULL;
     bb->asm_head = NULL;
     bb->asm_last = NULL;
-
-    bb->pred = NULL;
-    bb->num_pred = 0;
-    bb->num_succ = 0;
-    bb->max_pred = 0;
-
-    bb->live_in = NULL;
     return bb;
 }
 
@@ -40,6 +33,8 @@ static IrIns * new_ir(IrOpcode op) {
     ins->prev = NULL;
     ins->type.prim = T_void;
     ins->type.ptrs = 0;
+    ins->vreg = -1;
+    ins->insert_pt = NULL;
     return ins;
 }
 

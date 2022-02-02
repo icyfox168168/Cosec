@@ -4,10 +4,12 @@
 
 #include "Parser.h"
 #include "Assembler.h"
-#include "RegisterAllocator.h"
+#include "RegAlloc.h"
 #include "Encoder.h"
 #include "Debug.h"
+
 #include "analysis/CFG.h"
+#include "analysis/UseChain.h"
 
 // Cosec compiler structure:
 // 1. Lexer -- splits a module's source code up into tokens
@@ -72,13 +74,14 @@ int main(int argc, char *argv[]) {
         printf("---- IR\n");
         print_fn(ir_module->fn);
 
+        analyse_use_chains(ir_module->fn);
         AsmModule *asm_module = assemble(ir_module);
         printf("\n---- Assembly\n");
         encode_nasm(asm_module, stdout);
 
         printf("\n---- Register allocated assembly\n");
-        analysis_cfg(asm_module->fns->entry);
-        LiveRange *live_ranges = analysis_liveness(asm_module->fns);
+        analyse_cfg(ir_module->fn->entry);
+        LiveRange *live_ranges = analyse_live_ranges(asm_module->fns);
         reg_alloc(asm_module->fns, live_ranges);
         encode_nasm(asm_module, stdout);
 

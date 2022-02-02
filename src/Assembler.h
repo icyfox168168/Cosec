@@ -9,6 +9,9 @@
 // generated assembly code (e.g., peep-hole optimisations not possible on the
 // SSA IR). Variables are still modelled by virtual registers in the assembly,
 // which are later lowered to physical registers by the register allocator.
+//
+// REQUIRES:
+// * Use chain analysis (for IR_LOAD folding)
 
 typedef struct asm_fn {
     struct asm_fn *next; // Linked list of functions

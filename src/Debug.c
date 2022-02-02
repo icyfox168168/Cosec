@@ -15,12 +15,6 @@ static char *IR_OPCODE_NAMES[] = {
 #undef X
 };
 
-static int IR_OPCODE_NARGS[] = {
-#define X(opcode, nargs) nargs,
-    IR_OPCODES
-#undef X
-};
-
 static void print_type(Type t) {
     printf("%s", IR_PRIM_NAMES[t.prim]); // Primitive name
     for (int i = 0; i < t.ptrs; i++) {

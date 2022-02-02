@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+#include "analysis/Analysis.h"
+
 #define UNREACHABLE() exit(1)
 
 // ---- Static Single Assignment (SSA) Form IR --------------------------------
@@ -30,7 +32,7 @@ typedef struct {
                           \
     /* Memory accesses */ \
     X(FARG, 1)            \
-    X(ALLOC, 1)           \
+    X(ALLOC, 0)           \
     X(STORE, 2) /* Destination is FIRST argument, source is SECOND */ \
     X(LOAD, 1)            \
                           \
@@ -70,8 +72,14 @@ typedef enum {
 #define X(name, nargs) IR_ ## name,
     IR_OPCODES
 #undef X
-    IR_LAST, // Required for hash-tables indexed by IR opcode
+    IR_LAST, // Required for hash tables indexed by IR opcode
 } IrOpcode;
+
+static int IR_OPCODE_NARGS[] = {
+#define X(opcode, nargs) nargs,
+    IR_OPCODES
+#undef X
+};
 
 // SSA phi instructions keep track of the value of a variable along different
 // control flow paths. Phi instructions ONLY occur at the head of a basic block.
@@ -85,7 +93,7 @@ typedef struct phi {
 
 typedef struct ir_ins {
     struct ir_ins *next, *prev;
-    struct bb *bb; // The basic block this instruction is in
+    struct bb *bb;
 
     IrOpcode op;
     Type type; // Everything except control flow records its return type
@@ -101,9 +109,13 @@ typedef struct ir_ins {
         };
     };
 
+    // Analysis info
+    UseChain *use_chain;
+
     // Assembler info
+    int vreg; // Virtual register assigned to the instruction's result
     int stack_slot; // For IR_ALLOC; location on the stack relative to rbp
-    int vreg; // Virtual register that the instruction's result is assigned to
+    struct asm_ins *insert_pt; // Relate each IR ins to an assembly ins
 
     // Debug info
     int idx;
@@ -235,11 +247,11 @@ typedef enum {
 typedef struct {
     AsmOperandType type;
     union {
-        uint64_t imm;                         // OP_IMM
-        struct { RegSize size; Reg reg; };    // OP_REG
-        struct { RegSize _size1; int vreg; }; // OP_VREG
-        struct { RegSize _size2; Reg base; int scale, index, bytes; }; // OP_MEM
-        struct bb *bb;                        // OP_LABEL
+        uint64_t imm;                      // OP_IMM
+        struct { RegSize size; Reg reg; }; // OP_REG
+        struct { RegSize _s1; int vreg; }; // OP_VREG
+        struct { RegSize _s2; Reg base; int scale, index, bytes; }; // OP_MEM
+        struct bb *bb;                     // OP_LABEL
     };
 } AsmOperand;
 
@@ -253,10 +265,6 @@ typedef struct asm_ins {
 
 
 // ---- Basic Block -----------------------------------------------------------
-
-// Each basic block can have a maximum of 2 successor blocks (if it ends with a
-// CONDBR instruction)
-#define MAX_SUCCESSORS 2
 
 // Use a unified basic block structure for both the SSA and assembly IR, since
 // this simplifies assembly construction. The CFG structure is the same in
@@ -273,21 +281,16 @@ typedef struct bb {
     IrIns *ir_head, *ir_last;    // IR instructions
     AsmIns *asm_head, *asm_last; // Assembly instructions
 
-    // ---- Analysis info
-    // Predecessor and successor blocks
-    struct bb **pred, *succ[MAX_SUCCESSORS];
-    int num_pred, max_pred, num_succ;
-
-    // Liveness info
-    int *live_in;
+    // Analysis info
+    CFGInfo cfg;
+    LivenessInfo live;
 } BB;
 
-BB * new_bb();       // Creates a new empty basic block
 int size_of(Type t); // Returns the bytes of a type in bytes
 
+BB * new_bb();
 IrIns * emit_ir(BB *bb, IrOpcode op);
 void delete_ir(IrIns *ins);
-
 AsmIns * emit_asm(BB *bb, AsmOpcode op);
 void delete_asm(AsmIns *ins);
 

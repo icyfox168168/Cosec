@@ -87,7 +87,21 @@ static AsmIns * emit(Assembler *a, AsmOpcode op) {
     return emit_asm(a->bb, op);
 }
 
-static AsmOperand discharge(Assembler *a, IrIns *ins); // Forward declaration
+// Converts an IR_LOAD or IR_STORE instruction to a memory access assembly
+// operand, e.g., to [rbp - 4]
+static AsmOperand load_to_mem_operand(IrIns *ir_load) {
+    AsmOperand operand;
+    operand.type = OP_MEM;  // From memory
+    operand.base = REG_RBP; // Offset relative to rbp
+    operand.size = REG_Q;
+    operand.scale = 1;
+    operand.bytes = size_of(ir_load->type); // Number of bytes to read
+    operand.index = -ir_load->l->stack_slot;
+    return operand;
+}
+
+static AsmOperand discharge(Assembler *a, IrIns *ins); // Forward declarations
+static void asm_cmp(Assembler *a, IrIns *ir_cmp);
 
 static AsmOperand discharge_imm(Assembler *a, IrIns *ir_k) {
     ir_k->vreg = a->vreg++;
@@ -108,40 +122,12 @@ static AsmOperand discharge_load(Assembler *a, IrIns *ir_load) {
     mov->l.type = OP_VREG; // Load into a vreg
     mov->l.vreg = ir_load->vreg;
     mov->l.size = REG_SIZE[size_of(ir_load->type)];
-    mov->r.type = OP_MEM; // Load from memory
-    mov->r.base = REG_RBP; // Offset relative to rbp
-    mov->r.size = REG_Q;
-    mov->r.scale = 1;
-    mov->r.bytes = 4;
-    mov->r.index = -ir_load->l->stack_slot;
+    mov->r = load_to_mem_operand(ir_load);
     return mov->l;
 }
 
-static AsmIns * asm_cmp(Assembler *a, IrIns *ir_cmp) {
-    AsmOperand l = discharge(a, ir_cmp->l); // Left operand always a vreg
-    AsmOperand r;
-    if (ir_cmp->r->op == IR_KI32) {
-        r.type = OP_IMM;
-        r.imm = ir_cmp->r->ki32;
-    } else if (ir_cmp->r->op == IR_LOAD) {
-        IrIns *ir_load = ir_cmp->r;
-        r.type = OP_MEM;
-        r.base = REG_RBP;
-        r.size = REG_Q;
-        r.scale = 1;
-        r.bytes = 4;
-        r.index = -ir_load->l->stack_slot;
-    } else {
-        r = discharge(a, ir_cmp->r);
-    }
-    AsmIns *cmp = emit(a, X86_CMP); // Comparison
-    cmp->l = l;
-    cmp->r = r;
-    return cmp;
-}
-
 static AsmOperand discharge_rel(Assembler *a, IrIns *ir_rel) {
-    asm_cmp(a, ir_rel); // Emit a CMP instruction
+    asm_cmp(a, ir_rel); // Emit a comparison instruction
     ir_rel->vreg = a->vreg++;
     AsmIns *set = emit(a, IR_OP_TO_SETXX[ir_rel->op]); // SETcc operation
     set->l.type = OP_VREG;
@@ -167,6 +153,13 @@ static AsmOperand discharge_rel(Assembler *a, IrIns *ir_rel) {
 
 // Emits an instruction to a virtual register
 static AsmOperand discharge(Assembler *a, IrIns *ins) {
+    if (ins->vreg >= 0) { // Already in a vreg
+        AsmOperand result;
+        result.type = OP_VREG;
+        result.vreg = ins->vreg;
+        result.size = REG_SIZE[size_of(ins->type)];
+        return result;
+    }
     switch (ins->op) {
     case IR_KI32:
         return discharge_imm(a, ins); // Immediate
@@ -176,14 +169,18 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
     case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
     case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
         return discharge_rel(a, ins); // Comparisons
-    default: { // Already in a vreg
-        AsmOperand result;
-        result.type = OP_VREG;
-        result.vreg = ins->vreg;
-        result.size = REG_SIZE[size_of(ins->type)];
-        return result;
+    default: UNREACHABLE();
     }
+}
+
+// If a load has already been emitted, then returns the vreg it was loaded
+// into. Otherwise, returns the memory AsmOperand that can be used for the load.
+static AsmOperand fold_load(Assembler *a, IrIns *ir_load) {
+    if (ir_load->vreg >= 0) {
+        return discharge(a, ir_load); // Already in a vreg
     }
+    // Otherwise, only has ONE use, so inline the load
+    return load_to_mem_operand(ir_load);
 }
 
 static void asm_farg(Assembler *a, IrIns *ir_farg) {
@@ -221,29 +218,40 @@ static void asm_store(Assembler *a, IrIns *ir_store) {
         r = discharge(a, ir_store->r); // vreg
     }
     AsmIns *mov = emit(a, X86_MOV); // Store into memory
-    mov->l.type = OP_MEM;
-    mov->l.base = REG_RBP;
-    mov->l.size = REG_Q;
-    mov->l.scale = 1;
-    mov->l.bytes = 4;
-    mov->l.index = -ir_store->l->stack_slot;
+    mov->l = load_to_mem_operand(ir_store);
     mov->r = r;
 }
 
+static void asm_load(Assembler *a, IrIns *ir_load) {
+    if (ir_load->use_chain && !ir_load->use_chain->next) { // Has a SINGLE use
+        // IR_LOADs with a SINGLE use can be folded into the operation that
+        // uses them; e.g., 'mov %1, [rbp]; add %2, %1' becomes 'add %2, [rbp]'
+        // This is done on the fly by 'fold_load'
+        return;
+    }
+    // If the load has multiple uses, then it needs to happen just once, so
+    // discharge it here
+    discharge_load(a, ir_load);
+}
+
+// Emits an arithmetic operation while lowering from 3-address code to 2-address
+// code, i.e., 'a = b + c' becomes 'mov a, b; add a, c'
 static void asm_arith(Assembler *a, IrIns *ir_arith) {
     AsmOperand l = discharge(a, ir_arith->l); // Left operand always a vreg
+    ir_arith->vreg = a->vreg++; // Allocate a new vreg for the result
+
+    AsmIns *mov = emit(a, X86_MOV); // Emit a mov for the new vreg
+    mov->l.type = OP_VREG;
+    mov->l.vreg = ir_arith->vreg;
+    mov->l.size = l.size;
+    mov->r = l;
+
     AsmOperand r;
     if (ir_arith->r->op == IR_KI32) {
         r.type = OP_IMM;
         r.imm = ir_arith->r->ki32;
     } else if (ir_arith->r->op == IR_LOAD) {
-        IrIns *ir_load = ir_arith->r;
-        r.type = OP_MEM;
-        r.base = REG_RBP;
-        r.size = REG_Q;
-        r.scale = 1;
-        r.bytes = 4;
-        r.index = -ir_load->l->stack_slot;
+        r = fold_load(a, ir_arith->r);
     } else {
         r = discharge(a, ir_arith->r);
     }
@@ -259,22 +267,15 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
         default: UNREACHABLE();
     }
     AsmIns *arith = emit(a, op);
-    arith->l = l;
+    arith->l = mov->l;
     arith->r = r;
-    ir_arith->vreg = arith->l.vreg;
 }
 
-static void asm_div(Assembler *a, IrIns *ir_div) {
-    AsmOperand dividend = discharge(a, ir_div->l); // Left operand always a vreg
+static void asm_div_mod(Assembler *a, IrIns *ir_div) {
+    AsmOperand dividend = discharge(a, ir_div->l); // Left always a vreg
     AsmOperand divisor;
     if (ir_div->r->op == IR_LOAD) {
-        IrIns *ir_load = ir_div->r;
-        divisor.type = OP_MEM;
-        divisor.base = REG_RBP;
-        divisor.size = REG_Q;
-        divisor.scale = 1;
-        divisor.bytes = 4;
-        divisor.index = -ir_load->l->stack_slot;
+        divisor = fold_load(a, ir_div->r);
     } else { // Including immediate (can't divide by immediate)
         divisor = discharge(a, ir_div->r);
     }
@@ -285,9 +286,11 @@ static void asm_div(Assembler *a, IrIns *ir_div) {
     mov1->l.size = REG_D;
     mov1->r = dividend;
     emit(a, X86_CDQ); // Sign extend eax into edx
+
     AsmIns *div = emit(a, X86_IDIV); // Performs edx:eax / <operand>
     div->l = divisor;
-    ir_div->vreg = a->vreg++;
+
+    ir_div->vreg = a->vreg++; // Allocate a new vreg for the result
     AsmIns *mov2 = emit(a, X86_MOV); // Move the result into a new vreg
     mov2->l.type = OP_VREG;
     mov2->l.vreg = ir_div->vreg;
@@ -303,17 +306,25 @@ static void asm_div(Assembler *a, IrIns *ir_div) {
 
 static void asm_shift(Assembler *a, IrIns *ir_shift) {
     AsmOperand l = discharge(a, ir_shift->l); // Left operand always a vreg
+    ir_shift->vreg = a->vreg++; // Allocate a new vreg for the result
+
+    AsmIns *mov1 = emit(a, X86_MOV); // Emit a mov for the new vreg
+    mov1->l.type = OP_VREG;
+    mov1->l.vreg = ir_shift->vreg;
+    mov1->l.size = l.size;
+    mov1->r = l;
+
     AsmOperand r; // Right operand either an immediate or cl
     if (ir_shift->r->op == IR_KI32) { // Can shift by an immediate
         r.type = OP_IMM;
         r.imm = ir_shift->r->ki32;
     } else { // Otherwise, shift count has to be in cl
         AsmOperand discharged = discharge(a, ir_shift->r);
-        AsmIns *mov = emit(a, X86_MOV); // Mov shift count into rcx
-        mov->l.type = OP_REG;
-        mov->l.reg = REG_RCX;
-        mov->l.size = discharged.size;
-        mov->r = discharged;
+        AsmIns *mov2 = emit(a, X86_MOV); // Move shift count into rcx
+        mov2->l.type = OP_REG;
+        mov2->l.reg = REG_RCX;
+        mov2->l.size = discharged.size;
+        mov2->r = discharged;
         r.type = OP_REG;
         r.reg = REG_RCX; // Use cl
         r.size = REG_L;
@@ -321,15 +332,30 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
 
     AsmOpcode op;
     switch (ir_shift->op) {
-        case IR_SHL: op = X86_SHL; break;
+        case IR_SHL:  op = X86_SHL; break;
         case IR_ASHR: op = X86_SAR; break;
         case IR_LSHR: op = X86_SHR; break;
         default: UNREACHABLE();
     }
     AsmIns *shift = emit(a, op);
-    shift->l = l;
+    shift->l = mov1->l;
     shift->r = r;
-    ir_shift->vreg = shift->l.vreg; // Result stored into left operand
+}
+
+static void asm_cmp(Assembler *a, IrIns *ir_cmp) {
+    AsmOperand l = discharge(a, ir_cmp->l); // Left operand always a vreg
+    AsmOperand r;
+    if (ir_cmp->r->op == IR_KI32) {
+        r.type = OP_IMM;
+        r.imm = ir_cmp->r->ki32;
+    } else if (ir_cmp->r->op == IR_LOAD) {
+        r = fold_load(a, ir_cmp->r);
+    } else {
+        r = discharge(a, ir_cmp->r);
+    }
+    AsmIns *cmp = emit(a, X86_CMP); // Comparison
+    cmp->l = l;
+    cmp->r = r;
 }
 
 static void asm_br(Assembler *a, IrIns *ir_br) {
@@ -379,26 +405,27 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
 
 static void asm_ins(Assembler *a, IrIns *ir_ins) {
     switch (ir_ins->op) {
-        case IR_KI32:  break; // Don't do anything for constants
-        case IR_FARG:  asm_farg(a, ir_ins); break;
-        case IR_ALLOC: asm_alloc(a, ir_ins); break;
-        case IR_LOAD:  break; // Loads don't always have to generate 'mov's
-        case IR_STORE: asm_store(a, ir_ins); break;
-        case IR_ADD: case IR_SUB: case IR_MUL:
-        case IR_AND: case IR_OR: case IR_XOR:
-            asm_arith(a, ir_ins); break;
-        case IR_DIV: case IR_MOD: asm_div(a, ir_ins); break;
-        case IR_SHL: case IR_ASHR: case IR_LSHR:
-            asm_shift(a, ir_ins); break;
-        case IR_EQ: case IR_NEQ:
-        case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
-        case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
-            break; // Don't do anything for comparisons
-        case IR_BR:     asm_br(a, ir_ins); break;
-        case IR_CONDBR: asm_cond_br(a, ir_ins); break;
-        case IR_RET0:   asm_ret0(a); break;
-        case IR_RET1:   asm_ret1(a, ir_ins); break;
-        default: printf("unsupported IR instruction to assembler\n"); exit(1);
+    case IR_KI32:  break; // Don't do anything for constants
+    case IR_FARG:  asm_farg(a, ir_ins); break;
+    case IR_ALLOC: asm_alloc(a, ir_ins); break;
+    case IR_LOAD:  asm_load(a, ir_ins); break;
+    case IR_STORE: asm_store(a, ir_ins); break;
+    case IR_ADD: case IR_SUB: case IR_MUL:
+    case IR_AND: case IR_OR: case IR_XOR:
+        asm_arith(a, ir_ins); break;
+    case IR_DIV: case IR_MOD:
+        asm_div_mod(a, ir_ins); break;
+    case IR_SHL: case IR_ASHR: case IR_LSHR:
+        asm_shift(a, ir_ins); break;
+    case IR_EQ:  case IR_NEQ:
+    case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
+    case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
+        break; // Don't do anything for comparisons
+    case IR_BR:     asm_br(a, ir_ins); break;
+    case IR_CONDBR: asm_cond_br(a, ir_ins); break;
+    case IR_RET0:   asm_ret0(a); break;
+    case IR_RET1:   asm_ret1(a, ir_ins); break;
+    default: printf("unsupported IR instruction to assembler\n"); exit(1);
     }
 }
 
@@ -502,7 +529,7 @@ AsmModule * assemble(Module *ir_mod) {
     module->fns = asm_fn(ir_mod->fn);
     module->main = module->fns;
 
-    AsmFn *start = asm_start(module->main); // Insert 'start' stub to call main
+    AsmFn *start = asm_start(module->main); // Insert 'start' stub
     module->fns->next = start;
     return module;
 }

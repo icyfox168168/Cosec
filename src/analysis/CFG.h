@@ -10,6 +10,7 @@
 //
 // REQUIRES: no other analysis passes required first
 
-void analysis_cfg(BB *head);
+// Results are stored per-BB (see IR.h)
+void analyse_cfg(BB *head);
 
 #endif

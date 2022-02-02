@@ -3,7 +3,7 @@
 #include <string.h>
 #include <limits.h>
 
-#include "RegisterAllocator.h"
+#include "RegAlloc.h"
 
 #define IG(graph, reg1, reg2) ((reg1) * (REG_MAX + (graph).num_vregs) + (reg2))
 
