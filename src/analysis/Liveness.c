@@ -24,17 +24,17 @@ static void number_ins(AsmFn *fn) {
 // instructions in reverse), there's no jumping around. So, this method is
 // guaranteed to produce the minimum number of intervals required to represent
 // the live range.
-static int add_program_point(LiveRange *range, int point) {
+static void add_program_point(LiveRange *range, int point) {
     // Try to find an interval we can extend
     for (Interval *i = *range; i; i = i->next) {
         if (point >= i->start && point <= i->end) {
-            return 0; // Already inside an interval
+            return; // Already inside an interval
         } else if (point == i->start - 1) {
             i->start--; // Right before an existing interval
-            return 1;
+            return;
         } else if (point == i->end + 1) {
             i->end++; // Right after an existing interval
-            return 1;
+            return;
         }
     }
     // Otherwise, prepend a new interval to the linked list
@@ -43,7 +43,6 @@ static int add_program_point(LiveRange *range, int point) {
     i->end = point;
     i->next = *range;
     *range = i;
-    return 1;
 }
 
 // Returns true if the instruction defines its left operand
@@ -85,6 +84,8 @@ static int uses_right(AsmIns *ins) {
 // This method is guaranteed to work since the live in set on one iteration of
 // a basic block is a subset of the live in set on the next iteration.
 static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
+    bb->live.mark = 1; // We've processed this BB's live ranges now
+
     // Keep track of vregs that are live at each program point
     int live[fn->num_vregs];
     memset(live, 0, sizeof(int) * fn->num_vregs);
@@ -98,7 +99,6 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
     }
 
     // Iterate over all instructions in reverse order
-    int changed = 0;
     for (AsmIns *ins = bb->asm_last; ins; ins = ins->prev) {
         // Vregs used or defined are live
         if ((uses_left(ins) || defs_left(ins)) && ins->l.type == OP_VREG) {
@@ -112,7 +112,7 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
         for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
             LiveRange *range = &ranges[REG_MAX + vreg];
             if (live[vreg]) {
-                changed |= add_program_point(range, ins->idx);
+                add_program_point(range, ins->idx);
             }
         }
 
@@ -123,6 +123,7 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
     }
 
     // Everything left over is now live-in for the BB
+    int changed = 0;
     for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
         if (live[vreg]) {
             changed |= !bb->live.in[vreg];
@@ -138,7 +139,7 @@ static void live_ranges_for_vregs(AsmFn *fn, LiveRange *ranges) {
     for (BB *bb = fn->entry; bb; bb = bb->next) { num_bbs++; }
 
     // Create a worklist of basic blocks
-    BB **worklist = malloc(sizeof(BB *) * num_bbs);
+    BB *worklist[num_bbs];
     int num_worklist = 0;
     worklist[num_worklist++] = fn->last; // Start with the LAST BB in the fn
 
@@ -146,10 +147,14 @@ static void live_ranges_for_vregs(AsmFn *fn, LiveRange *ranges) {
     while (num_worklist > 0) {
         BB *bb = worklist[--num_worklist]; // Pull the last BB off the worklist
         int changed = live_ranges_for_bb(fn, ranges, bb);
-        if (changed) { // If the live-in list was changed
-            // Add all the pred of this block to the worklist
-            for (int pred_idx = 0; pred_idx < bb->cfg.num_pred; pred_idx++) {
-                worklist[num_worklist++] = bb->cfg.pred[pred_idx];
+
+        // Iterate over the predecessors
+        for (int pred_idx = 0; pred_idx < bb->cfg.num_pred; pred_idx++) {
+            BB *pred = bb->cfg.pred[pred_idx];
+            // Add the predecessor to the worklist if the live in list changed
+            // (add all predecessors), or if it is yet to been processed
+            if (changed || !pred->live.mark) {
+                worklist[num_worklist++] = pred;
             }
         }
     }
@@ -181,6 +186,7 @@ LiveRange * analyse_live_ranges(AsmFn *fn) {
     // Allocate the live-in array for each basic block
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         bb->live.in = calloc(fn->num_vregs, sizeof(int));
+        bb->live.mark = 0;
     }
 
     live_ranges_for_vregs(fn, ranges);

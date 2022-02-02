@@ -4,7 +4,7 @@
 #include "CFG.h"
 
 void add_pair(BB *pred, BB *succ) {
-    // Make some more room in the pred array if needed
+    // Make some more room in the predecessors array if needed
     if (succ->cfg.num_pred >= succ->cfg.max_pred) {
         succ->cfg.max_pred *= 2;
         succ->cfg.pred = realloc(succ->cfg.pred,
@@ -18,7 +18,7 @@ void add_pair(BB *pred, BB *succ) {
 void analyse_cfg(BB *head) {
     // Allocate the predecessor and successor arrays
     for (BB *bb = head; bb; bb = bb->next) {
-        bb->cfg.max_pred = 4; // Could be an unlimited number of pred
+        bb->cfg.max_pred = 4; // Could be an unlimited number of predecessors
         bb->cfg.num_pred = 0;
         bb->cfg.pred = malloc(sizeof(BB *) * bb->cfg.max_pred);
         bb->cfg.num_succ = 0; // Can ONLY have a max of 2 successors

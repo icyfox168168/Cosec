@@ -10,8 +10,10 @@
 // REQUIRES:
 // * CFG analysis (for successor and predecessor blocks)
 
+// All assembly instructions are numbered across basic blocks so that live
+// ranges can be referred to by a union of intervals [start, end]
 typedef struct interval {
-    int start, end;
+    int start, end; // INCLUSIVE of instructions at 'start' and 'end'
     struct interval *next;
 } Interval;
 
