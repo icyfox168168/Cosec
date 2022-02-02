@@ -198,6 +198,15 @@ static int intervals_intersect(Interval i1, Interval i2) {
     return !(i1.end < i2.start || i1.start > i2.end);
 }
 
+static Interval interval_intersection(Interval i1, Interval i2) {
+    // start = max(i1.start, i2.start), end = min(i1.end, i2.end)
+    Interval intersection;
+    intersection.start = i1.start > i2.start ? i1.start : i2.start;
+    intersection.end = i1.end < i2.end ? i1.end : i2.end;
+    intersection.next = NULL;
+    return intersection;
+}
+
 int ranges_intersect(LiveRange r1, LiveRange r2) {
     for (Interval *i1 = r1; i1; i1 = i1->next) {
         for (Interval *i2 = r2; i2; i2 = i2->next) {
@@ -207,6 +216,27 @@ int ranges_intersect(LiveRange r1, LiveRange r2) {
         }
     }
     return 0;
+}
+
+LiveRange range_intersection(LiveRange r1, LiveRange r2) {
+    // All interval intersections should be unique, since the intervals in each
+    // of r1 and r2 are unique; so don't bother trying to combine any of the
+    // intersection intervals (they won't overlap)
+    // The resulting intersection live range is also guaranteed to have its
+    // intervals ordered, since all the intervals in r1 and r2 are ordered
+    LiveRange head = NULL;
+    LiveRange *next = &head;
+    for (Interval *i1 = r1; i1; i1 = i1->next) {
+        for (Interval *i2 = r2; i2; i2 = i2->next) {
+            if (intervals_intersect(*i1, *i2)) {
+                Interval *i = malloc(sizeof(Interval));
+                *i = interval_intersection(*i1, *i2);
+                *next = i;
+                next = &i->next;
+            }
+        }
+    }
+    return head;
 }
 
 void print_live_range(LiveRange range) {

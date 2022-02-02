@@ -27,6 +27,8 @@ typedef Interval * LiveRange;
 LiveRange * analyse_live_ranges(AsmFn *fn);
 
 int ranges_intersect(LiveRange r1, LiveRange r2);
+LiveRange range_intersection(LiveRange r1, LiveRange r2);
+
 void print_live_range(LiveRange range);
 void print_live_ranges(LiveRange *ranges, int num_vregs);
 
