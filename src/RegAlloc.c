@@ -60,10 +60,10 @@ static RegGraph copy_reg_graph(RegGraph *g) {
     return copy;
 }
 
-static int node_exists(RegGraph *g, int vreg) {
+static int node_exists(RegGraph *g, int reg) {
     // A node exists in the graph if its value along the diagonal (i.e. whether
     // it intersects with itself) is 1
-    return g->matrix[G(g, REG_MAX + vreg, REG_MAX + vreg)];
+    return g->matrix[G(g, reg, reg)];
 }
 
 static void mark_node_exists(RegGraph *g, int reg) {
@@ -111,7 +111,7 @@ static RegGraph build_interference_graph(LiveRange *ranges, int num_vregs) {
         if (!range1) {
             continue; // reg1 isn't used
         }
-        mark_node_exists(&g, reg1); // This reg is used
+        mark_node_exists(&g, reg1);
         for (int reg2 = 0; reg2 < reg1; reg2++) { // Only iterate upper half
             LiveRange range2 = ranges[reg2];
             if (!range2) {
@@ -122,6 +122,7 @@ static RegGraph build_interference_graph(LiveRange *ranges, int num_vregs) {
             }
             if (ranges_intersect(range1, range2)) {
                 add_edge(&g, reg1, reg2);
+                printf("intersect %d %d\n", reg1 - REG_MAX, reg2 - REG_MAX);
             }
         }
     }
@@ -159,7 +160,6 @@ static RegGraph build_coalescing_graph(AsmFn *fn, LiveRange *ranges) {
                     mark_node_exists(&g, reg1);
                     mark_node_exists(&g, reg2);
                     add_edge(&g, reg1, reg2);
-                    printf("regs %d and %d are coalescing candidates\n", reg1 - REG_MAX, reg2 - REG_MAX);
                 }
             }
         }
@@ -167,49 +167,45 @@ static RegGraph build_coalescing_graph(AsmFn *fn, LiveRange *ranges) {
     return g;
 }
 
-// Removes all non-move related nodes of insignificant degree (degree <REG_MAX)
-// from the interference graph and pushes them onto the stack
-static void simplify_graph(RegGraph *ig, int *stack, int *num_stack) {
-    while (1) { // Keep adding to the stack
-        // Find the next reg with the minimum number of neighbours. This is
-        // always guaranteed to put nodes with <REG_MAX neighbours onto the
-        // stack first, and then spill nodes with the fewest neighbours
-        int min_vreg = -1;
-        int min_neighbours = INT_MAX;
-        for (int vreg = 0; vreg < ig->num_vregs; vreg++) {
-            if (!node_exists(ig, vreg)) {
-                continue;
-            }
-            int num_neighbours = num_edges(ig, REG_MAX + vreg);
-            if (num_neighbours < min_neighbours) {
-                min_vreg = vreg;
-                min_neighbours = num_neighbours;
-            }
+// Removes one non-move related node of insignificant degree (degree <REG_MAX)
+// from the interference graph and pushes it onto the stack. Returns 1 if we
+// successfully found a node to remove, or 0 if we didn't.
+static int simplify(RegGraph *ig, RegGraph *cg, int *stack, int *num_stack) {
+    // Find a non-move related node of insignificant degree
+    for (int vreg = 0; vreg < ig->num_vregs; vreg++) {
+        if (!node_exists(ig, REG_MAX + vreg)) {
+            continue; // The node doesn't exist
         }
-        if (min_vreg < 0) { // No more vregs in the graph; all on the stack
-            break;
+//        if (num_edges(cg, REG_MAX + vreg) > 0) {
+//            continue; // This node is move related
+//        }
+        if (num_edges(ig, REG_MAX + vreg) >= REG_MAX) {
+            continue; // This node is of significant degree (>=REG_MAX edges)
         }
-        stack[(*num_stack)++] = min_vreg; // Add to the stack
-        remove_node(ig, min_vreg); // Remove from the graph
+        // Otherwise, we found one!
+        stack[(*num_stack)++] = vreg; // Add to the stack
+        remove_node(ig, vreg); // Remove from the graph
+        return 1;
     }
+    return 0;
 }
 
 static Reg * select_regs(RegGraph *ig, int *stack, int num_stack) {
     Reg *regs = malloc(ig->num_vregs * sizeof(Reg));
     memset(regs, 0xff, ig->num_vregs * sizeof(Reg)); // Set every bit
     while (num_stack) { // Work our way down the stack allocating regs
-        int vreg = stack[--num_stack]; // Remove from the stack
+        int vreg = stack[--num_stack]; // Pop from the stack
 
-        // Find all physical regs interfering with 'vreg'
+        // Find all physical regs interfering with 'vreg' (both from actual
+        // pregs and from other vregs that have already been allocated)
         int interference[REG_MAX];
-        memset(interference, 0, sizeof(int) * REG_MAX);
         for (int p = 0; p < REG_MAX; p++) { // Physical regs
-            interference[p] |= edge_exists(ig, REG_MAX + vreg, p);
+            interference[p] = edge_exists(ig, REG_MAX + vreg, p);
         }
-        for (int v = 0; v < ig->num_vregs; v++) { // vregs
-            if (regs[v] != ~0) {
-                int in = edge_exists(ig, REG_MAX + vreg, REG_MAX + v);
-                interference[regs[v]] = in;
+        for (int other = 0; other < ig->num_vregs; other++) { // vregs
+            if (regs[other] != ~0) {
+                int reg1 = REG_MAX + vreg, reg2 = REG_MAX + other;
+                interference[regs[other]] |= edge_exists(ig, reg1, reg2);
             }
         }
 
@@ -224,14 +220,20 @@ static Reg * select_regs(RegGraph *ig, int *stack, int num_stack) {
     return regs;
 }
 
-static Reg * colour_graph(RegGraph *g) {
+static Reg * colour_graph(RegGraph *ig, RegGraph *cg) {
     // We're going to destroy the data in the interference graph by removing
     // nodes, so create a copy we can modify
-    RegGraph copy = copy_reg_graph(g);
-    int stack[g->num_vregs];
+    RegGraph copy = copy_reg_graph(ig);
+
+    // Set up a stack of nodes to define an order in which to colour the vregs
+    int stack[ig->num_vregs];
     int num_stack = 0;
-    simplify_graph(&copy, stack, &num_stack);
-    return select_regs(g, stack, num_stack);
+
+    // Keep simplifying the graph until we can't
+    while (simplify(&copy, cg, stack, &num_stack)) {}
+
+    // Colour the regs in the order they pop off the stack
+    return select_regs(ig, stack, num_stack);
 }
 
 static void replace_vregs_for_ins(AsmIns *ins, Reg *reg_map) {
@@ -269,6 +271,6 @@ void reg_alloc(AsmFn *fn, LiveRange *ranges) {
     print_live_ranges(ranges, fn->num_vregs);
     RegGraph ig = build_interference_graph(ranges, fn->num_vregs);
     RegGraph cg = build_coalescing_graph(fn, ranges);
-    Reg *reg_map = colour_graph(&ig);
+    Reg *reg_map = colour_graph(&ig, &cg);
     replace_vregs(fn, reg_map);
 }
