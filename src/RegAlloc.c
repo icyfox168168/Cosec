@@ -152,6 +152,7 @@ static RegGraph build_interference_graph(LiveRange *ranges, int num_vregs) {
 // The coalescing graph tells us whether two regs are candidates for coalescing;
 // that is, related by a mov and their live ranges don't interfere other than
 // for that mov
+// It's possible to coalesce across movzx and movsx too!
 static RegGraph build_coalescing_graph(AsmFn *fn, LiveRange *ranges) {
     // Iterate over all instructions to find move-related regs
     RegGraph g = new_reg_graph(fn->num_vregs);
@@ -159,7 +160,7 @@ static RegGraph build_coalescing_graph(AsmFn *fn, LiveRange *ranges) {
         for (AsmIns *mov = bb->asm_head; mov; mov = mov->next) {
             // Check if the instruction is a mov that relates two regs; also
             // make sure the two regs aren't both pregs - one must be a vreg
-            if (mov->op == X86_MOV &&
+            if ((mov->op >= X86_MOV && mov->op <= X86_MOVZX) &&
                     (mov->l.type == OP_REG || mov->l.type == OP_VREG) &&
                     (mov->r.type == OP_REG || mov->r.type == OP_VREG) &&
                     !(mov->l.type == OP_REG && mov->r.type == OP_REG)) {
@@ -401,16 +402,15 @@ static void replace_vreg(AsmOperand *operand, Reg *reg_map, int *coalesce_map) {
     if (operand->type != OP_VREG) {
         return; // Not a vreg
     }
-    int reg;
-    int coalesced = coalesce_map[operand->vreg];
-    if (coalesced != -1) { // Coalesced into a preg or vreg
-        if (coalesced < NUM_REGS) {
-            reg = coalesced; // Coalesced into a preg
-        } else {
-            reg = reg_map[coalesced - NUM_REGS]; // Coalesced into a vreg
-        }
-    } else {
-        reg = reg_map[operand->vreg]; // No coalescing
+    int reg = NUM_REGS + operand->vreg; // Start with the vreg
+    // Check if the vreg was coalesced into anything, and if it was find the
+    // end of the coalescing chain (e.g., %3 -> %2 -> rax)
+    while (reg >= NUM_REGS && coalesce_map[reg - NUM_REGS] != -1) {
+        reg = coalesce_map[reg - NUM_REGS];
+    }
+    // 'reg' might be the original vreg or coalesced vreg
+    if (reg >= NUM_REGS) {
+        reg = reg_map[reg - NUM_REGS];
     }
     assert(reg != -1);
     operand->reg = reg;
@@ -420,10 +420,9 @@ static void replace_vreg(AsmOperand *operand, Reg *reg_map, int *coalesce_map) {
 static void replace_ins_vregs(AsmIns *ins, Reg *reg_map, int *coalesce_map) {
     replace_vreg(&ins->l, reg_map, coalesce_map);
     replace_vreg(&ins->r, reg_map, coalesce_map);
-    if (ins->op == X86_MOV &&
-            ins->l.type == OP_REG &&
-            ins->r.type == OP_REG &&
-            ins->l.reg == ins->r.reg) {
+    if ((ins->op >= X86_MOV && ins->op <= X86_MOVZX) &&
+            ins->l.type == OP_REG && ins->r.type == OP_REG &&
+            ins->l.reg == ins->r.reg && ins->l.size == ins->r.size) {
         delete_asm(ins); // Remove a redundant mov
     }
 }
