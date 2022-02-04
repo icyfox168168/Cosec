@@ -8,8 +8,10 @@ int size_of(Type t) {
         return 8; // Pointers are always 8 bytes
     }
     switch (t.prim) {
-        case T_void: return 0;
-        case T_i32:  return 4;
+        case T_NONE:          return -1;
+        case T_void:          return 0;
+        case T_i1: case T_i8: return 1;
+        case T_i32:           return 4;
     }
 }
 
@@ -25,21 +27,19 @@ BB * new_bb() {
     return bb;
 }
 
-static IrIns * new_ir(IrOpcode op) {
+IrIns * new_ir(IrOpcode op) {
     IrIns *ins = malloc(sizeof(IrIns));
     ins->bb = NULL;
     ins->op = op;
     ins->next = NULL;
     ins->prev = NULL;
-    ins->type.prim = T_void;
+    ins->type.prim = T_NONE;
     ins->type.ptrs = 0;
-    ins->vreg = -1;
-    ins->insert_pt = NULL;
+    ins->vreg = -1; // Important for the assembler
     return ins;
 }
 
-IrIns * emit_ir(BB *bb, IrOpcode op) {
-    IrIns *ins = new_ir(op);
+void emit_ir(BB *bb, IrIns *ins) {
     ins->bb = bb;
     ins->prev = bb->ir_last;
     if (bb->ir_last) {
@@ -48,7 +48,6 @@ IrIns * emit_ir(BB *bb, IrOpcode op) {
         bb->ir_head = ins; // Head of the basic block
     }
     bb->ir_last = ins;
-    return ins;
 }
 
 void delete_ir(IrIns *ins) {

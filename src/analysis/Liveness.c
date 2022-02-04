@@ -110,7 +110,7 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
 
         // Add the live vregs to the 'live ranges' structure
         for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
-            LiveRange *range = &ranges[REG_MAX + vreg];
+            LiveRange *range = &ranges[NUM_REGS + vreg];
             if (live[vreg]) {
                 add_program_point(range, ins->idx);
             }
@@ -180,7 +180,7 @@ LiveRange * analyse_live_ranges(AsmFn *fn) {
     number_ins(fn);
 
     // Allocate the live ranges array, all starting with NULL
-    int num_regs = REG_MAX + fn->num_vregs;
+    int num_regs = NUM_REGS + fn->num_vregs;
     LiveRange *ranges = calloc(num_regs, sizeof(LiveRange));
 
     // Allocate the live-in array for each basic block
@@ -249,14 +249,14 @@ void print_live_range(LiveRange range) {
 }
 
 void print_live_ranges(LiveRange *ranges, int num_vregs) {
-    for (int reg = 0; reg < REG_MAX + num_vregs; reg++) {
+    for (int reg = 0; reg < NUM_REGS + num_vregs; reg++) {
         if (!ranges[reg]) {
             continue; // Reg not used (no live range)
         }
-        if (reg < REG_MAX) { // Physical register
+        if (reg < NUM_REGS) { // Physical register
             printf("%s", REG_NAMES[reg][REG_Q]);
         } else { // Virtual register
-            printf("%%%d", reg - REG_MAX);
+            printf("%%%d", reg - NUM_REGS);
         }
         printf(" live at: ");
         print_live_range(ranges[reg]);

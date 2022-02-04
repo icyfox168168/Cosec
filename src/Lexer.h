@@ -33,6 +33,7 @@
                                     \
     /* Keywords */                  \
     /* All keyword tokens must be together! */ \
+    K(CHAR, "char")                 \
     K(INT, "int")                   \
     K(IF, "if")                     \
     K(ELSE, "else")                 \
@@ -54,7 +55,7 @@ enum {
 #undef Z
 #undef Y
 #undef X
-    TK_LAST, // Required for hash-maps indexed by tokens
+    NUM_TKS, // Required for hash-maps indexed by tokens
 };
 
 typedef struct {
@@ -62,7 +63,7 @@ typedef struct {
     char *c;              // Character in 'source' that we're up to
     Tk tk;                // Most recently lexed token
     char *ident; int len; // Start and length of an identifier
-    long num;             // Number that's been converted to an integer
+    int num;              // Number that's been converted to an integer
 } Lexer;
 
 Lexer new_lexer(char *source);      // Create a new lexer object

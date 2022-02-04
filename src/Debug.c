@@ -16,6 +16,9 @@ static char *IR_OPCODE_NAMES[] = {
 };
 
 static void print_type(Type t) {
+    if (t.prim == T_NONE) {
+        return;
+    }
     printf("%s", IR_PRIM_NAMES[t.prim]); // Primitive name
     for (int i = 0; i < t.ptrs; i++) {
         printf("*"); // Star for every pointer indirection
@@ -37,8 +40,8 @@ static void print_ins(IrIns *ins) {
     printf("\t%s\t", IR_OPCODE_NAMES[ins->op]); // Opcode name
     switch (ins->op) { // Handle special case instructions (e.g., constants)
     case IR_FARG:   printf("%d", ins->arg_num); break;
-    case IR_KI32:   printf("%+d", ins->ki32); break;
-    case IR_ALLOC:  printf("%s", IR_PRIM_NAMES[ins->type.prim]); break;
+    case IR_KINT:   printf("%+d", ins->kint); break;
+    case IR_ALLOC:  { Type t = ins->type; t.ptrs--; print_type(t); } break;
     case IR_BR:     printf("%s", ins->br ? ins->br->label : "NULL"); break;
     case IR_CONDBR:
         printf("%.4d\t", ins->cond->idx); // Condition

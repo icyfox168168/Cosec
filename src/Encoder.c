@@ -1,4 +1,6 @@
 
+#include <assert.h>
+
 #include "Encoder.h"
 
 static char *X86_OPCODE_NAMES[] = {
@@ -16,7 +18,7 @@ static char * NASM_MEM_PREFIX[] = {
 
 static void encode_operand(AsmOperand op, FILE *out) {
     switch (op.type) {
-    case OP_IMM: fprintf(out, "%llu", op.imm); break;
+    case OP_IMM: fprintf(out, "%d", op.imm); break;
     case OP_REG: fprintf(out, "%s", REG_NAMES[op.reg][op.size]); break;
     case OP_VREG:
         fprintf(out, "%%%d", op.vreg);
@@ -29,6 +31,7 @@ static void encode_operand(AsmOperand op, FILE *out) {
         }
         break;
     case OP_MEM:
+        assert(op.bytes >= 0);
         fprintf(out, "%s ", NASM_MEM_PREFIX[op.bytes]);
         fprintf(out, "[%s", REG_NAMES[op.base][op.size]); // Base
         if (op.scale > 1) { // Scale
@@ -47,7 +50,7 @@ static void encode_operand(AsmOperand op, FILE *out) {
 
 static void encode_ins(AsmIns *ins, FILE *out) {
     fprintf(out, "    "); // Indent instructions by 4 spaces
-    fprintf(out, "%s", X86_OPCODE_NAMES[ins->op]); // Instruction opcode
+    fprintf(out, "%s", X86_OPCODE_NAMES[ins->op]); // Opcode
     if (X86_OPCODE_NARGS[ins->op] >= 1) { // First argument
         fprintf(out, " ");
         encode_operand(ins->l, out);

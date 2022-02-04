@@ -12,7 +12,10 @@
 // ---- Static Single Assignment (SSA) Form IR --------------------------------
 
 #define IR_PRIMS \
+    X(NONE)      \
     X(void)      \
+    X(i1) /* Boolean value */ \
+    X(i8)        \
     X(i32)
 
 typedef enum {
@@ -28,7 +31,7 @@ typedef struct {
 
 #define IR_OPCODES        \
     /* Constants */       \
-    X(KI32, 1)            \
+    X(KINT, 1)            \
                           \
     /* Memory accesses */ \
     X(FARG, 1)            \
@@ -61,6 +64,11 @@ typedef struct {
     X(UGT, 2)             \
     X(UGE, 2)             \
                           \
+    /* Conversions */     \
+    X(TRUNC, 1) /* Truncate an int to a smaller type */ \
+    X(SEXT, 1) /* Sign extend, for signed ints */ \
+    X(ZEXT, 1) /* Zero extend, for unsigned ints */ \
+                          \
     /* Control flow */    \
     X(PHI, 0)    /* SSA phi instruction */ \
     X(BR, 1)     /* Unconditional branch */ \
@@ -72,7 +80,7 @@ typedef enum {
 #define X(name, nargs) IR_ ## name,
     IR_OPCODES
 #undef X
-    IR_LAST, // Required for hash tables indexed by IR opcode
+    NUM_IR_OPS, // Required for hash tables indexed by IR opcode
 } IrOpcode;
 
 static int IR_OPCODE_NARGS[] = {
@@ -98,12 +106,12 @@ typedef struct ir_ins {
     IrOpcode op;
     Type type; // Everything except control flow records its return type
     union {
-        Phi *phi;                         // Phi instructions
-        int arg_num;                      // Function arguments
-        int32_t ki32;                     // Constants
-        struct { struct ir_ins *l, *r; }; // Binary operations
-        struct bb *br;                    // Unconditional branches
-        struct {                          // Conditional branches
+        Phi *phi;                         // Phi instruction
+        int arg_num;                      // Function argument
+        int kint;                         // Integer constant
+        struct { struct ir_ins *l, *r; }; // Binary operation
+        struct bb *br;                    // Unconditional branch
+        struct {                          // Conditional branch
             struct ir_ins *cond;
             struct bb *true, *false;
         };
@@ -115,7 +123,6 @@ typedef struct ir_ins {
     // Assembler info
     int vreg; // Virtual register assigned to the instruction's result
     int stack_slot; // For IR_ALLOC; location on the stack relative to rbp
-    struct asm_ins *insert_pt; // Relate each IR ins to an assembly ins
 
     // Debug info
     int idx;
@@ -146,7 +153,7 @@ typedef enum {
 #define X(name, _, __, ___, ____, _____) REG_ ## name,
     X86_REGS
 #undef X
-    REG_MAX,
+    NUM_REGS,
 } Reg;
 
 typedef enum {
@@ -159,7 +166,7 @@ typedef enum {
 
 static char *REG_NAMES[][5] = {
 #define X(name, q, d, w, h, l) {q, d, w, h, l},
-        X86_REGS
+    X86_REGS
 #undef X
 };
 
@@ -174,6 +181,7 @@ static RegSize REG_SIZE[] = {
 #define X86_OPCODES          \
     /* Memory access */      \
     X(MOV, "mov", 2)         \
+    X(MOVSX, "movsx", 2) /* sign extend, for signed ints */ \
     X(MOVZX, "movzx", 2) /* zero extend, for unsigned ints */ \
     X(LEA, "lea", 2)         \
                              \
@@ -227,7 +235,7 @@ typedef enum {
 #define X(name, _, __) X86_ ## name,
     X86_OPCODES
 #undef X
-    X86_LAST, // Required for hash-maps indexed by assembly opcode
+    NUM_X86_OPS, // Required for hash-maps indexed by assembly opcode
 } AsmOpcode;
 
 static int X86_OPCODE_NARGS[] = { // Number of arguments each opcode takes
@@ -247,7 +255,7 @@ typedef enum {
 typedef struct {
     AsmOperandType type;
     union {
-        uint64_t imm;                      // OP_IMM
+        int imm;                           // OP_IMM
         struct { RegSize size; Reg reg; }; // OP_REG
         struct { RegSize _s1; int vreg; }; // OP_VREG
         struct { RegSize _s2; Reg base; int scale, index, bytes; }; // OP_MEM
@@ -289,7 +297,8 @@ typedef struct bb {
 int size_of(Type t); // Returns the bytes of a type in bytes
 
 BB * new_bb();
-IrIns * emit_ir(BB *bb, IrOpcode op);
+IrIns * new_ir(IrOpcode op);
+void emit_ir(BB *bb, IrIns *ins);
 void delete_ir(IrIns *ins);
 AsmIns * emit_asm(BB *bb, AsmOpcode op);
 void delete_asm(AsmIns *ins);

@@ -6,7 +6,7 @@
 #include "Lexer.h"
 
 // Allows us to map between the KEYWORDS array and the Tk type
-#define FIRST_KEYWORD TK_INT
+#define FIRST_KEYWORD TK_CHAR
 
 static char *KEYWORDS[] = {
 #define X(_)
@@ -75,14 +75,14 @@ static void lex_ident(Lexer *l) {
 
 static void lex_int(Lexer *l) {
     char *end;
-    long num = strtol(l->c, &end, 0); // Read out the number
+    int num = (int) strtol(l->c, &end, 0); // Read the number
     l->c = end;
     if (isalnum(*l->c)) { // Check the character after the number is valid
         printf("invalid number\n");
         exit(1);
     }
     l->tk = TK_NUM;
-    l->num = num;
+    l->num =  num;
 }
 
 static void lex_symbol(Lexer *l) {
