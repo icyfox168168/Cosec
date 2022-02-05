@@ -89,3 +89,7 @@ test(loop4 loop/4.c)
 test(loop5 loop/5.c)
 test(loop6 loop/6.c)
 test(loop7 loop/7.c)
+
+test(types1 types/1.c)
+test(types2 types/2.c)
+test(types3 types/3.c)
