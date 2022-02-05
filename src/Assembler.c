@@ -409,11 +409,23 @@ static void asm_ret0(Assembler *a) {
 }
 
 static void asm_ret1(Assembler *a, IrIns *ir_ret) {
-    AsmOperand result = discharge(a, ir_ret->l);
-    AsmIns *mov = emit(a, X86_MOV); // mov rax, <value>
+    AsmOperand result;
+    if (ir_ret->l->op == IR_KINT) { // Inline ints
+        result.type = OP_IMM;
+        result.imm = ir_ret->l->kint;
+    } else if (ir_ret->l->op == IR_LOAD) { // Inline loads
+        result = fold_load(a, ir_ret->l);
+    } else { // Otherwise put it in a vreg
+        result = discharge(a, ir_ret->l);
+    }
+
+    // Make sure to zero the rest of eax by using movsx if the function returns
+    // something smaller than an int
+    int needs_sext = bits(ir_ret->l->type) < 32;
+    AsmIns *mov = emit(a, needs_sext ? X86_MOVSX : X86_MOV);
     mov->l.type = OP_REG;
     mov->l.reg = REG_RAX;
-    mov->l.size = REG_SIZE[bytes(ir_ret->l->type)];
+    mov->l.size = needs_sext ? REG_D : REG_SIZE[bytes(ir_ret->l->type)];
     mov->r = result;
     asm_ret0(a);
 }
