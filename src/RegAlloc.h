@@ -20,6 +20,6 @@
 // After 'reg_alloc', there will no longer be any assembly instructions with
 // type 'OP_VREG'.
 
-void reg_alloc(AsmFn *fn, LiveRange *ranges);
+void reg_alloc(Fn *fn, LiveRange *ranges);
 
 #endif

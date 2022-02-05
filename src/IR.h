@@ -5,11 +5,10 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+#include "Lexer.h"
 #include "analysis/Analysis.h"
 
 #define UNREACHABLE() exit(1)
-
-// ---- Static Single Assignment (SSA) Form IR --------------------------------
 
 #define IR_PRIMS \
     X(NONE)      \
@@ -28,6 +27,108 @@ typedef struct {
     Prim prim;
     int ptrs; // Number of levels of pointer indirection
 } Type;
+
+Type type_none();
+Type type_i1();
+Type type_i32();
+int bits(Type t);  // Returns the size of a type in bits
+int bytes(Type t); // Returns the size of a type in bytes
+
+
+// ---- Abstract Syntax Tree --------------------------------------------------
+
+typedef struct local {
+    struct local *next;
+    Type type;
+    char *name;
+    struct ir_ins *alloc; // The IR_ALLOC instruction for this local
+} Local;
+
+typedef enum {
+    EXPR_KINT,    // Constant integer
+    EXPR_LOCAL,   // Local variable
+    EXPR_CONV,    // Type conversion
+    EXPR_POSTFIX, // Postfix operation
+    EXPR_UNARY,   // Unary (or prefix) operation
+    EXPR_BINARY,  // Binary operation
+    EXPR_TERNARY, // Ternary operation ('?' only)
+} ExprType;
+
+typedef struct expr {
+    ExprType kind;
+    Type type; // Type for the result of the expression
+    union {
+        int kint;                                          // EXPR_KINT
+        Local *local;                                      // EXPR_LOCAL
+        struct { Tk op; struct expr *l; };                 // Unary, postfix
+        struct { Tk _op1; struct expr *_l1, *r; };         // EXPR_BINARY
+        struct { Tk _op2; struct expr *_l2, *_r, *cond; }; // EXPR_TERNARY
+        // Nothing for EXPR_CONV
+    };
+} Expr;
+
+typedef struct if_chain {
+    struct if_chain *next; // For 'else if' and 'else' components
+    Expr *cond;            // NULL for 'else' component
+    struct stmt *body;
+} IfChain;
+
+typedef enum {
+    STMT_DECL,
+    STMT_EXPR,
+    STMT_IF,
+    STMT_WHILE,
+    STMT_DO_WHILE,
+    STMT_FOR,
+    STMT_BREAK,
+    STMT_RET,
+} StmtType;
+
+typedef struct stmt {
+    struct stmt *next; // Linked list of statements in a block
+    StmtType kind;
+    union {
+        Expr *expr;                                // STMT_EXPR, STMT_RET
+        Local *local;                              // STMT_DECL
+        IfChain *if_chain;                         // STMT_IF
+        struct { Expr *cond; struct stmt *body; }; // STMT_WHILE, STMT_DO_WHILE
+        struct { Expr *_c; struct stmt *_b; Local *ind; Expr *init, *inc; };
+    };
+} Stmt;
+
+typedef struct fn_arg {
+    struct fn_arg *next;
+    Local *local;
+    struct ir_ins *ir_farg; // The IR_FARG instruction emitted for this arg
+} FnArg;
+
+typedef struct {
+    Type return_type;
+    char *name;
+    FnArg *args; // Linked list of function arguments
+} FnDecl;
+
+typedef struct fn_def {
+    struct fn_def *next;
+    FnDecl *decl;
+    Stmt *body;
+} FnDef;
+
+typedef struct {
+    FnDef *fns; // Linked list of top-level functions
+} AstModule;
+
+AstModule * new_ast_module();
+FnDef * new_fn_def();
+FnDecl * new_fn_decl();
+FnArg * new_fn_arg();
+Stmt * new_stmt(StmtType kind);
+IfChain * new_if_chain();
+Expr * new_expr(ExprType kind);
+Local * new_local(char *name, Type type);
+
+
+// ---- Static Single Assignment (SSA) Form IR --------------------------------
 
 #define IR_OPCODES        \
     /* Constants */       \
@@ -89,15 +190,25 @@ static int IR_OPCODE_NARGS[] = {
 #undef X
 };
 
+// A branch chain is a linked list of pointers into 'IR_BR' or 'IR_CONDBR'
+// arguments (either, 'ins->br', 'ins->true' or 'ins->false' branch targets)
+// that need to/ be back-filled when the jump destination for a conditional
+// expression is determined.
+typedef struct br_chain {
+    struct bb **br;
+    struct ir_ins *ins; // The IR_BR or IR_CONDBR ins referred to by 'br'
+    struct br_chain *next;
+} BrChain;
+
 // SSA phi instructions keep track of the value of a variable along different
 // control flow paths. Phi instructions ONLY occur at the head of a basic block.
 // They take as an argument a list of pairs <basic block, definition>, one pair
 // for each predecessor basic block. The pairs are stored as a linked list.
-typedef struct phi {
-    struct phi *next;
+typedef struct phi_chain {
+    struct phi_chain *next;
     struct bb *bb;
     struct ir_ins *def;
-} Phi;
+} PhiChain;
 
 typedef struct ir_ins {
     struct ir_ins *next, *prev;
@@ -106,25 +217,28 @@ typedef struct ir_ins {
     IrOpcode op;
     Type type; // Everything except control flow records its return type
     union {
-        Phi *phi;                         // Phi instruction
-        int arg_num;                      // Function argument
-        int kint;                         // Integer constant
-        struct { struct ir_ins *l, *r; }; // Binary operation
-        struct bb *br;                    // Unconditional branch
-        struct {                          // Conditional branch
+        PhiChain *phi;                         // IR_PHI
+        int arg_num;                      // IR_FARG
+        int kint;                         // IR_KINT
+        struct { struct ir_ins *l, *r; }; // Binary operations
+        struct bb *br;                    // IR_BR
+        struct {                          // IR_CONDBR
             struct ir_ins *cond;
             struct bb *true, *false;
+            // Branch chains that need to be patched once the destination for
+            // a conditional expression is known
+            BrChain *true_chain, *false_chain;
         };
     };
 
-    // Analysis info
+    // Per-IR instruction analysis information
     UseChain *use_chain;
 
-    // Assembler info
-    int vreg; // Virtual register assigned to the instruction's result
-    int stack_slot; // For IR_ALLOC; location on the stack relative to rbp
+    // Assembler information
+    int vreg;       // Virtual register assigned to the instruction's result
+    int stack_slot; // For IR_ALLOC: location on the stack relative to rbp
 
-    // Debug info
+    // Debug information
     int idx;
 } IrIns;
 
@@ -249,7 +363,8 @@ typedef enum {
     OP_REG,   // Physical register (e.g., rax, etc.)
     OP_VREG,  // Virtual register (only prior to register allocation)
     OP_MEM,   // Memory access
-    OP_LABEL, // Symbol (e.g. for a call or jump)
+    OP_LABEL, // Symbol for a branch
+    OP_FN,    // Symbol for a call
 } AsmOperandType;
 
 typedef struct {
@@ -260,6 +375,7 @@ typedef struct {
         struct { RegSize _s1; int vreg; }; // OP_VREG
         struct { RegSize _s2; Reg base; int scale, index, bytes; }; // OP_MEM
         struct bb *bb;                     // OP_LABEL
+        struct fn *fn;                     // OP_FN
     };
 } AsmOperand;
 
@@ -272,7 +388,7 @@ typedef struct asm_ins {
 } AsmIns;
 
 
-// ---- Basic Block -----------------------------------------------------------
+// ---- Unified Blocks --------------------------------------------------------
 
 // Use a unified basic block structure for both the SSA and assembly IR, since
 // this simplifies assembly construction. The CFG structure is the same in
@@ -289,18 +405,32 @@ typedef struct bb {
     IrIns *ir_head, *ir_last;    // IR instructions
     AsmIns *asm_head, *asm_last; // Assembly instructions
 
-    // Analysis info
+    // Per-BB analysis information
     CFGInfo cfg;
     LivenessInfo live;
 } BB;
 
-int size_of(Type t); // Returns the bytes of a type in bytes
+typedef struct fn {
+    struct fn *next;  // Linked list of functions
+    char *name;       // Output name for the function
+    BB *entry, *last; // Linked list of basic blocks
+    int num_vregs;    // For the assembler (number of vregs used)
+} Fn;
 
+typedef struct {
+    Fn *fns;  // Linked list of functions
+    Fn *main; // Function called 'main', if there is one, used as program entry
+} Module;
+
+Module * new_module();
+Fn * new_fn();
 BB * new_bb();
+
 IrIns * new_ir(IrOpcode op);
 void emit_ir(BB *bb, IrIns *ins);
 void delete_ir(IrIns *ins);
-AsmIns * emit_asm(BB *bb, AsmOpcode op);
+
+AsmIns * emit_asm(BB *bb, AsmOpcode op); // TODO: split into new_asm and emit_asm
 void delete_asm(AsmIns *ins);
 
 #endif

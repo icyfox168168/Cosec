@@ -74,15 +74,6 @@ static Assembler new_asm() {
     return a;
 }
 
-static AsmFn * new_fn() {
-    AsmFn *fn = malloc(sizeof(AsmFn));
-    fn->next = NULL;
-    fn->entry = NULL;
-    fn->last = NULL;
-    fn->num_vregs = 0;
-    return fn;
-}
-
 static AsmIns * emit(Assembler *a, AsmOpcode op) {
     return emit_asm(a->bb, op);
 }
@@ -95,7 +86,7 @@ static AsmOperand load_to_mem_operand(IrIns *ir_load) {
     operand.base = REG_RBP; // Offset relative to rbp
     operand.size = REG_Q;
     operand.scale = 1;
-    operand.bytes = size_of(ir_load->type); // Number of bytes to read
+    operand.bytes = bytes(ir_load->type); // Number of bytes to read
     operand.index = -ir_load->l->stack_slot;
     return operand;
 }
@@ -109,7 +100,7 @@ static AsmOperand store_to_mem_operand(IrIns *ir_store) {
     operand.scale = 1;
     Type t = ir_store->l->type;
     t.ptrs--;
-    operand.bytes = size_of(t); // Number of bytes to write
+    operand.bytes = bytes(t); // Number of bytes to write
     operand.index = -ir_store->l->stack_slot;
     return operand;
 }
@@ -122,7 +113,7 @@ static AsmOperand discharge_imm(Assembler *a, IrIns *ir_k) {
     AsmIns *mov = emit(a, X86_MOV);
     mov->l.type = OP_VREG;
     mov->l.vreg = ir_k->vreg;
-    mov->l.size = REG_SIZE[size_of(ir_k->type)];
+    mov->l.size = REG_SIZE[bytes(ir_k->type)];
     mov->r.type = OP_IMM;
     mov->r.imm = ir_k->kint;
     return mov->l; // The vreg we 'mov'd into is the result
@@ -134,7 +125,7 @@ static AsmOperand discharge_load(Assembler *a, IrIns *ir_load) {
     AsmIns *mov = emit(a, X86_MOV);
     mov->l.type = OP_VREG; // Load into a vreg
     mov->l.vreg = ir_load->vreg;
-    mov->l.size = REG_SIZE[size_of(ir_load->type)];
+    mov->l.size = REG_SIZE[bytes(ir_load->type)];
     mov->r = load_to_mem_operand(ir_load);
     return mov->l;
 }
@@ -161,7 +152,7 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
         AsmOperand result;
         result.type = OP_VREG;
         result.vreg = ins->vreg;
-        result.size = REG_SIZE[size_of(ins->type)];
+        result.size = REG_SIZE[bytes(ins->type)];
         return result;
     }
     switch (ins->op) {
@@ -192,7 +183,7 @@ static void asm_farg(Assembler *a, IrIns *ir_farg) {
     ir_farg->vreg = a->vreg++;
     mov->l.type = OP_VREG;
     mov->l.vreg = ir_farg->vreg;
-    mov->l.size = REG_SIZE[size_of(ir_farg->type)];
+    mov->l.size = REG_SIZE[bytes(ir_farg->type)];
     mov->r.type = OP_REG;
     // Pull the argument out of the register specified by the ABI
     mov->r.reg = FN_ARGS_REGS[ir_farg->arg_num];
@@ -202,7 +193,7 @@ static void asm_farg(Assembler *a, IrIns *ir_farg) {
 static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
     Type t = ir_alloc->type;
     t.ptrs -= 1; // IR_ALLOC returns a POINTER to what we want stack space for
-    a->stack_size += size_of(t); // Create some space on the stack
+    a->stack_size += bytes(t); // Create some space on the stack
     ir_alloc->stack_slot = a->stack_size;
     // Create a vreg for the POINTER returned by the ALLOC instruction
     ir_alloc->vreg = a->vreg++;
@@ -294,7 +285,7 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
     AsmIns *mov2 = emit(a, X86_MOV); // Move the result into a new vreg
     mov2->l.type = OP_VREG;
     mov2->l.vreg = ir_div->vreg;
-    mov2->l.size = REG_SIZE[size_of(ir_div->type)];
+    mov2->l.size = REG_SIZE[bytes(ir_div->type)];
     mov2->r.type = OP_REG;
     if (ir_div->op == IR_DIV) {
         mov2->r.reg = REG_RAX; // Division (quotient in rax)
@@ -364,10 +355,10 @@ static void asm_trunc_or_ext(Assembler *a, IrIns *ir_trunc_ext, AsmOpcode op) {
     AsmIns *mov = emit(a, op); // Move into a smaller reg
     mov->l.type = OP_VREG;
     mov->l.vreg = ir_trunc_ext->vreg;
-    mov->l.size = REG_SIZE[size_of(ir_trunc_ext->type)];
+    mov->l.size = REG_SIZE[bytes(ir_trunc_ext->type)];
     mov->r.type = OP_VREG;
     mov->r.vreg = l.vreg;
-    mov->r.size = REG_SIZE[size_of(ir_trunc_ext->l->type)];
+    mov->r.size = REG_SIZE[bytes(ir_trunc_ext->l->type)];
 }
 
 static void asm_trunc(Assembler *a, IrIns *ir_trunc) {
@@ -422,7 +413,7 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
     AsmIns *mov = emit(a, X86_MOV); // mov rax, <value>
     mov->l.type = OP_REG;
     mov->l.reg = REG_RAX;
-    mov->l.size = REG_SIZE[size_of(ir_ret->l->type)];
+    mov->l.size = REG_SIZE[bytes(ir_ret->l->type)];
     mov->r = result;
     asm_ret0(a);
 }
@@ -477,20 +468,15 @@ static void asm_fn_preamble(Assembler *a) {
     ins->r.size = REG_Q;
 }
 
-static AsmFn * asm_fn(FnDef *ir_fn) {
-    AsmFn *fn = new_fn();
-    fn->entry = ir_fn->entry;
-    fn->last = ir_fn->last;
-
+static void asm_fn(Fn *fn) {
     Assembler a = new_asm();
-    a.bb = ir_fn->entry;
+    a.bb = fn->entry;
     asm_fn_preamble(&a); // Add the function preamble to the entry BB
-    for (BB *bb = ir_fn->entry; bb; bb = bb->next) { // Assemble each BB
+    for (BB *bb = fn->entry; bb; bb = bb->next) { // Assemble each BB
         a.bb = bb;
         asm_bb(&a, bb);
     }
     fn->num_vregs = a.vreg;
-    return fn;
 }
 
 // The 'main' function isn't the first thing that gets executed when the kernel
@@ -511,10 +497,10 @@ static AsmFn * asm_fn(FnDef *ir_fn) {
 //     mov rdi, rax         ; Exit syscall
 //     mov rax, 0x2000001
 //     syscall
-static AsmFn * asm_start(AsmFn *main) {
-    AsmFn *start = new_fn();
+static Fn * asm_start(Fn *main) {
+    Fn *start = new_fn();
+    start->name = "_start";
     BB *entry = new_bb();
-    entry->label = "_start";
     start->entry = entry;
 
     Assembler a = new_asm();
@@ -540,7 +526,7 @@ static AsmFn * asm_start(AsmFn *main) {
     i->l.type = OP_REG; i->l.reg = REG_RAX; i->l.size = REG_D;
     i->r.type = OP_REG; i->r.reg = REG_RAX; i->r.size = REG_D;
     i = emit(&a, X86_CALL); // Call main
-    i->l.type = OP_LABEL; i->l.bb = main->entry;
+    i->l.type = OP_FN; i->l.fn = main;
     i = emit(&a, X86_MOV); // syscall to exit
     i->l.type = OP_REG; i->l.reg = REG_RDI; i->l.size = REG_Q;
     i->r.type = OP_REG; i->r.reg = REG_RAX; i->l.size = REG_Q;
@@ -551,12 +537,11 @@ static AsmFn * asm_start(AsmFn *main) {
     return start;
 }
 
-AsmModule * assemble(Module *ir_mod) {
-    AsmModule *module = malloc(sizeof(AsmModule));
-    module->fns = asm_fn(ir_mod->fn);
-    module->main = module->fns;
-
-    AsmFn *start = asm_start(module->main); // Insert 'start' stub
+void assemble(Module *module) {
+    module->main = module->fns; // TODO: first function is 'main'
+    for (Fn *fn = module->fns; fn; fn = fn->next) {
+        asm_fn(fn);
+    }
+    Fn *start = asm_start(module->main); // Insert 'start' stub
     module->fns->next = start;
-    return module;
 }

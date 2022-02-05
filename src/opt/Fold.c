@@ -29,7 +29,7 @@ static void fold_ins(IrIns *ins) {
     }
 }
 
-void opt_fold(FnDef *fn) {
+void opt_fold(Fn *fn) {
     // Iterate over every instruction and check if it can be folded (don't need
     // to bother with conditionals and control flow yet)
     for (BB *bb = fn->entry; bb; bb = bb->next) {

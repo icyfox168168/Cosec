@@ -2,7 +2,7 @@
 #ifndef COSEC_FOLD_H
 #define COSEC_FOLD_H
 
-#include "../Parser.h"
+#include "../Compiler.h"
 
 /* FOLD pass -- eliminates instructions whose value can be computed at compile
  * time. For example, arithmetic on constant integers:
@@ -13,6 +13,6 @@
  *   0000: KI32 7
  */
 
-void opt_fold(FnDef *fn);
+void opt_fold(Fn *fn);
 
 #endif

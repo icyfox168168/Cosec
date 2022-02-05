@@ -1,7 +1,8 @@
 
+#include <stdio.h>
 #include <ctype.h>
 #include <string.h>
-#include <stdio.h>
+#include <assert.h>
 
 #include "Lexer.h"
 
@@ -9,9 +10,9 @@
 #define FIRST_KEYWORD TK_CHAR
 
 static char *KEYWORDS[] = {
-#define X(_)
-#define Y(_, __, ___)
-#define Z(_, __, ___, ____)
+#define X(_, __)
+#define Y(_, __, ___, ____)
+#define Z(_, __, ___, ____, _____)
 #define K(_, keyword) keyword,
     TOKENS
 #undef K
@@ -21,10 +22,27 @@ static char *KEYWORDS[] = {
     NULL, // Marker for the end of the KEYWORDS array
 };
 
-Lexer new_lexer(char *source) {
+static char * read_file(char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        return NULL;
+    }
+    fseek(f, 0, SEEK_END); // Get length
+    size_t length = (size_t) ftell(f);
+    rewind(f);
+    char *source = malloc(sizeof(char) * (length + 1)); // Read file
+    fread(source, sizeof(char), length, f);
+    fclose(f);
+    source[length] = '\0';
+    return source;
+}
+
+Lexer new_lexer(char *file) {
     Lexer l;
-    l.source = source;
-    l.c = source;
+    l.file = file;
+    l.source = read_file(file);
+    assert(l.source != NULL);
+    l.c = l.source;
     l.tk = 0;
     l.ident = NULL;
     l.len = 0;
@@ -86,13 +104,13 @@ static void lex_int(Lexer *l) {
 }
 
 static void lex_symbol(Lexer *l) {
-#define X(_)
-#define Y(name, ch1, ch2) /* 2-character tokens */     \
+#define X(_, __)
+#define Y(name, ch1, ch2, _) /* 2-character tokens */  \
     else if (*l->c == (ch1) && *(l->c + 1) == (ch2)) { \
         l->tk = TK_ ## name;                           \
         l->c += 2;                                     \
     }
-#define Z(name, ch1, ch2, ch3) /* 3-character tokens */                        \
+#define Z(name, ch1, ch2, ch3, _) /* 3-character tokens */                     \
     else if (*l->c == (ch1) && *(l->c + 1) == (ch2) && *(l->c + 2) == (ch3)) { \
         l->tk = TK_ ## name;                                                   \
         l->c += 2;                                                             \

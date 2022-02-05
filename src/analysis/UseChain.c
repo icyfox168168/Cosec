@@ -31,7 +31,7 @@ static int uses_right(IrIns *ins) {
     return uses_left(ins) && IR_OPCODE_NARGS[ins->op] >= 2;
 }
 
-void analyse_use_chains(FnDef *fn) {
+void analyse_use_chains(Fn *fn) {
     // Allocate 'use_chain' for each instruction
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         for (IrIns *ins = bb->ir_head; ins; ins = ins->next) {

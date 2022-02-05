@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "Parser.h"
+#include "Compiler.h"
 #include "Assembler.h"
 #include "RegAlloc.h"
 #include "Encoder.h"
@@ -13,11 +13,12 @@
 
 // Cosec compiler structure:
 // 1. Lexer -- splits a module's source code up into tokens
-// 2. Parser -- generates IR from the source tokens
-// 3. Optimiser -- converts the IR into SSA form and optimises it
-// 4. Assembler -- lowers the SSA IR to target-specific machine code IR
-// 5. Register allocation -- lowers virtual registers in the IR to physical ones
-// 6. Encoder -- writes the machine code to an object file ready for linking
+// 2. Parser -- generates an AST from the source tokens
+// 3. Compiler -- converts the AST into SSA form IR
+// 4. Optimiser -- optimises the SSA IR
+// 5. Assembler -- lowers the SSA IR to target-specific machine code IR
+// 6. Register allocation -- lowers virtual registers to physical ones
+// 7. Encoder -- writes assembly code to an output file
 //
 // Compile the generated assembly with (on my macOS machine):
 //     nasm -f macho64 out.s
@@ -70,23 +71,31 @@ int main(int argc, char *argv[]) {
     } else if (opts.help || !file) {
         print_help();
     } else {
-        Module *ir_module = parse(file);
+        // TODO: only handles a single function for now
+        AstModule *ast = parse(file);
+        printf("---- AST\n");
+        print_ast(ast->fns);
+        printf("\n");
+
+        Module *module = compile(ast);
         printf("---- IR\n");
-        print_fn(ir_module->fn);
+        print_ir(module->fns);
+        printf("\n");
 
-        analyse_use_chains(ir_module->fn);
-        AsmModule *asm_module = assemble(ir_module);
-        printf("\n---- Assembly\n");
-        encode_nasm(asm_module, stdout);
+        analyse_use_chains(module->fns);
+        assemble(module);
+        printf("---- Assembly\n");
+        encode_nasm(module, stdout);
+        printf("\n");
 
-        printf("\n---- Register allocated assembly\n");
-        analyse_cfg(ir_module->fn->entry);
-        LiveRange *live_ranges = analyse_live_ranges(asm_module->fns);
-        reg_alloc(asm_module->fns, live_ranges);
-        encode_nasm(asm_module, stdout);
+        printf("---- Register allocated assembly\n");
+        analyse_cfg(module->fns->entry);
+        LiveRange *live_ranges = analyse_live_ranges(module->fns);
+        reg_alloc(module->fns, live_ranges);
+        encode_nasm(module, stdout);
 
         FILE *output = fopen("out.s", "w");
-        encode_nasm(asm_module, output);
+        encode_nasm(module, output);
     }
     return 0;
 }

@@ -6,7 +6,7 @@
 
 // Assigns a unique number to each of the instructions across all the basic
 // blocks in a function, used for storing live ranges
-static void number_ins(AsmFn *fn) {
+static void number_ins(Fn *fn) {
     int idx = 0;
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
@@ -83,7 +83,7 @@ static int uses_right(AsmIns *ins) {
 //
 // This method is guaranteed to work since the live in set on one iteration of
 // a basic block is a subset of the live in set on the next iteration.
-static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
+static int live_ranges_for_bb(Fn *fn, LiveRange *ranges, BB *bb) {
     bb->live.mark = 1; // We've processed this BB's live ranges now
 
     // Keep track of vregs that are live at each program point
@@ -133,7 +133,7 @@ static int live_ranges_for_bb(AsmFn *fn, LiveRange *ranges, BB *bb) {
     return changed;
 }
 
-static void live_ranges_for_vregs(AsmFn *fn, LiveRange *ranges) {
+static void live_ranges_for_vregs(Fn *fn, LiveRange *ranges) {
     // Count the basic blocks
     int num_bbs = 0;
     for (BB *bb = fn->entry; bb; bb = bb->next) { num_bbs++; }
@@ -160,7 +160,7 @@ static void live_ranges_for_vregs(AsmFn *fn, LiveRange *ranges) {
     }
 }
 
-static void live_ranges_for_pregs(AsmFn *fn, LiveRange *ranges) {
+static void live_ranges_for_pregs(Fn *fn, LiveRange *ranges) {
     // Iterate over all instructions
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
@@ -176,7 +176,7 @@ static void live_ranges_for_pregs(AsmFn *fn, LiveRange *ranges) {
     }
 }
 
-LiveRange * analyse_live_ranges(AsmFn *fn) {
+LiveRange * analyse_live_ranges(Fn *fn) {
     number_ins(fn);
 
     // Allocate the live ranges array, all starting with NULL

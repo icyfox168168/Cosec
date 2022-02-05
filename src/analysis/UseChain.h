@@ -3,7 +3,7 @@
 #define COSEC_USECHAIN_H
 
 #include "../IR.h"
-#include "../Parser.h"
+#include "../Compiler.h"
 
 // USE CHAIN ANALYSIS -- runs on IR instructions. For each instruction, finds
 // all other IR instructions that use it, generating a linked list of uses.
@@ -19,6 +19,6 @@
 // * No other analysis passes are required
 
 // Results are stored per-IR instruction (see IR.h)
-void analyse_use_chains(FnDef *fn);
+void analyse_use_chains(Fn *fn);
 
 #endif

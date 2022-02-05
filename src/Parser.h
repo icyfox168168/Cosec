@@ -3,22 +3,13 @@
 #define COSEC_PARSER_H
 
 #include "IR.h"
-#include "Lexer.h"
 
-typedef struct {
-    Type return_type;
-    char *name;
-} FnDecl;
+// PARSER -- builds an abstract syntax tree (AST, see 'IR.h') from C source
+// code. Some transformations (e.g., type filling, which propagates the types
+// for expressions through expression trees) and error checking (e.g.,
+// incorrect syntax, undefined locals) are performed on the AST before it's
+// compiled to SSA IR.
 
-typedef struct {
-    FnDecl *decl;
-    BB *entry, *last;
-} FnDef;
-
-typedef struct {
-    FnDef *fn; // Only one function for the moment
-} Module;
-
-Module * parse(char *file);
+AstModule * parse(char *file);
 
 #endif

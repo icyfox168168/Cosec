@@ -3,7 +3,42 @@
 
 #include "IR.h"
 
-int size_of(Type t) {
+Type type_none() {
+    Type t;
+    t.prim = T_NONE;
+    t.ptrs = 0;
+    return t;
+}
+
+Type type_i1() {
+    Type t;
+    t.prim = T_i1;
+    t.ptrs = 0;
+    return t;
+}
+
+Type type_i32() {
+    Type t;
+    t.prim = T_i32;
+    t.ptrs = 0;
+    return t;
+}
+
+int bits(Type t) {
+    if (t.ptrs > 0) {
+        return 64; // Pointers are always 8 bytes
+    }
+    switch (t.prim) {
+        case T_NONE: return -1;
+        case T_void: return 0;
+        case T_i1:   return 1;
+        case T_i8:   return 8;
+        case T_i32:  return 32;
+    }
+}
+
+int bytes(Type t) {
+    // Can't just divide 'bits(t)' by 8, since this wouldn't work for i1
     if (t.ptrs > 0) {
         return 8; // Pointers are always 8 bytes
     }
@@ -13,6 +48,91 @@ int size_of(Type t) {
         case T_i1: case T_i8: return 1;
         case T_i32:           return 4;
     }
+}
+
+
+// ---- Abstract Syntax Tree --------------------------------------------------
+
+AstModule * new_ast_module() {
+    AstModule *module = malloc(sizeof(AstModule));
+    module->fns = NULL;
+    return module;
+}
+
+FnDef * new_fn_def() {
+    FnDef *def = malloc(sizeof(FnDef));
+    def->next = NULL;
+    def->decl = NULL;
+    def->body = NULL;
+    return def;
+}
+
+FnDecl * new_fn_decl() {
+    FnDecl *decl = malloc(sizeof(FnDecl));
+    decl->return_type = type_none();
+    decl->name = NULL;
+    decl->args = NULL;
+    return decl;
+}
+
+FnArg * new_fn_arg() {
+    FnArg *arg = malloc(sizeof(FnArg));
+    arg->next = NULL;
+    arg->local = NULL;
+    return arg;
+}
+
+Stmt * new_stmt(StmtType kind) {
+    Stmt *stmt = malloc(sizeof(Stmt));
+    stmt->next = NULL;
+    stmt->kind = kind;
+    stmt->expr = NULL;
+    return stmt;
+}
+
+IfChain * new_if_chain() {
+    IfChain *if_stmt = malloc(sizeof(IfChain));
+    if_stmt->next = NULL;
+    if_stmt->cond = NULL;
+    if_stmt->body = NULL;
+    return if_stmt;
+}
+
+Expr * new_expr(ExprType kind) {
+    Expr *expr = malloc(sizeof(Expr));
+    expr->kind = kind;
+    expr->type = type_none();
+    expr->op = 0;
+    expr->l = NULL;
+    expr->r = NULL;
+    return expr;
+}
+
+Local * new_local(char *name, Type type) {
+    Local *local = malloc(sizeof(Local));
+    local->next = NULL;
+    local->name = name;
+    local->type = type;
+    local->alloc = NULL;
+    return local;
+}
+
+
+// ---- SSA and Assembly IR ---------------------------------------------------
+
+Module * new_module() {
+    Module *module = malloc(sizeof(Module));
+    module->fns = NULL;
+    return module;
+}
+
+Fn * new_fn() {
+    Fn *fn = malloc(sizeof(Fn));
+    fn->next = NULL;
+    fn->entry = NULL;
+    fn->last = NULL;
+    fn->num_vregs = 0;
+    return fn;
 }
 
 BB * new_bb() {

@@ -10,6 +10,7 @@ add_executable(Cosec
         src/analysis/UseChain.c src/analysis/UseChain.h
         src/opt/Fold.c src/opt/Fold.h
         src/Assembler.c src/Assembler.h
+        src/Compiler.c src/Compiler.h
         src/Debug.c src/Debug.h
         src/Encoder.c src/Encoder.h
         src/IR.h src/IR.c

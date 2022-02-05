@@ -3,9 +3,12 @@
 #define COSEC_DEBUG_H
 
 #include "IR.h"
-#include "Parser.h"
+#include "Compiler.h"
 
-// Prints a textual representation of an IR function to stdout
-void print_fn(FnDef *fn);
+// DEBUG -- some useful functions for printing the output of the parser and
+// compiler to stdout.
+
+void print_ast(FnDef *fn);
+void print_ir(Fn *fn);
 
 #endif

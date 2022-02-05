@@ -8,7 +8,7 @@
 // The register allocator is heavily based on the classic graph colouring
 // algorithm presented in the book:
 //
-//   Modern Compiler Implementation in C, Andrew W. Appel, Chapter 11
+//   Modern Parser Implementation in C, Andrew W. Appel, Chapter 11
 //
 // Including the conservative coalescing algorithm. I highly recommend giving
 // it a read for a great conceptual overview.
@@ -153,7 +153,7 @@ static RegGraph build_interference_graph(LiveRange *ranges, int num_vregs) {
 // that is, related by a mov and their live ranges don't interfere other than
 // for that mov
 // It's possible to coalesce across movzx and movsx too!
-static RegGraph build_coalescing_graph(AsmFn *fn, LiveRange *ranges) {
+static RegGraph build_coalescing_graph(Fn *fn, LiveRange *ranges) {
     // Iterate over all instructions to find move-related regs
     RegGraph g = new_reg_graph(fn->num_vregs);
     for (BB *bb = fn->entry; bb; bb = bb->next) {
@@ -428,7 +428,7 @@ static void replace_ins_vregs(AsmIns *ins, Reg *reg_map, int *coalesce_map) {
 }
 
 // Change all OP_VREG operands in the assembly to their allocated registers
-static void replace_vregs(AsmFn *fn, Reg *reg_map, int *coalesce_map) {
+static void replace_vregs(Fn *fn, Reg *reg_map, int *coalesce_map) {
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
             replace_ins_vregs(ins, reg_map, coalesce_map);
@@ -436,7 +436,7 @@ static void replace_vregs(AsmFn *fn, Reg *reg_map, int *coalesce_map) {
     }
 }
 
-void reg_alloc(AsmFn *fn, LiveRange *ranges) {
+void reg_alloc(Fn *fn, LiveRange *ranges) {
     if (fn->num_vregs == 0 || !fn->last) {
         return; // No vregs to allocate, or the function is empty
     }

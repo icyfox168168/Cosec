@@ -24,7 +24,7 @@ typedef Interval * LiveRange;
 // In the returned array, the first NUM_REGS are physical register live ranges,
 // and the rest are vregs. E.g. vreg 3 is at live_range[NUM_REGS + 3].
 // Total size is NUM_REGS + num_vregs
-LiveRange * analyse_live_ranges(AsmFn *fn);
+LiveRange * analyse_live_ranges(Fn *fn);
 
 int ranges_intersect(LiveRange r1, LiveRange r2);
 LiveRange range_intersection(LiveRange r1, LiveRange r2);
