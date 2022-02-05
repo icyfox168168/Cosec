@@ -425,7 +425,9 @@ static Expr * parse_expr(Parser *p) {
 
 static Prim TK_TO_SIGNED_TYPE[NUM_TKS] = {
     [TK_CHAR] = T_i8,
+    [TK_SHORT] = T_i16,
     [TK_INT] = T_i32,
+    [TK_LONG] = T_i32,
 };
 
 static Type parse_decl_spec(Parser *p) {
@@ -600,15 +602,16 @@ static Stmt * parse_ret(Parser *p) {
 static Stmt * parse_stmt(Parser *p) {
     switch (p->l.tk) {
     case ';':       next_tk(&p->l); return NULL; // Empty
-    case '{':       return parse_block(p);           // Block
-    case TK_IF:     return parse_if(p);              // If/else if/else
-    case TK_WHILE:  return parse_while(p);           // While loop
-    case TK_FOR:    return parse_for(p);             // For loop
-    case TK_DO:     return parse_do_while(p);        // Do-while loop
-    case TK_BREAK:  return parse_break(p);           // Break
-    case TK_RETURN: return parse_ret(p);             // Return
-    case TK_CHAR: case TK_INT: return parse_decl(p); // Declaration
-    default:        return parse_expr_stmt(p);       // Expression
+    case '{':       return parse_block(p);     // Block
+    case TK_IF:     return parse_if(p);        // If/else if/else
+    case TK_WHILE:  return parse_while(p);     // While loop
+    case TK_FOR:    return parse_for(p);       // For loop
+    case TK_DO:     return parse_do_while(p);  // Do-while loop
+    case TK_BREAK:  return parse_break(p);     // Break
+    case TK_RETURN: return parse_ret(p);       // Return
+    case TK_CHAR: case TK_SHORT: case TK_INT: case TK_LONG:
+        return parse_decl(p);                  // Declaration
+    default:        return parse_expr_stmt(p); // Expression
     }
 }
 

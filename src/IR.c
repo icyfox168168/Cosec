@@ -33,7 +33,9 @@ int bits(Type t) {
         case T_void: return 0;
         case T_i1:   return 1;
         case T_i8:   return 8;
+        case T_i16:  return 16;
         case T_i32:  return 32;
+        case T_i64:  return 64;
     }
 }
 
@@ -46,7 +48,9 @@ int bytes(Type t) {
         case T_NONE:          return -1;
         case T_void:          return 0;
         case T_i1: case T_i8: return 1;
+        case T_i16:           return 2;
         case T_i32:           return 4;
+        case T_i64:           return 8;
     }
 }
 

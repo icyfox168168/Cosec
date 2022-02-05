@@ -34,7 +34,9 @@
     /* Keywords */                         \
     /* All keyword tokens must be together! */ \
     K(CHAR, "char")                        \
+    K(SHORT, "short")                      \
     K(INT, "int")                          \
+    K(LONG, "long")                        \
     K(IF, "if")                            \
     K(ELSE, "else")                        \
     K(WHILE, "while")                      \

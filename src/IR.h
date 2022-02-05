@@ -15,7 +15,9 @@
     X(void)      \
     X(i1) /* Boolean value */ \
     X(i8)        \
-    X(i32)
+    X(i16)       \
+    X(i32)       \
+    X(i64)
 
 typedef enum {
 #define X(name) T_ ## name,
