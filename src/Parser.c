@@ -423,22 +423,122 @@ static Expr * parse_expr(Parser *p) {
 
 // ---- Statements ------------------------------------------------------------
 
-static Prim TK_TO_SIGNED_TYPE[NUM_TKS] = {
-    [TK_CHAR] = T_i8,
-    [TK_SHORT] = T_i16,
-    [TK_INT] = T_i32,
-    [TK_LONG] = T_i32,
+#define NUM_TYPE_COMBINATIONS 30
+#define COMBINATION_SIZE (NUM_TKS - FIRST_KEYWORD)
+#define T(tk) ((TK_ ## tk) - FIRST_KEYWORD)
+
+// All valid type specifiers
+static int TYPE_SPECS[NUM_TKS] = {
+    [TK_VOID] = 1,
+    [TK_CHAR] = 1,
+    [TK_SHORT] = 1,
+    [TK_INT] = 1,
+    [TK_LONG] = 1,
+    [TK_SIGNED] = 1,
+    [TK_UNSIGNED] = 1,
+    [TK_FLOAT] = 1,
+    [TK_DOUBLE] = 1,
+};
+
+// All valid combinations of type specifiers. Must occur in the same order as
+// TYPE_COMBINATION_TO_PRIM below
+static int TYPE_COMBINATIONS[NUM_TYPE_COMBINATIONS][COMBINATION_SIZE] = {
+    { [T(VOID)] = 1, },                                   // void
+    { [T(CHAR)] = 1, },                                   // char
+    { [T(CHAR)] = 1, [T(SIGNED)] = 1, },                  // signed char
+    { [T(CHAR)] = 1, [T(UNSIGNED)] = 1, },                // unsigned char
+    { [T(SHORT)] = 1, },                                  // short
+    { [T(SHORT)] = 1, [T(SIGNED)] = 1, },                 // signed short
+    { [T(SHORT)] = 1, [T(UNSIGNED)] = 1, },               // unsigned short
+    { [T(SHORT)] = 1, [T(INT)] = 1 },                     // short int
+    { [T(SHORT)] = 1, [T(SIGNED)] = 1, [T(INT)] = 1, },   // signed short int
+    { [T(SHORT)] = 1, [T(UNSIGNED)] = 1, [T(INT)] = 1, }, // unsigned short int
+    { [T(INT)] = 1, },                                    // int
+    { [T(SIGNED)] = 1, },                                 // signed
+    { [T(UNSIGNED)] = 1, },                               // unsigned
+    { [T(INT)] = 1, [T(SIGNED)] = 1, },                   // signed int
+    { [T(INT)] = 1, [T(UNSIGNED)] = 1, },                 // unsigned int
+    { [T(LONG)] = 1, },                                   // long
+    { [T(LONG)] = 1, [T(SIGNED)] = 1, },                  // signed long
+    { [T(LONG)] = 1, [T(UNSIGNED)] = 1, },                // unsigned long
+    { [T(LONG)] = 1, [T(INT)] = 1, },                     // long int
+    { [T(LONG)] = 1, [T(SIGNED)] = 1, [T(INT)] = 1, },    // signed long int
+    { [T(LONG)] = 1, [T(UNSIGNED)] = 1, [T(INT)] = 1, },  // unsigned long int
+    { [T(LONG)] = 2, },                                   // long long
+    { [T(LONG)] = 2, [T(SIGNED)] = 1, },                  // signed long long
+    { [T(LONG)] = 2, [T(UNSIGNED)] = 1, },                // unsigned long long
+    { [T(LONG)] = 2, [T(INT)] = 1, },                     // long long int
+    { [T(LONG)] = 2, [T(SIGNED)] = 1, [T(INT)] = 1, },    // signed long long int
+    { [T(LONG)] = 2, [T(UNSIGNED)] = 1, [T(INT)] = 1, },  // unsigned long long int
+    { [T(FLOAT)] = 1, },                                  // float
+    { [T(DOUBLE)] = 1, },                                 // double
+    { [T(DOUBLE)] = 1, [T(LONG)] = 1, },                  // long double
+};
+
+// Each index in the above TYPE_COMBINATIONS corresponds to the following
+// internal primitive representation
+// Note this is specific to my target architecture (i.e., my computer!)
+static Prim TYPE_COMBINATION_TO_PRIM[NUM_TYPE_COMBINATIONS] = {
+    T_void, // void
+    T_i8,   // char
+    T_i8,   // signed char
+    T_u8,   // unsigned char
+    T_i16,  // short
+    T_i16,  // signed short
+    T_u16,  // unsigned short
+    T_i16,  // short int
+    T_i16,  // signed short int
+    T_u16,  // unsigned short int
+    T_i32,  // int
+    T_i32,  // signed
+    T_u32,  // unsigned
+    T_i32,  // signed int
+    T_u32,  // unsigned int
+    T_i32,  // long
+    T_i32,  // signed long
+    T_u32,  // unsigned long
+    T_i32,  // long int
+    T_i32,  // signed long int
+    T_u32,  // unsigned long int
+    T_i64,  // long long
+    T_i64,  // signed long long
+    T_u64,  // unsigned long long
+    T_i64,  // long long int
+    T_i64,  // signed long long int
+    T_u64,  // unsigned long long int
+    T_f32,  // float
+    T_f64,  // double
+    T_f64,  // long double
 };
 
 static Type parse_decl_spec(Parser *p) {
-    Prim prim = TK_TO_SIGNED_TYPE[p->l.tk];
-    if (prim == T_NONE) {
-        printf("expected declaration specifiers\n");
+    // Check there's at least one type specifier
+    if (!TYPE_SPECS[p->l.tk]) {
+        printf("expected declaration\n");
         exit(1);
     }
-    next_tk(&p->l);
+    // Keep parsing type specifiers into a hash-map until there's no more
+    int type_specs[COMBINATION_SIZE];
+    memset(type_specs, 0, sizeof(int) * (NUM_TKS - FIRST_KEYWORD));
+    while (TYPE_SPECS[p->l.tk]) {
+        type_specs[p->l.tk - FIRST_KEYWORD]++;
+        next_tk(&p->l);
+    }
+    // Find the corresponding combination in TYPE_COMBINATIONS
+    int combination = -1;
+    for (int i = 0; i < NUM_TYPE_COMBINATIONS; i++) {
+        if (memcmp(type_specs, TYPE_COMBINATIONS[i],
+                   COMBINATION_SIZE * sizeof(int)) == 0) {
+            combination = i;
+            break;
+        }
+    }
+    if (combination == -1) {
+        printf("invalid type specifiers in declaration\n");
+        exit(1);
+    }
     Type type;
-    type.prim = prim;
+    type.prim = TYPE_COMBINATION_TO_PRIM[combination];
     type.ptrs = 0;
     return type;
 }

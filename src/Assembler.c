@@ -178,6 +178,25 @@ static AsmOperand fold_load(Assembler *a, IrIns *ir_load) {
     return load_to_mem_operand(ir_load);
 }
 
+static AsmOperand inline_kint_or_load(Assembler *a, IrIns *kint_or_load) {
+    // TODO: one potentially useful IR optimisation is if we have commutative
+    // arithmetic operations with one operand a LOAD and another not a LOAD,
+    // then the load should go in the right hand side so that the assembly
+    // can inline the memory operation (note we do the same for constants
+    // i.e. put them on the RHS, because that way they get inlined)
+    // An example being: long long int a = 3; int b = 4; a = a + b;
+    AsmOperand result;
+    if (kint_or_load->op == IR_KINT) { // Inline a constant integer
+        result.type = OP_IMM;
+        result.imm = kint_or_load->kint;
+    } else if (kint_or_load->op == IR_LOAD) { // Inline a load
+        result = fold_load(a, kint_or_load);
+    } else { // Otherwise, put it in a vreg
+        result = discharge(a, kint_or_load);
+    }
+    return result;
+}
+
 static void asm_farg(Assembler *a, IrIns *ir_farg) {
     AsmIns *mov = emit(a, X86_MOV);
     ir_farg->vreg = a->vreg++;
@@ -237,16 +256,7 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
     mov->l.size = l.size;
     mov->r = l;
 
-    AsmOperand r;
-    if (ir_arith->r->op == IR_KINT) {
-        r.type = OP_IMM;
-        r.imm = ir_arith->r->kint;
-    } else if (ir_arith->r->op == IR_LOAD) {
-        r = fold_load(a, ir_arith->r);
-    } else {
-        r = discharge(a, ir_arith->r);
-    }
-
+    AsmOperand r = inline_kint_or_load(a, ir_arith->r);
     AsmOpcode op;
     switch (ir_arith->op) {
         case IR_ADD: op = X86_ADD; break;
@@ -335,30 +345,23 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
 
 static void asm_cmp(Assembler *a, IrIns *ir_cmp) {
     AsmOperand l = discharge(a, ir_cmp->l); // Left operand always a vreg
-    AsmOperand r;
-    if (ir_cmp->r->op == IR_KINT) {
-        r.type = OP_IMM;
-        r.imm = ir_cmp->r->kint;
-    } else if (ir_cmp->r->op == IR_LOAD) {
-        r = fold_load(a, ir_cmp->r);
-    } else {
-        r = discharge(a, ir_cmp->r);
-    }
+    AsmOperand r = inline_kint_or_load(a, ir_cmp->r);
     AsmIns *cmp = emit(a, X86_CMP); // Comparison
     cmp->l = l;
     cmp->r = r;
 }
 
 static void asm_trunc_or_ext(Assembler *a, IrIns *ir_trunc_ext, AsmOpcode op) {
-    AsmOperand l = discharge(a, ir_trunc_ext->l);
+    AsmOperand src = inline_kint_or_load(a, ir_trunc_ext->l);
     ir_trunc_ext->vreg = a->vreg++; // New vreg for result
     AsmIns *mov = emit(a, op); // Move into a smaller reg
     mov->l.type = OP_VREG;
     mov->l.vreg = ir_trunc_ext->vreg;
-    mov->l.size = REG_SIZE[bytes(ir_trunc_ext->type)];
-    mov->r.type = OP_VREG;
-    mov->r.vreg = l.vreg;
-    mov->r.size = REG_SIZE[bytes(ir_trunc_ext->l->type)];
+    // If we're truncating, we can't do mov eax, qword [rbp-8]; we have to
+    // load into rax then use eax afterwards
+    RegSize dst_size = REG_SIZE[bytes(ir_trunc_ext->type)];
+    mov->l.size = dst_size < src.size ? src.size : dst_size;
+    mov->r = src;
 }
 
 static void asm_trunc(Assembler *a, IrIns *ir_trunc) {
@@ -409,16 +412,7 @@ static void asm_ret0(Assembler *a) {
 }
 
 static void asm_ret1(Assembler *a, IrIns *ir_ret) {
-    AsmOperand result;
-    if (ir_ret->l->op == IR_KINT) { // Inline ints
-        result.type = OP_IMM;
-        result.imm = ir_ret->l->kint;
-    } else if (ir_ret->l->op == IR_LOAD) { // Inline loads
-        result = fold_load(a, ir_ret->l);
-    } else { // Otherwise put it in a vreg
-        result = discharge(a, ir_ret->l);
-    }
-
+    AsmOperand result = inline_kint_or_load(a, ir_ret->l);
     // Make sure to zero the rest of eax by using movsx if the function returns
     // something smaller than an int
     int needs_sext = bits(ir_ret->l->type) < 32;

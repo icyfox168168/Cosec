@@ -6,9 +6,6 @@
 
 #include "Lexer.h"
 
-// Allows us to map between the KEYWORDS array and the Tk type
-#define FIRST_KEYWORD TK_CHAR
-
 static char *KEYWORDS[] = {
 #define X(_, __)
 #define Y(_, __, ___, ____)

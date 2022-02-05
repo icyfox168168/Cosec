@@ -23,7 +23,7 @@ static void encode_operand(AsmOperand op, FILE *out) {
     case OP_VREG:
         fprintf(out, "%%%d", op.vreg);
         switch (op.size) {
-            case REG_Q: break; // Don't print anything for REG_64
+            case REG_Q: fprintf(out, "(q)"); break;
             case REG_D: fprintf(out, "(d)"); break;
             case REG_W: fprintf(out, "(w)"); break;
             case REG_H: fprintf(out, "(h)"); break;

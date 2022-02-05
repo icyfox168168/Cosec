@@ -14,10 +14,16 @@
     X(NONE)      \
     X(void)      \
     X(i1) /* Boolean value */ \
-    X(i8)        \
+    X(i8) /* Signed integers */ \
     X(i16)       \
     X(i32)       \
-    X(i64)
+    X(i64)       \
+    X(u8) /* Unsigned integers */ \
+    X(u16)       \
+    X(u32)       \
+    X(u64)       \
+    X(f32) /* Floating points */ \
+    X(f64)
 
 typedef enum {
 #define X(name) T_ ## name,
@@ -273,15 +279,16 @@ typedef enum {
 } Reg;
 
 typedef enum {
-    REG_Q, // All 64 bits (e.g., rax)
-    REG_D, // Lowest 32 bits (e.g., eax)
-    REG_W, // Lowest 16 bits (e.g., ax)
-    REG_H, // Highest 8 bits of the lowest 16 bits (e.g., ah)
     REG_L, // Lowest 8 bits (e.g., al)
+    REG_H, // Highest 8 bits of the lowest 16 bits (e.g., ah)
+    REG_W, // Lowest 16 bits (e.g., ax)
+    REG_D, // Lowest 32 bits (e.g., eax)
+    REG_Q, // All 64 bits (e.g., rax)
 } RegSize;
 
 static char *REG_NAMES[][5] = {
-#define X(name, q, d, w, h, l) {q, d, w, h, l},
+#define X(name, q, d, w, h, l) {[REG_Q] = (q), [REG_D] = (d), [REG_W] = (w), \
+                                [REG_H] = (h), [REG_L] = (l)},
     X86_REGS
 #undef X
 };

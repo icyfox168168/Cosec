@@ -36,22 +36,18 @@ int bits(Type t) {
         case T_i16:  return 16;
         case T_i32:  return 32;
         case T_i64:  return 64;
+        case T_u8:   return 8;
+        case T_u16:  return 16;
+        case T_u32:  return 32;
+        case T_u64:  return 64;
+        case T_f32:  return 32;
+        case T_f64:  return 64;
     }
 }
 
 int bytes(Type t) {
     // Can't just divide 'bits(t)' by 8, since this wouldn't work for i1
-    if (t.ptrs > 0) {
-        return 8; // Pointers are always 8 bytes
-    }
-    switch (t.prim) {
-        case T_NONE:          return -1;
-        case T_void:          return 0;
-        case T_i1: case T_i8: return 1;
-        case T_i16:           return 2;
-        case T_i32:           return 4;
-        case T_i64:           return 8;
-    }
+    return (t.prim == T_i1 && t.ptrs == 0) ? 1 : bits(t) / 8;
 }
 
 
@@ -180,6 +176,9 @@ void delete_ir(IrIns *ins) {
     } else { // Head of the linked list
         ins->bb->ir_head = ins->next;
     }
+    if (ins->next) {
+        ins->next->prev = ins->prev;
+    }
     if (ins->bb->ir_last == ins) {
         ins->bb->ir_last = ins->prev;
     }
@@ -218,6 +217,9 @@ void delete_asm(AsmIns *ins) {
         ins->prev->next = ins->next;
     } else { // Head of linked list
         ins->bb->asm_head = ins->next;
+    }
+    if (ins->next) {
+        ins->next->prev = ins->prev;
     }
     if (ins->bb->asm_last == ins) {
         ins->bb->asm_last = ins->prev;

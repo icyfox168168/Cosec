@@ -4,6 +4,9 @@
 
 #include <stdlib.h>
 
+// Allows us to map between the KEYWORDS array and the Tk type
+#define FIRST_KEYWORD TK_VOID
+
 #define TOKENS                             \
     /* Values */                           \
     X(IDENT, "identifier")                 \
@@ -33,10 +36,15 @@
                                            \
     /* Keywords */                         \
     /* All keyword tokens must be together! */ \
+    K(VOID, "void")                        \
     K(CHAR, "char")                        \
     K(SHORT, "short")                      \
     K(INT, "int")                          \
     K(LONG, "long")                        \
+    K(FLOAT, "float")                      \
+    K(DOUBLE, "double")                    \
+    K(SIGNED, "signed")                    \
+    K(UNSIGNED, "unsigned")                \
     K(IF, "if")                            \
     K(ELSE, "else")                        \
     K(WHILE, "while")                      \

@@ -408,21 +408,25 @@ static void replace_vreg(AsmOperand *operand, Reg *reg_map, int *coalesce_map) {
     while (reg >= NUM_REGS && coalesce_map[reg - NUM_REGS] != -1) {
         reg = coalesce_map[reg - NUM_REGS];
     }
-    // 'reg' might be the original vreg or coalesced vreg
     if (reg >= NUM_REGS) {
+        // 'reg' might be the original vreg or a coalesced vreg
         reg = reg_map[reg - NUM_REGS];
     }
     assert(reg != -1);
-    operand->reg = reg;
     operand->type = OP_REG;
+    operand->reg = reg; // Reg size remains the same
 }
 
 static void replace_ins_vregs(AsmIns *ins, Reg *reg_map, int *coalesce_map) {
     replace_vreg(&ins->l, reg_map, coalesce_map);
     replace_vreg(&ins->r, reg_map, coalesce_map);
-    if ((ins->op >= X86_MOV && ins->op <= X86_MOVZX) &&
+    if (ins->op >= X86_MOV && ins->op <= X86_MOVZX &&
             ins->l.type == OP_REG && ins->r.type == OP_REG &&
-            ins->l.reg == ins->r.reg && ins->l.size == ins->r.size) {
+            ins->l.reg == ins->r.reg) {
+        if ((ins->op == X86_MOVSX || ins->op == X86_MOVZX) &&
+                ins->l.size > ins->r.size) {
+            return; // Don't remove, e.g., movsx rax, ax
+        }
         delete_asm(ins); // Remove a redundant mov
     }
 }
