@@ -10,20 +10,23 @@
 
 #define UNREACHABLE() exit(1)
 
+// We steal the great idea from LLVM to merge signed and unsigned integer
+// types for simplicity, the rationale being that all we really care about is
+// the size of the data, not it's underlying representation. We make the
+// signed/unsigned distinction in the IR instructions instead.
+//
+// For more information, see this LLVM enhancement request:
+//   https://bugs.llvm.org/show_bug.cgi?id=950
 #define IR_PRIMS \
     X(NONE)      \
     X(void)      \
     X(i1) /* Boolean value */ \
-    X(i8) /* Signed integers */ \
+    X(i8) /* Integers */ \
     X(i16)       \
     X(i32)       \
     X(i64)       \
-    X(u8) /* Unsigned integers */ \
-    X(u16)       \
-    X(u32)       \
-    X(u64)       \
-    X(f32) /* Floating points */ \
-    X(f64)
+    X(f32) /* Float */ \
+    X(f64) /* Double */
 
 typedef enum {
 #define X(name) T_ ## name,
@@ -37,17 +40,28 @@ typedef struct {
 } Type;
 
 Type type_none();
-Type type_i1();
-Type type_i32();
 int bits(Type t);  // Returns the size of a type in bits
 int bytes(Type t); // Returns the size of a type in bytes
 
 
 // ---- Abstract Syntax Tree --------------------------------------------------
 
+// Keep track of signed values throughout the AST, but ditch them in the IR
+// in favour of signed instructions
+typedef struct {
+    Prim prim;
+    int ptrs;
+    int is_signed;
+} SignedType;
+
+Type signed_to_type(SignedType t);
+SignedType signed_i1();
+SignedType signed_i32();
+int signed_bits(SignedType t);  // Returns the size of a type in bits
+
 typedef struct local {
     struct local *next;
-    Type type;
+    SignedType type;
     char *name;
     struct ir_ins *alloc; // The IR_ALLOC instruction for this local
 } Local;
@@ -64,7 +78,7 @@ typedef enum {
 
 typedef struct expr {
     ExprType kind;
-    Type type; // Type for the result of the expression
+    SignedType type; // Type for the result of the expression
     union {
         int kint;                                          // EXPR_KINT
         Local *local;                                      // EXPR_LOCAL
@@ -111,7 +125,7 @@ typedef struct fn_arg {
 } FnArg;
 
 typedef struct {
-    Type return_type;
+    SignedType return_type;
     char *name;
     FnArg *args; // Linked list of function arguments
 } FnDecl;
@@ -133,7 +147,7 @@ FnArg * new_fn_arg();
 Stmt * new_stmt(StmtType kind);
 IfChain * new_if_chain();
 Expr * new_expr(ExprType kind);
-Local * new_local(char *name, Type type);
+Local * new_local(char *name, SignedType type);
 
 
 // ---- Static Single Assignment (SSA) Form IR --------------------------------
@@ -152,14 +166,16 @@ Local * new_local(char *name, Type type);
     X(ADD, 2)             \
     X(SUB, 2)             \
     X(MUL, 2)             \
-    X(DIV, 2)             \
-    X(MOD, 2)             \
+    X(SDIV, 2) /* Signed */ \
+    X(UDIV, 2) /* Unsigned */ \
+    X(SMOD, 2) /* Signed */ \
+    X(UMOD, 2) /* Unsigned */ \
     X(AND, 2)             \
     X(OR, 2)              \
     X(XOR, 2)             \
     X(SHL, 2)             \
-    X(LSHR, 2) /* Logical right shift, fill with zeros (unsigned ints) */ \
     X(ASHR, 2) /* Arithmetic right shift, fill with sign bit (signed ints) */ \
+    X(LSHR, 2) /* Logical right shift, fill with zeros (unsigned ints) */ \
                           \
     /* Comparisons */     \
     X(EQ, 2)              \
@@ -314,6 +330,7 @@ static RegSize REG_SIZE[] = {
     X(MUL, "imul", 2)        \
     X(CDQ, "cdq", 0) /* Sign extend eax into edx, specifically for idiv */ \
     X(IDIV, "idiv", 1)       \
+    X(DIV, "div", 1)         \
     X(AND, "and", 2)         \
     X(OR, "or", 2)           \
     X(XOR, "xor", 2)         \

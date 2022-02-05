@@ -21,7 +21,7 @@ static Parser new_parser(char *file) {
     return p;
 }
 
-static Local * def_local(Parser *p, char *name, Type type) {
+static Local * def_local(Parser *p, char *name, SignedType type) {
     // TODO: compare against function names too
     Local *new = new_local(name, type);
     for (Local *l = p->locals; l; l = l->next) { // Check local isn't defined
@@ -138,28 +138,59 @@ static void ensure_lvalue(Expr *lvalue) {
     }
 }
 
-// Returns the type that a unary arithmetic operation's operand should be
-// converted to (if necessary)
-static Type unary_arith_type(Expr *operand) {
-    // All arithmetic instructions are performed as either i32 or i64; they
-    // default to i32 (the natural 'int' size on my target), but will use i64
-    // if either arith is an i64
-    return bits(operand->type) < 32 ? type_i32() : operand->type;
-}
-
 // Returns the type that a binary arithmetic operation's operands should be
 // converted to (if necessary) for a binary operation
-static Type binary_arith_type(Expr *l, Expr *r) {
-    if (bits(l->type) < 32 && bits(r->type) < 32) {
-        return type_i32(); // i32 is minimum size
+//
+// See this Stack Overflow for a useful explanation of the (rather stupid) C
+// integer promotion rules:
+//   https://stackoverflow.com/questions/46073295/implicit-type-promotion-rules
+static SignedType binary_int_promotion(Expr *l, Expr *r) {
+    // Implicit integer promotion rule as per 6.3.1.1 in C11 standard.
+    // In practice (i.e., on my system where shorts are smaller than ints),
+    // all "small" integer types (char, short) are converted to
+    // SIGNED ints (regardless whether the original was unsigned)
+    //
+    // Implicit arithmetic conversions as per 6.3.18 in C11 standard:
+    // 1. If same type -> no conversion
+    // 2. If both signed or both unsigned -> convert to larger signed or
+    //    unsigned type
+    // 3. If unsigned type is larger than OR EQUAL TO the signed type ->
+    //    convert signed operand to the unsigned type
+    // 4. If signed type is larger than unsigned type -> convert unsigned
+    //    operand to signed type
+    if (signed_bits(l->type) < 32 && signed_bits(r->type) < 32) {
+        // 0. Implicit promotion to (signed) 'int' for "small" integer types
+        return signed_i32();
+    } else if (signed_bits(l->type) == signed_bits(r->type) &&
+            l->type.is_signed == r->type.is_signed) {
+        // 1. Types are equal
+        return l->type;
+    } else if (l->type.is_signed == r->type.is_signed) {
+        // 2. Both signed or unsigned -> convert to larger type
+        return signed_bits(l->type) > signed_bits(r->type) ? l->type : r->type;
     } else {
-        return bits(l->type) > bits(r->type) ? l->type :r->type;
+        // 3. and 4. Pick the larger type; if they're both the same size then
+        // pick the unsigned type
+        SignedType signed_type = l->type.is_signed ? l->type : r->type;
+        SignedType unsigned_type = l->type.is_signed ? r->type : l->type;
+        return signed_bits(unsigned_type) >= signed_bits(signed_type) ?
+            unsigned_type : signed_type;
     }
 }
 
-static Expr * conv_to(Expr *expr, Type target) {
+static SignedType unary_int_promotion(Expr *operand) {
+    // Implicit integer promotion (see 'binary_int_promotion' above) for unary
+    // operations
+    if (signed_bits(operand->type) < 32) {
+        return signed_i32();
+    } else {
+        return operand->type;
+    }
+}
+
+static Expr * conv_to(Expr *expr, SignedType target) {
     assert(target.prim != T_NONE);
-    if (bits(expr->type) == bits(target)) {
+    if (signed_bits(expr->type) == signed_bits(target)) {
         return expr; // No conversion necessary
     }
     if (expr->kind == EXPR_KINT && expr->type.prim == T_NONE) {
@@ -198,7 +229,7 @@ static Expr * parse_ternary(Parser *p, Expr *cond, Expr *left) {
     Prec prec = BINARY_PREC['?'] - IS_RIGHT_ASSOC['?'];
     Expr *right = parse_subexpr(p, prec);
 
-    Type target = binary_arith_type(left, right);
+    SignedType target = binary_int_promotion(left, right);
     left = conv_to(left, target);
     right = conv_to(right, target);
 
@@ -211,7 +242,7 @@ static Expr * parse_ternary(Parser *p, Expr *cond, Expr *left) {
 }
 
 static Expr * parse_arith(Tk op, Expr *left, Expr *right) {
-    Type target = binary_arith_type(left, right);
+    SignedType target = binary_int_promotion(left, right);
     left = conv_to(left, target);
     right = conv_to(right, target);
 
@@ -224,7 +255,7 @@ static Expr * parse_arith(Tk op, Expr *left, Expr *right) {
 }
 
 static Expr * parse_cmp(Tk op, Expr *left, Expr *right) {
-    Type target = binary_arith_type(left, right);
+    SignedType target = binary_int_promotion(left, right);
     left = conv_to(left, target);
     right = conv_to(right, target);
 
@@ -232,7 +263,8 @@ static Expr * parse_cmp(Tk op, Expr *left, Expr *right) {
     cmp->op = op;
     cmp->l = left;
     cmp->r = right;
-    cmp->type = type_i1(); // Comparisons always result in a boolean value
+    cmp->type = signed_i1(); // Comparisons always result in a boolean value
+    cmp->type.is_signed = target.is_signed; // Save signed-ness
     return cmp;
 }
 
@@ -260,7 +292,7 @@ static Expr * parse_cond(Tk op, Expr *left, Expr *right) {
     cond->op = op;
     cond->l = left; // No conv necessary -> guaranteed to be a condition
     cond->r = right;
-    cond->type = type_i1(); // Conditions always result in a boolean value
+    cond->type = signed_i1(); // Conditions always result in a boolean value
     return cond;
 }
 
@@ -363,7 +395,7 @@ static Expr * parse_not(Expr *operand) {
     Expr *unary = new_expr(EXPR_UNARY);
     unary->op = '!';
     unary->l = operand; // No conv needed -> guaranteed to be a condition
-    unary->type = type_i1();
+    unary->type = signed_i1();
     return unary;
 }
 
@@ -379,7 +411,10 @@ static Expr * parse_prefix_inc_dec(Tk op, Expr *operand) {
 }
 
 static Expr * parse_unary_arith(Tk op, Expr *operand) {
-    Type target = unary_arith_type(operand);
+    // All arithmetic instructions are performed as either i32 or i64; they
+    // default to i32 (the natural 'int' size on my target), but will use i64
+    // if either operand is an i64
+    SignedType target = unary_int_promotion(operand);
     operand = conv_to(operand, target);
     Expr *unary = new_expr(EXPR_UNARY);
     unary->op = op;
@@ -482,36 +517,36 @@ static Prim TYPE_COMBINATION_TO_PRIM[NUM_TYPE_COMBINATIONS] = {
     T_void, // void
     T_i8,   // char
     T_i8,   // signed char
-    T_u8,   // unsigned char
+    T_i8,   // unsigned char
     T_i16,  // short
     T_i16,  // signed short
-    T_u16,  // unsigned short
+    T_i16,  // unsigned short
     T_i16,  // short int
     T_i16,  // signed short int
-    T_u16,  // unsigned short int
+    T_i16,  // unsigned short int
     T_i32,  // int
     T_i32,  // signed
-    T_u32,  // unsigned
+    T_i32,  // unsigned
     T_i32,  // signed int
-    T_u32,  // unsigned int
+    T_i32,  // unsigned int
     T_i32,  // long
     T_i32,  // signed long
-    T_u32,  // unsigned long
+    T_i32,  // unsigned long
     T_i32,  // long int
     T_i32,  // signed long int
-    T_u32,  // unsigned long int
+    T_i32,  // unsigned long int
     T_i64,  // long long
     T_i64,  // signed long long
-    T_u64,  // unsigned long long
+    T_i64,  // unsigned long long
     T_i64,  // long long int
     T_i64,  // signed long long int
-    T_u64,  // unsigned long long int
+    T_i64,  // unsigned long long int
     T_f32,  // float
     T_f64,  // double
     T_f64,  // long double
 };
 
-static Type parse_decl_spec(Parser *p) {
+static SignedType parse_decl_spec(Parser *p) {
     // Check there's at least one type specifier
     if (!TYPE_SPECS[p->l.tk]) {
         printf("expected declaration\n");
@@ -537,14 +572,15 @@ static Type parse_decl_spec(Parser *p) {
         printf("invalid type specifiers in declaration\n");
         exit(1);
     }
-    Type type;
+    SignedType type;
     type.prim = TYPE_COMBINATION_TO_PRIM[combination];
     type.ptrs = 0;
+    type.is_signed = !type_specs[TK_UNSIGNED - FIRST_KEYWORD];
     return type;
 }
 
 static Stmt * parse_decl(Parser *p) {
-    Type type = parse_decl_spec(p); // Type
+    SignedType type = parse_decl_spec(p); // Type
     expect_tk(&p->l, TK_IDENT); // Name
     char *name = malloc((p->l.len + 1) * sizeof(char));
     strncpy(name, p->l.ident, p->l.len);
@@ -702,16 +738,19 @@ static Stmt * parse_ret(Parser *p) {
 static Stmt * parse_stmt(Parser *p) {
     switch (p->l.tk) {
     case ';':       next_tk(&p->l); return NULL; // Empty
-    case '{':       return parse_block(p);     // Block
-    case TK_IF:     return parse_if(p);        // If/else if/else
-    case TK_WHILE:  return parse_while(p);     // While loop
-    case TK_FOR:    return parse_for(p);       // For loop
-    case TK_DO:     return parse_do_while(p);  // Do-while loop
-    case TK_BREAK:  return parse_break(p);     // Break
-    case TK_RETURN: return parse_ret(p);       // Return
-    case TK_CHAR: case TK_SHORT: case TK_INT: case TK_LONG:
-        return parse_decl(p);                  // Declaration
-    default:        return parse_expr_stmt(p); // Expression
+    case '{':       return parse_block(p);       // Block
+    case TK_IF:     return parse_if(p);          // If/else if/else
+    case TK_WHILE:  return parse_while(p);       // While loop
+    case TK_FOR:    return parse_for(p);         // For loop
+    case TK_DO:     return parse_do_while(p);    // Do-while loop
+    case TK_BREAK:  return parse_break(p);       // Break
+    case TK_RETURN: return parse_ret(p);         // Return
+    default:
+        if (TYPE_SPECS[p->l.tk]) {
+            return parse_decl(p);                // Declaration
+        } else {
+            return parse_expr_stmt(p);           // Expression
+        }
     }
 }
 
@@ -739,7 +778,7 @@ static Stmt * parse_block(Parser *p) {
 // ---- Module ----------------------------------------------------------------
 
 static FnArg * parse_fn_decl_arg(Parser *p) {
-    Type type = parse_decl_spec(p); // Type
+    SignedType type = parse_decl_spec(p); // Type
     expect_tk(&p->l, TK_IDENT); // Name
     char *name = malloc((p->l.len + 1) * sizeof(char));
     strncpy(name, p->l.ident, p->l.len);

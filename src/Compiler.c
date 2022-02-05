@@ -66,33 +66,62 @@ static void emit(Compiler *c, IrIns *ins) {
 
 // ---- Expressions -----------------------------------------------------------
 
-static IrOpcode BINARY_OPCODES[NUM_TKS] = {
+static IrOpcode SIGNED_BINOP[NUM_TKS] = {
     ['+'] = IR_ADD,
     ['-'] = IR_SUB,
     ['*'] = IR_MUL,
-    ['/'] = IR_DIV,
-    ['%'] = IR_MOD,
+    ['/'] = IR_SDIV,
+    ['%'] = IR_SMOD,
     ['&'] = IR_AND,
     ['|'] = IR_OR,
     ['^'] = IR_XOR,
-    [TK_EQ] = IR_EQ,
+    [TK_EQ]  = IR_EQ,
     [TK_NEQ] = IR_NEQ,
-    ['<'] = IR_SLT,
-    [TK_LE] = IR_SLE,
-    ['>'] = IR_SGT,
-    [TK_GE] = IR_SGE,
+    ['<']    = IR_SLT,
+    [TK_LE]  = IR_SLE,
+    ['>']    = IR_SGT,
+    [TK_GE]  = IR_SGE,
     [TK_LSHIFT] = IR_SHL,
     [TK_RSHIFT] = IR_ASHR,
     [TK_ADD_ASSIGN] = IR_ADD,
     [TK_SUB_ASSIGN] = IR_SUB,
     [TK_MUL_ASSIGN] = IR_MUL,
-    [TK_DIV_ASSIGN] = IR_DIV,
-    [TK_MOD_ASSIGN] = IR_MOD,
+    [TK_DIV_ASSIGN] = IR_SDIV,
+    [TK_MOD_ASSIGN] = IR_SMOD,
     [TK_AND_ASSIGN] = IR_AND,
-    [TK_OR_ASSIGN] = IR_OR,
+    [TK_OR_ASSIGN]  = IR_OR,
     [TK_XOR_ASSIGN] = IR_XOR,
     [TK_LSHIFT_ASSIGN] = IR_SHL,
     [TK_RSHIFT_ASSIGN] = IR_ASHR,
+};
+
+static IrOpcode UNSIGNED_BINOP[NUM_TKS] = {
+    ['+'] = IR_ADD,
+    ['-'] = IR_SUB,
+    ['*'] = IR_MUL,
+    ['/'] = IR_UDIV, // Unsigned division/modulo
+    ['%'] = IR_UMOD,
+    ['&'] = IR_AND,
+    ['|'] = IR_OR,
+    ['^'] = IR_XOR,
+    [TK_EQ]  = IR_EQ,
+    [TK_NEQ] = IR_NEQ,
+    ['<']    = IR_ULT, // Unsigned comparisons
+    [TK_LE]  = IR_ULE,
+    ['>']    = IR_UGT,
+    [TK_GE]  = IR_UGE,
+    [TK_LSHIFT] = IR_SHL,
+    [TK_RSHIFT] = IR_LSHR, // Logical shift
+    [TK_ADD_ASSIGN] = IR_ADD,
+    [TK_SUB_ASSIGN] = IR_SUB,
+    [TK_MUL_ASSIGN] = IR_MUL,
+    [TK_DIV_ASSIGN] = IR_UDIV, // Unsigned division/modulo
+    [TK_MOD_ASSIGN] = IR_UMOD,
+    [TK_AND_ASSIGN] = IR_AND,
+    [TK_OR_ASSIGN]  = IR_OR,
+    [TK_XOR_ASSIGN] = IR_XOR,
+    [TK_LSHIFT_ASSIGN] = IR_SHL,
+    [TK_RSHIFT_ASSIGN] = IR_LSHR, // Logical shift
 };
 
 static IrOpcode INVERT_COND[NUM_IR_OPS] = {
@@ -136,8 +165,7 @@ static void merge_branch_chains(BrChain **head, BrChain *to_append) {
     *head = to_append;
 }
 
-// Forward declarations
-static IrIns * compile_expr(Compiler *c, Expr *expr);
+static IrIns * compile_expr(Compiler *c, Expr *expr); // Forward declaration
 
 // Convert a condition expression into a value (e.g., that can be stored by
 // IR_STORE) by (1) emitting a phi instruction if there's more than one
@@ -252,7 +280,7 @@ static IrIns * compile_ternary(Compiler *c, Expr *ternary) {
     IrIns *phi_ins = new_ir(IR_PHI);
     phi_ins->phi = new_phi(true_bb, true_val);
     phi_ins->phi->next = new_phi(false_bb, false_val);
-    phi_ins->type = ternary->type;
+    phi_ins->type = signed_to_type(ternary->type);
     emit(c, phi_ins);
     return phi_ins;
 }
@@ -262,10 +290,12 @@ static IrIns * compile_operation(Compiler *c, Expr *binary) {
     left = discharge(c, left);
     IrIns *right = compile_expr(c, binary->r);
     right = discharge(c, right);
-    IrIns *operation = new_ir(BINARY_OPCODES[binary->op]);
+    IrOpcode opcode = binary->type.is_signed ? SIGNED_BINOP[binary->op] :
+                      UNSIGNED_BINOP[binary->op];
+    IrIns *operation = new_ir(opcode);
     operation->l = left;
     operation->r = right;
-    operation->type = binary->type;
+    operation->type = signed_to_type(binary->type);
     emit(c, operation);
     return operation;
 }
@@ -424,12 +454,19 @@ static IrIns * compile_conv(Compiler *c, Expr *conv) {
     IrIns *operand = compile_expr(c, conv->l);
     operand = discharge(c, operand);
 
-    Type target = conv->type;
-    Type src = operand->type;
-    int ts = bits(target), ss = bits(src);
-    IrIns *ext_trunc = new_ir(ts > ss ? IR_SEXT : IR_TRUNC);
+    IrOpcode opcode;
+    SignedType target = conv->type;
+    SignedType src = conv->l->type;
+    if (signed_bits(target) < signed_bits(src)) {
+        opcode = IR_TRUNC; // Target type is smaller
+    } else if (signed_bits(src) == 1 || !src.is_signed) {
+        opcode = IR_ZEXT; // Always zext an i1, or if the value is unsigned
+    } else {
+        opcode = IR_SEXT; // Value is signed and larger than i1
+    }
+    IrIns *ext_trunc = new_ir(opcode);
     ext_trunc->l = operand;
-    ext_trunc->type = target;
+    ext_trunc->type = signed_to_type(target);
     emit(c, ext_trunc);
     return ext_trunc;
 }
@@ -438,7 +475,7 @@ static IrIns * compile_local(Compiler *c, Expr *expr) {
     assert(expr->local->alloc); // Check the local has been allocated
     IrIns *load = new_ir(IR_LOAD);
     load->l = expr->local->alloc;
-    load->type = expr->type;
+    load->type = signed_to_type(expr->type);
     emit(c, load);
     return load;
 }
@@ -446,7 +483,7 @@ static IrIns * compile_local(Compiler *c, Expr *expr) {
 static IrIns * compile_kint(Compiler *c, Expr *expr) {
     IrIns *k = new_ir(IR_KINT);
     k->kint = expr->kint;
-    k->type = expr->type;
+    k->type = signed_to_type(expr->type);
     emit(c, k);
     return k;
 }
@@ -471,7 +508,7 @@ static void compile_block(Compiler *c, Stmt *stmt);
 
 static void compile_decl(Compiler *c, Stmt *decl) {
     IrIns *alloc = new_ir(IR_ALLOC); // Create some stack space
-    alloc->type = decl->local->type;
+    alloc->type = signed_to_type(decl->local->type);
     alloc->type.ptrs += 1; // The result of IR_ALLOC is a POINTER to the value
     emit(c, alloc);
     decl->local->alloc = alloc;
@@ -654,13 +691,13 @@ static void compile_fn_args(Compiler *c, FnArg *args) {
     for (FnArg *arg = args; arg; arg = arg->next) { // Emit IR_FARGs
         IrIns *farg = new_ir(IR_FARG);
         farg->arg_num = arg_num++;
-        farg->type = arg->local->type;
+        farg->type = signed_to_type(arg->local->type);
         emit(c, farg);
         arg->ir_farg = farg;
     }
     for (FnArg *arg = args; arg; arg = arg->next) { // Emit IR_ALLOCs
         IrIns *alloc = new_ir(IR_ALLOC);
-        alloc->type = arg->local->type;
+        alloc->type = signed_to_type(arg->local->type);
         alloc->type.ptrs += 1; // IR_ALLOC returns a POINTER
         emit(c, alloc);
         arg->local->alloc = alloc;

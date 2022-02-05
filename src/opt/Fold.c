@@ -12,7 +12,7 @@ static void fold_arith(IrIns *ins) {
         case IR_ADD: v = ins->l->kint + ins->r->kint; break;
         case IR_SUB: v = ins->l->kint - ins->r->kint; break;
         case IR_MUL: v = ins->l->kint * ins->r->kint; break;
-        case IR_DIV: v = ins->l->kint / ins->r->kint; break;
+        case IR_SDIV: v = ins->l->kint / ins->r->kint; break;
         default: break; // Doesn't happen
     }
     // Fold arithmetic instructions in place (don't need to update their uses)
@@ -23,7 +23,7 @@ static void fold_arith(IrIns *ins) {
 
 static void fold_ins(IrIns *ins) {
     switch (ins->op) {
-        case IR_ADD: case IR_SUB: case IR_MUL: case IR_DIV:
+        case IR_ADD: case IR_SUB: case IR_MUL: case IR_SDIV:
             fold_arith(ins); break;
         default: break; // Can't fold anything else at the moment
     }

@@ -281,6 +281,7 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
         divisor = discharge(a, ir_div->r);
     }
 
+    // TODO: doesn't work for i64s
     AsmIns *mov1 = emit(a, X86_MOV); // Mov dividend into eax
     mov1->l.type = OP_REG;
     mov1->l.reg = REG_RAX;
@@ -288,7 +289,14 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
     mov1->r = dividend;
     emit(a, X86_CDQ); // Sign extend eax into edx
 
-    AsmIns *div = emit(a, X86_IDIV); // Performs edx:eax / <operand>
+
+    AsmOpcode op;
+    switch (ir_div->op) {
+        case IR_SDIV: case IR_SMOD: op = X86_IDIV; break;
+        case IR_UDIV: case IR_UMOD: op = X86_DIV;  break;
+        default: UNREACHABLE();
+    }
+    AsmIns *div = emit(a, op); // Performs edx:eax / <operand>
     div->l = divisor;
 
     ir_div->vreg = a->vreg++; // Allocate a new vreg for the result
@@ -297,7 +305,7 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
     mov2->l.vreg = ir_div->vreg;
     mov2->l.size = REG_SIZE[bytes(ir_div->type)];
     mov2->r.type = OP_REG;
-    if (ir_div->op == IR_DIV) {
+    if (ir_div->op == IR_SDIV || ir_div->op == IR_UDIV) {
         mov2->r.reg = REG_RAX; // Division (quotient in rax)
     } else {
         mov2->r.reg = REG_RDX; // Modulo (remainder in rdx)
@@ -364,18 +372,6 @@ static void asm_trunc_or_ext(Assembler *a, IrIns *ir_trunc_ext, AsmOpcode op) {
     mov->r = src;
 }
 
-static void asm_trunc(Assembler *a, IrIns *ir_trunc) {
-    asm_trunc_or_ext(a, ir_trunc, X86_MOV); // Regular mov
-}
-
-static void asm_sext(Assembler *a, IrIns *ir_sext) {
-    asm_trunc_or_ext(a, ir_sext, X86_MOVSX); // Sign extend
-}
-
-static void asm_zext(Assembler *a, IrIns *ir_zext) {
-    asm_trunc_or_ext(a, ir_zext, X86_MOVZX); // Zero extend
-}
-
 static void asm_br(Assembler *a, IrIns *ir_br) {
     if (ir_br->br == a->bb->next) { // If the branch is to the next BB
         return; // Don't emit_ins a JMP to the very next instruction
@@ -434,7 +430,7 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
     case IR_ADD: case IR_SUB: case IR_MUL:
     case IR_AND: case IR_OR: case IR_XOR:
         asm_arith(a, ir_ins); break;
-    case IR_DIV: case IR_MOD:
+    case IR_SDIV: case IR_UDIV: case IR_SMOD: case IR_UMOD:
         asm_div_mod(a, ir_ins); break;
     case IR_SHL: case IR_ASHR: case IR_LSHR:
         asm_shift(a, ir_ins); break;
@@ -442,9 +438,9 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
     case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
     case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
         break; // Don't do anything for comparisons
-    case IR_TRUNC:  asm_trunc(a, ir_ins); break;
-    case IR_SEXT:   asm_sext(a, ir_ins); break;
-    case IR_ZEXT:   asm_zext(a, ir_ins); break;
+    case IR_TRUNC:  asm_trunc_or_ext(a, ir_ins, X86_MOV); break;
+    case IR_SEXT:   asm_trunc_or_ext(a, ir_ins, X86_MOVSX); break;
+    case IR_ZEXT:   asm_trunc_or_ext(a, ir_ins, X86_MOVZX); break;
     case IR_BR:     asm_br(a, ir_ins); break;
     case IR_CONDBR: asm_cond_br(a, ir_ins); break;
     case IR_RET0:   asm_ret0(a); break;

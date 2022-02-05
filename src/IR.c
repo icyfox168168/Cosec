@@ -3,6 +3,13 @@
 
 #include "IR.h"
 
+Type signed_to_type(SignedType t) {
+    Type r;
+    r.prim = t.prim;
+    r.ptrs = t.ptrs;
+    return r;
+}
+
 Type type_none() {
     Type t;
     t.prim = T_NONE;
@@ -10,18 +17,32 @@ Type type_none() {
     return t;
 }
 
-Type type_i1() {
-    Type t;
-    t.prim = T_i1;
+SignedType signed_none() {
+    SignedType t;
+    t.prim = T_NONE;
     t.ptrs = 0;
+    t.is_signed = 1;
     return t;
 }
 
-Type type_i32() {
-    Type t;
+SignedType signed_i1() {
+    SignedType t;
+    t.prim = T_i1;
+    t.ptrs = 0;
+    t.is_signed = 0;
+    return t;
+}
+
+SignedType signed_i32() {
+    SignedType t;
     t.prim = T_i32;
     t.ptrs = 0;
+    t.is_signed = 1;
     return t;
+}
+
+int signed_bits(SignedType t) {
+    return bits(signed_to_type(t));
 }
 
 int bits(Type t) {
@@ -36,10 +57,6 @@ int bits(Type t) {
         case T_i16:  return 16;
         case T_i32:  return 32;
         case T_i64:  return 64;
-        case T_u8:   return 8;
-        case T_u16:  return 16;
-        case T_u32:  return 32;
-        case T_u64:  return 64;
         case T_f32:  return 32;
         case T_f64:  return 64;
     }
@@ -69,7 +86,7 @@ FnDef * new_fn_def() {
 
 FnDecl * new_fn_decl() {
     FnDecl *decl = malloc(sizeof(FnDecl));
-    decl->return_type = type_none();
+    decl->return_type = signed_none();
     decl->name = NULL;
     decl->args = NULL;
     return decl;
@@ -101,14 +118,14 @@ IfChain * new_if_chain() {
 Expr * new_expr(ExprType kind) {
     Expr *expr = malloc(sizeof(Expr));
     expr->kind = kind;
-    expr->type = type_none();
+    expr->type = signed_none();
     expr->op = 0;
     expr->l = NULL;
     expr->r = NULL;
     return expr;
 }
 
-Local * new_local(char *name, Type type) {
+Local * new_local(char *name, SignedType type) {
     Local *local = malloc(sizeof(Local));
     local->next = NULL;
     local->name = name;
