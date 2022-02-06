@@ -49,6 +49,7 @@
     K(FOR, "for")                          \
     K(DO, "do")                            \
     K(BREAK, "break")                      \
+    K(CONTINUE, "continue")                \
     K(RETURN, "return")
 
 typedef int Tk;

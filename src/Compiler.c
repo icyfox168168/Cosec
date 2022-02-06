@@ -12,6 +12,7 @@
 
 typedef struct loop {
     BrChain *breaks;
+    BrChain *continues;
     struct loop *outer;
 } Loop;
 
@@ -26,6 +27,14 @@ static Compiler new_compiler() {
     c.loop = NULL;
     return c;
 }
+
+static Loop new_loop() {
+    Loop loop;
+    loop.breaks = NULL;
+    loop.continues = NULL;
+    loop.outer = NULL;
+    return loop;
+};
 
 static PhiChain * new_phi(BB *bb, IrIns *def) {
     PhiChain *phi = malloc(sizeof(PhiChain));
@@ -553,33 +562,7 @@ static void compile_if(Compiler *c, Stmt *stmt) {
     patch_branch_chain(head, after);
 }
 
-static void compile_infinite_loop(Compiler *c, Stmt *stmt) {
-    IrIns *before_br = new_ir(IR_BR);
-    emit(c, before_br);
-
-    Loop loop;
-    loop.breaks = NULL;
-    loop.outer = c->loop;
-    c->loop = &loop;
-    BB *body = emit_bb(c);
-    before_br->br = body;
-    compile_block(c, stmt->body); // Body
-    IrIns *end_br = new_ir(IR_BR);
-    end_br->br = body;
-    emit(c, end_br);
-    c->loop = loop.outer;
-
-    BB *after = emit_bb(c);
-    patch_branch_chain(loop.breaks, after);
-}
-
 static void compile_while(Compiler *c, Stmt *stmt) {
-    if (!stmt->cond) { // Infinite loop, e.g., in the case of 'for (;;) ...'
-        // It's easier to special-case this than try deal with it below ->
-        // makes the code significantly more readable
-        compile_infinite_loop(c, stmt);
-        return;
-    }
     IrIns *before_br = new_ir(IR_BR);
     emit(c, before_br);
     BB *cond_bb = emit_bb(c);
@@ -588,8 +571,7 @@ static void compile_while(Compiler *c, Stmt *stmt) {
     IrIns *cond = compile_expr(c, stmt->cond); // Condition
     cond = to_cond(c, cond);
 
-    Loop loop;
-    loop.breaks = NULL;
+    Loop loop = new_loop();
     loop.outer = c->loop;
     c->loop = &loop;
     BB *body = emit_bb(c);
@@ -603,14 +585,14 @@ static void compile_while(Compiler *c, Stmt *stmt) {
     BB *after = emit_bb(c);
     patch_branch_chain(cond->false_chain, after);
     patch_branch_chain(loop.breaks, after);
+    patch_branch_chain(loop.continues, cond_bb);
 }
 
 static void compile_do_while(Compiler *c, Stmt *do_while_stmt) {
     IrIns *before_br = new_ir(IR_BR);
     emit(c, before_br);
 
-    Loop loop;
-    loop.breaks = NULL;
+    Loop loop = new_loop();
     loop.outer = c->loop;
     c->loop = &loop;
     BB *body = emit_bb(c);
@@ -625,13 +607,67 @@ static void compile_do_while(Compiler *c, Stmt *do_while_stmt) {
     BB *after = emit_bb(c);
     patch_branch_chain(cond->false_chain, after);
     patch_branch_chain(loop.breaks, after);
+    patch_branch_chain(loop.continues, body);
 }
 
-static void compile_break(Compiler *c) {
+static void compile_for(Compiler *c, Stmt *stmt) {
+    IrIns *before_br = new_ir(IR_BR);
+    emit(c, before_br);
+
+    BB *start_bb = NULL;
+    IrIns *cond = NULL;
+    if (stmt->cond) {
+        start_bb = emit_bb(c);
+        before_br->br = start_bb;
+        cond = compile_expr(c, stmt->cond); // Condition
+        cond = to_cond(c, cond);
+    }
+
+    Loop loop = new_loop();
+    loop.outer = c->loop;
+    c->loop = &loop;
+    BB *body = emit_bb(c);
+    if (cond) {
+        patch_branch_chain(cond->true_chain, body);
+    } else {
+        start_bb = body;
+        before_br->br = body;
+    }
+    compile_block(c, stmt->body); // Body
+    IrIns *end_br = new_ir(IR_BR);
+    emit(c, end_br);
+
+    BB *continue_bb;
+    if (stmt->inc) {
+        // New BB for the increment since all the 'continue's must jump to it
+        BB *inc_bb = emit_bb(c); // Increment
+        end_br->br = inc_bb;
+        compile_expr(c, stmt->inc);
+        IrIns *inc_br = new_ir(IR_BR);
+        inc_br->br = start_bb; // Either the condition or the body
+        emit(c, inc_br);
+        continue_bb = inc_bb; // Target all 'continue's to the increment
+    } else {
+        end_br->br = start_bb;
+        continue_bb = start_bb;
+    }
+    c->loop = loop.outer;
+
+    BB *after = emit_bb(c);
+    if (cond) {
+        patch_branch_chain(cond->false_chain, after);
+    }
+    patch_branch_chain(loop.breaks, after);
+    patch_branch_chain(loop.continues, continue_bb);
+}
+
+static void compile_break_or_continue(Compiler *c, Stmt *stmt) {
     IrIns *br_ins = new_ir(IR_BR);
     emit(c, br_ins);
-    BrChain *br_chain = new_branch_chain(&br_ins->br, br_ins);
-    merge_branch_chains(&c->loop->breaks, br_chain);
+    BrChain *chain = new_branch_chain(&br_ins->br, br_ins);
+    BrChain **target = stmt->kind == STMT_BREAK ?
+                       &c->loop->breaks : &c->loop->continues;
+    merge_branch_chains(target, chain);
     emit_bb(c); // For everything after the break
 }
 
@@ -653,7 +689,9 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
         case STMT_IF:       compile_if(c, stmt); break;
         case STMT_WHILE:    compile_while(c, stmt); break;
         case STMT_DO_WHILE: compile_do_while(c, stmt); break;
-        case STMT_BREAK:    compile_break(c); break;
+        case STMT_FOR:      compile_for(c, stmt); break;
+        case STMT_BREAK:
+        case STMT_CONTINUE: compile_break_or_continue(c, stmt); break;
         case STMT_RET:      compile_ret(c, stmt); break;
     }
 }

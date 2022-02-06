@@ -122,9 +122,21 @@ static void print_stmt(int indent, Stmt *stmt) {
         print_expr(stmt->cond);
         printf("\n");
         break;
-    case STMT_BREAK:
-        printf("break\n");
+    case STMT_FOR:
+        printf("for ");
+        if (stmt->cond) {
+            print_expr(stmt->cond);
+        }
+        printf("; ");
+        if (stmt->inc) {
+            print_expr(stmt->inc);
+        }
+        printf(" ");
+        print_block(indent + 1, stmt->body);
+        printf("\n");
         break;
+    case STMT_BREAK:    printf("break\n"); break;
+    case STMT_CONTINUE: printf("continue\n"); break;
     case STMT_RET:
         printf("return ");
         if (stmt->expr) {

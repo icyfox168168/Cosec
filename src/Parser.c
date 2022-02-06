@@ -749,25 +749,23 @@ static Stmt * parse_for(Parser *p) {
     expect_tk(&p->l, ';');
     next_tk(&p->l);
 
-    Stmt *inc_stmt = NULL;
+    Expr *inc = NULL;
     if (p->l.tk != ')') {
-        Expr *inc = parse_expr(p); // Increment
-        inc_stmt = new_stmt(STMT_EXPR);
-        inc_stmt->expr = inc;
+        inc = parse_expr(p); // Increment
     }
     expect_tk(&p->l, ')');
     next_tk(&p->l);
 
     Stmt *body = parse_stmt(p); // Body
-    Stmt **end = &body;
-    while (*end) { // Find the end of the body
-        end = &(*end)->next;
-    }
-    *end = inc_stmt; // Put the increment statement at the end of the body
     p->locals = scope; // Remove the declarations in the loop header
 
-    Stmt *loop = new_stmt(STMT_WHILE);
+    // We can't just compile for loops to while loops, since the increment
+    // still needs to be executed when we 'continue' -> compiler needs to
+    // generate a separate increment BB at the end of the body which all
+    // 'continue's jump to
+    Stmt *loop = new_stmt(STMT_FOR);
     loop->cond = cond;
+    loop->inc = inc;
     loop->body = body;
     *stmt = loop;
     return head;
@@ -797,6 +795,15 @@ static Stmt * parse_break(Parser *p) {
     expect_tk(&p->l, ';');
     next_tk(&p->l);
     Stmt *stmt = new_stmt(STMT_BREAK);
+    return stmt;
+}
+
+static Stmt * parse_continue(Parser *p) {
+    expect_tk(&p->l, TK_CONTINUE);
+    next_tk(&p->l);
+    expect_tk(&p->l, ';');
+    next_tk(&p->l);
+    Stmt *stmt = new_stmt(STMT_CONTINUE);
     return stmt;
 }
 
@@ -838,15 +845,16 @@ static Stmt * parse_block(Parser *p) {
 
 static Stmt * parse_stmt(Parser *p) {
     switch (p->l.tk) {
-        case ';':       next_tk(&p->l); return NULL; // Empty
-        case '{':       return parse_block(p);       // Block
-        case TK_IF:     return parse_if(p);          // If/else if/else
-        case TK_WHILE:  return parse_while(p);       // While loop
-        case TK_FOR:    return parse_for(p);         // For loop
-        case TK_DO:     return parse_do_while(p);    // Do-while loop
-        case TK_BREAK:  return parse_break(p);       // Break
-        case TK_RETURN: return parse_ret(p);         // Return
-        default:        return parse_expr_stmt(p);   // Expression
+        case ';':         next_tk(&p->l); return NULL; // Empty
+        case '{':         return parse_block(p);       // Block
+        case TK_IF:       return parse_if(p);          // If/else if/else
+        case TK_WHILE:    return parse_while(p);       // While loop
+        case TK_FOR:      return parse_for(p);         // For loop
+        case TK_DO:       return parse_do_while(p);    // Do-while loop
+        case TK_BREAK:    return parse_break(p);       // Break
+        case TK_CONTINUE: return parse_continue(p);    // Continue
+        case TK_RETURN:   return parse_ret(p);         // Return
+        default:          return parse_expr_stmt(p);   // Expression
     }
 }
 

@@ -131,7 +131,7 @@ static void lex_int(Lexer *l) {
 }
 
 static void lex_symbol(Lexer *l) {
-    if (0) {}
+    if (0);
 #define X(_, __)
 #define Y(name, ch1, ch2, _) /* 2-character tokens */  \
     else if (*l->c == (ch1) && *(l->c + 1) == (ch2)) { \

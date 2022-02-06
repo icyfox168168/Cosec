@@ -107,6 +107,7 @@ test(loop8 loop/8.c)
 test(loop9 loop/9.c)
 test(loop10 loop/10.c)
 test(loop11 loop/11.c)
+test(loop12 loop/12.c)
 
 test(types1 types/1.c)
 test(types2 types/2.c)
