@@ -78,30 +78,18 @@ static AsmIns * emit(Assembler *a, AsmOpcode op) {
     return emit_asm(a->bb, op);
 }
 
-// Converts an IR_LOAD instruction to a memory access assembly operand, e.g.,
+// Converts an IR_ALLOC instruction to a memory access assembly operand, e.g.,
 // to [rbp - 4]
-static AsmOperand load_to_mem_operand(IrIns *ir_load) {
+static AsmOperand alloc_to_mem_operand(IrIns *ir_alloc) {
     AsmOperand operand;
     operand.type = OP_MEM;  // From memory
     operand.base = REG_RBP; // Offset relative to rbp
     operand.size = REG_Q;
     operand.scale = 1;
-    operand.bytes = bytes(ir_load->type); // Number of bytes to read
-    operand.index = -ir_load->l->stack_slot;
-    return operand;
-}
-
-// Converts an IR_STORE instruction to a memory access assembly operand
-static AsmOperand store_to_mem_operand(IrIns *ir_store) {
-    AsmOperand operand;
-    operand.type = OP_MEM;  // From memory
-    operand.base = REG_RBP; // Offset relative to rbp
-    operand.size = REG_Q;
-    operand.scale = 1;
-    Type t = ir_store->l->type;
+    Type t = ir_alloc->type;
     t.ptrs--;
-    operand.bytes = bytes(t); // Number of bytes to write
-    operand.index = -ir_store->l->stack_slot;
+    operand.bytes = bytes(t); // Number of bytes to read/write
+    operand.index = -ir_alloc->stack_slot;
     return operand;
 }
 
@@ -126,8 +114,20 @@ static AsmOperand discharge_load(Assembler *a, IrIns *ir_load) {
     mov->l.type = OP_VREG; // Load into a vreg
     mov->l.vreg = ir_load->vreg;
     mov->l.size = REG_SIZE[bytes(ir_load->type)];
-    mov->r = load_to_mem_operand(ir_load);
+    mov->r = alloc_to_mem_operand(ir_load->l);
     return mov->l;
+}
+
+static AsmOperand discharge_alloc(Assembler *a, IrIns *ir_alloc) {
+    // TODO: pointers must be 8 byte aligned as per C standard!
+    ir_alloc->vreg = a->vreg++;
+    AsmIns *lea = emit(a, X86_LEA);
+    lea->l.type = OP_VREG;
+    lea->l.vreg = ir_alloc->vreg;
+    lea->l.size = REG_SIZE[bytes(ir_alloc->type)];
+    lea->r = alloc_to_mem_operand(ir_alloc);
+    lea->r.bytes = 0; // Don't care about bytes for a LEA instruction
+    return lea->l;
 }
 
 static AsmOperand discharge_rel(Assembler *a, IrIns *ir_rel) {
@@ -156,10 +156,9 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
         return result;
     }
     switch (ins->op) {
-    case IR_KINT:
-        return discharge_imm(a, ins); // Immediate
-    case IR_LOAD:
-        return discharge_load(a, ins); // Memory load
+    case IR_KINT:  return discharge_imm(a, ins);   // Immediate
+    case IR_LOAD:  return discharge_load(a, ins);  // Memory load
+    case IR_ALLOC: return discharge_alloc(a, ins); // Pointer load
     case IR_EQ: case IR_NEQ:
     case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
     case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
@@ -175,7 +174,7 @@ static AsmOperand fold_load(Assembler *a, IrIns *ir_load) {
         return discharge(a, ir_load); // Already in a vreg
     }
     // Otherwise, only has ONE use, so inline the load
-    return load_to_mem_operand(ir_load);
+    return alloc_to_mem_operand(ir_load->l);
 }
 
 static AsmOperand inline_kint_or_load(Assembler *a, IrIns *kint_or_load) {
@@ -214,8 +213,6 @@ static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
     t.ptrs -= 1; // IR_ALLOC returns a POINTER to what we want stack space for
     a->stack_size += bytes(t); // Create some space on the stack
     ir_alloc->stack_slot = a->stack_size;
-    // Create a vreg for the POINTER returned by the ALLOC instruction
-    ir_alloc->vreg = a->vreg++;
 }
 
 static void asm_store(Assembler *a, IrIns *ir_store) {
@@ -228,7 +225,7 @@ static void asm_store(Assembler *a, IrIns *ir_store) {
         r = discharge(a, ir_store->r); // vreg
     }
     AsmIns *mov = emit(a, X86_MOV); // Store into memory
-    mov->l = store_to_mem_operand(ir_store);
+    mov->l = alloc_to_mem_operand(ir_store->l);
     mov->r = r;
 }
 
@@ -240,7 +237,7 @@ static void asm_load(Assembler *a, IrIns *ir_load) {
         return;
     }
     // If the load has multiple uses, then it needs to happen just once, so
-    // discharge it here
+    // discharge_cond it here
     discharge_load(a, ir_load);
 }
 
@@ -288,7 +285,6 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
     mov1->l.size = REG_D;
     mov1->r = dividend;
     emit(a, X86_CDQ); // Sign extend eax into edx
-
 
     AsmOpcode op;
     switch (ir_div->op) {

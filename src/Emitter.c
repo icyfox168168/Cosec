@@ -31,8 +31,9 @@ static void write_operand(AsmOperand op, FILE *out) {
         }
         break;
     case OP_MEM:
-        assert(op.bytes >= 0);
-        fprintf(out, "%s ", NASM_MEM_PREFIX[op.bytes]);
+        if (op.bytes > 0) {
+            fprintf(out, "%s ", NASM_MEM_PREFIX[op.bytes]);
+        }
         fprintf(out, "[%s", REG_NAMES[op.base][op.size]); // Base
         if (op.scale > 1) { // Scale
             fprintf(out, "*%d", op.scale);

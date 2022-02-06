@@ -181,7 +181,7 @@ static IrIns * compile_expr(Compiler *c, Expr *expr); // Forward declaration
 // true or false branch chain to patch; or (2) removing the CONDBR instruction
 // and referring to the underlying comparison instruction if there's only one
 // branch (no need for a phi)
-static IrIns * discharge(Compiler *c, IrIns *cond) {
+static IrIns * discharge_cond(Compiler *c, IrIns *cond) {
     if (cond->op != IR_CONDBR) {
         return cond; // Not a condition; doesn't need discharging
     }
@@ -249,7 +249,7 @@ static IrIns * to_cond(Compiler *c, IrIns *expr) {
     if (expr->op == IR_CONDBR) {
         return expr; // Already a condition, don't do anything
     }
-    expr = discharge(c, expr);
+    expr = discharge_cond(c, expr);
     assert(expr->op >= IR_EQ && expr->op <= IR_UGE); // Should be a comparison
     IrIns *br = new_ir(IR_CONDBR); // Emit a branch on the condition
     br->cond = expr;
@@ -268,14 +268,14 @@ static IrIns * compile_ternary(Compiler *c, Expr *ternary) {
     patch_branch_chain(cond->true_chain, true_bb);
 
     IrIns *true_val = compile_expr(c, ternary->l);
-    true_val = discharge(c, true_val);
+    true_val = discharge_cond(c, true_val);
     IrIns *true_br = new_ir(IR_BR);
     emit(c, true_br);
     BB *false_bb = emit_bb(c); // New BB for the false value
     patch_branch_chain(cond->false_chain, false_bb);
 
     IrIns *false_val = compile_expr(c, ternary->r);
-    false_val = discharge(c, false_val);
+    false_val = discharge_cond(c, false_val);
     IrIns *false_br = new_ir(IR_BR);
     emit(c, false_br);
 
@@ -296,9 +296,9 @@ static IrIns * compile_ternary(Compiler *c, Expr *ternary) {
 
 static IrIns * compile_operation(Compiler *c, Expr *binary) {
     IrIns *left = compile_expr(c, binary->l);
-    left = discharge(c, left);
+    left = discharge_cond(c, left);
     IrIns *right = compile_expr(c, binary->r);
-    right = discharge(c, right);
+    right = discharge_cond(c, right);
     IrOpcode opcode = binary->type.is_signed ? SIGNED_BINOP[binary->op] :
                       UNSIGNED_BINOP[binary->op];
     IrIns *operation = new_ir(opcode);
@@ -315,7 +315,7 @@ static IrIns * compile_assign(Compiler *c, Expr *assign) {
         right = compile_operation(c, assign);
     } else {
         right = compile_expr(c, assign->r);
-        right = discharge(c, right);
+        right = discharge_cond(c, right);
     }
     // Emit an IR_LOAD instruction and change it to IR_STORE
     IrIns *store = compile_expr(c, assign->l);
@@ -382,6 +382,52 @@ static IrIns * compile_binary(Compiler *c, Expr *binary) {
     }
 }
 
+static IrIns * compile_neg(Compiler *c, Expr *unary) {
+    Expr *zero = new_expr(EXPR_KINT);
+    zero->kint = 0;
+    zero->type = unary->type;
+    Expr *sub = new_expr(EXPR_BINARY);
+    sub->op = '-';
+    sub->l = zero;
+    sub->r = unary->l;
+    sub->type = unary->type;
+    return compile_operation(c, sub);
+}
+
+static IrIns * compile_promotion(Compiler *c, Expr *unary) {
+    return compile_expr(c, unary->l); // Does the type promotion for us
+}
+
+static IrIns * compile_bit_not(Compiler *c, Expr *unary) {
+    Expr *neg1 = new_expr(EXPR_KINT);
+    neg1->kint = -1;
+    neg1->type = unary->type;
+    Expr *xor = new_expr(EXPR_BINARY);
+    xor->op = '^';
+    xor->l = unary->l;
+    xor->r = neg1;
+    xor->type = unary->type;
+    return compile_operation(c, xor);
+}
+
+static IrIns * compile_not(Compiler *c, Expr *unary) {
+    IrIns *result = compile_expr(c, unary->l);
+    result = to_cond(c, result);
+    assert(result->op == IR_CONDBR);
+    BrChain *swap = result->true_chain; // Swap true and false lists
+    result->true_chain = result->false_chain;
+    result->false_chain = swap;
+    return result;
+}
+
+static IrIns * compile_addr(Compiler *c, Expr *unary) {
+    IrIns *result = compile_expr(c, unary->l);
+    assert(result->op == IR_LOAD); // Ensure 'assign->l' is an lvalue
+    IrIns *alloc = result->l; // IR_ALLOC returns the pointer we're after
+    delete_ir(result);
+    return alloc;
+}
+
 // Compiles ++ or -- as a prefix or postfix operator. We could've had the
 // parser expand '++a' into 'a = a + 1', but this would've created two extra
 // CONVs if 'a' is smaller than an i32. Since '++a' involves immediately
@@ -412,50 +458,13 @@ static IrIns * compile_inc_dec(Compiler *c, Expr *unary, int is_prefix) {
     }
 }
 
-static IrIns * compile_not(Compiler *c, Expr *unary) {
-    IrIns *result = compile_expr(c, unary->l);
-    result = to_cond(c, result);
-    assert(result->op == IR_CONDBR);
-    BrChain *swap = result->true_chain; // Swap true and false lists
-    result->true_chain = result->false_chain;
-    result->false_chain = swap;
-    return result;
-}
-
-static IrIns * compile_bit_not(Compiler *c, Expr *unary) {
-    Expr *neg1 = new_expr(EXPR_KINT);
-    neg1->kint = -1;
-    neg1->type = unary->type;
-    Expr *xor = new_expr(EXPR_BINARY);
-    xor->op = '^';
-    xor->l = unary->l;
-    xor->r = neg1;
-    xor->type = unary->type;
-    return compile_operation(c, xor);
-}
-
-static IrIns * compile_promotion(Compiler *c, Expr *unary) {
-    return compile_expr(c, unary->l); // Does the type promotion for us
-}
-
-static IrIns * compile_neg(Compiler *c, Expr *unary) {
-    Expr *zero = new_expr(EXPR_KINT);
-    zero->kint = 0;
-    zero->type = unary->type;
-    Expr *sub = new_expr(EXPR_BINARY);
-    sub->op = '-';
-    sub->l = zero;
-    sub->r = unary->l;
-    sub->type = unary->type;
-    return compile_operation(c, sub);
-}
-
 static IrIns * compile_unary(Compiler *c, Expr *unary) {
     switch (unary->op) {
         case '-': return compile_neg(c, unary);
         case '+': return compile_promotion(c, unary);
         case '~': return compile_bit_not(c, unary);
         case '!': return compile_not(c, unary);
+        case '&': return compile_addr(c, unary);
         case TK_INC: case TK_DEC: return compile_inc_dec(c, unary, 1);
         default: UNREACHABLE();
     }
@@ -471,7 +480,7 @@ static IrIns * compile_postfix(Compiler *c, Expr *operand) {
 
 static IrIns * compile_conv(Compiler *c, Expr *conv) {
     IrIns *operand = compile_expr(c, conv->l);
-    operand = discharge(c, operand);
+    operand = discharge_cond(c, operand);
 
     IrOpcode opcode;
     SignedType target = conv->type;
@@ -680,7 +689,7 @@ static void compile_ret(Compiler *c, Stmt *ret_stmt) {
     IrIns *value = NULL;
     if (ret_stmt->expr) { // If we're returning something
         value = compile_expr(c, ret_stmt->expr);
-        value = discharge(c, value);
+        value = discharge_cond(c, value);
     }
     IrIns *ret = new_ir(value ? IR_RET1 : IR_RET0);
     ret->l = value;

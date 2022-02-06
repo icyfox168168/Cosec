@@ -66,10 +66,11 @@ typedef enum {
 } Prec;
 
 static Prec UNARY_PREC[NUM_TKS] = {
-    ['-'] = PREC_UNARY,  // Negation
-    ['+'] = PREC_UNARY,  // Promotion
-    ['~'] = PREC_UNARY,  // Bitwise not
-    ['!'] = PREC_UNARY,  // Logical not
+    ['-'] = PREC_UNARY, // Negation
+    ['+'] = PREC_UNARY, // Promotion
+    ['~'] = PREC_UNARY, // Bitwise not
+    ['!'] = PREC_UNARY, // Logical not
+    ['&'] = PREC_UNARY, // Address-of
     [TK_INC] = PREC_UNARY, // Increment
     [TK_DEC] = PREC_UNARY, // Decrement
 };
@@ -147,6 +148,13 @@ static void ensure_lvalue(Expr *lvalue) {
     }
 }
 
+static void ensure_can_take_addr(Expr *operand) {
+    // TODO: there's a few more than just lvalues, see 6.5.3.2 in standard
+    if (operand->kind != EXPR_LOCAL) {
+        trigger_error_at(operand->tk, "cannot take address of operand");
+    }
+}
+
 // Returns the type that a binary arithmetic operation's operands should be
 // converted to (if necessary) for a binary operation
 //
@@ -179,7 +187,7 @@ static SignedType binary_int_promotion(Expr *l, Expr *r) {
         // 2. Both signed or unsigned -> convert to larger type
         return signed_bits(l->type) > signed_bits(r->type) ? l->type : r->type;
     } else {
-        // 3. and 4. Pick the larger type; if they're both the same size then
+        // 3. and 4. pick the larger type; if they're both the same size then
         // pick the unsigned type
         SignedType signed_type = l->type.is_signed ? l->type : r->type;
         SignedType unsigned_type = l->type.is_signed ? r->type : l->type;
@@ -192,9 +200,10 @@ static SignedType unary_int_promotion(Expr *operand) {
     // Implicit integer promotion (see 'binary_int_promotion' above) for unary
     // operations
     if (signed_bits(operand->type) < 32) {
+        // 0. Implicit promotion to (signed) 'int' for "small" integer types
         return signed_i32();
     } else {
-        return operand->type;
+        return operand->type; // No conversion necessary
     }
 }
 
@@ -425,6 +434,16 @@ static Expr * parse_not(Expr *operand) {
     return unary;
 }
 
+static Expr * parse_addr(Expr *operand) {
+    ensure_can_take_addr(operand);
+    Expr *addr = new_expr(EXPR_UNARY);
+    addr->op = '&';
+    addr->l = operand;
+    addr->type = operand->type;
+    addr->type.ptrs++; // Returns a POINTER to the operand
+    return addr;
+}
+
 static Expr * parse_prefix_inc_dec(Tk op, Expr *operand) {
     // Don't convert everything to i32s for prefix/postfix ++ and --, since
     // it'll just get SEXT'd then TRUNC'd anyway
@@ -462,6 +481,7 @@ static Expr * parse_unary(Parser *p) {
     Expr *unary;
     switch (op) {
         case '!':    unary = parse_not(operand); break;
+        case '&':    unary = parse_addr(operand); break;
         case TK_INC:
         case TK_DEC: unary = parse_prefix_inc_dec(op, operand); break;
         default:     unary = parse_unary_arith(op, operand); break;
@@ -581,7 +601,7 @@ static int has_decl(Parser *p) {
     return TYPE_SPECS[p->l.tk];
 }
 
-static SignedType parse_decl_spec(Parser *p) {
+static SignedType parse_type_spec(Parser *p) {
     // Check there's at least one type specifier
     TkInfo start = p->l.info;
     if (!has_decl(p)) {
@@ -616,34 +636,50 @@ static SignedType parse_decl_spec(Parser *p) {
     return type;
 }
 
+static Declarator parse_declarator(Parser *p, SignedType base_type) {
+    TkInfo start = p->l.info;
+    SignedType type = base_type;
+    while (p->l.tk == '*') { // Pointers
+        type.ptrs++;
+        next_tk(&p->l);
+    }
+
+    expect_tk(&p->l, TK_IDENT); // Name
+    TkInfo name = p->l.info;
+    if (find_local(p, name.start, name.len)) { // Check not already defined
+        trigger_error_at(name, "redefinition of '%.*s'", name.len, name.start);
+    }
+    next_tk(&p->l);
+
+    Declarator d;
+    d.name = name;
+    d.type = type;
+    d.tk = merge_tks(start, name);
+    return d;
+}
+
 static Stmt * parse_decl(Parser *p) {
-    SignedType type = parse_decl_spec(p); // Type
+    SignedType base_type = parse_type_spec(p); // Base type specifiers
     Stmt *head;
     Stmt **decl = &head;
     while (p->l.tk != ';') {
-        expect_tk(&p->l, TK_IDENT);
-        TkInfo name = p->l.info;
-        if (find_local(p, name.start, name.len)) { // Check not already defined
-            trigger_error_at(name, "redefinition of '%.*s'", name.len,
-                             name.start);
-        }
-        next_tk(&p->l);
+        Declarator declarator = parse_declarator(p, base_type);
 
         Expr *value = NULL;
-        if (p->l.tk == '=') { // Assignment
+        if (p->l.tk == '=') { // Optional assignment
             next_tk(&p->l); // Skip the '=' token
             value = parse_subexpr(p, PREC_COMMA); // Can't have commas
         }
 
         Stmt *result = new_stmt(STMT_DECL);
-        result->local = def_local(p, name, type);
+        result->local = def_local(p, declarator.name, declarator.type);
         *decl = result;
         decl = &(*decl)->next;
         if (value) {
             Expr *local_expr = new_expr(EXPR_LOCAL);
             local_expr->local = result->local;
             local_expr->type = result->local->type;
-            local_expr->tk = name;
+            local_expr->tk = declarator.tk;
             Stmt *assign = new_stmt(STMT_EXPR);
             assign->expr = parse_assign('=', local_expr, value);
             *decl = assign; // Chain the declaration and assignment
@@ -861,7 +897,7 @@ static Stmt * parse_stmt(Parser *p) {
 // ---- Module ----------------------------------------------------------------
 
 static FnArg * parse_fn_decl_arg(Parser *p) {
-    SignedType type = parse_decl_spec(p); // Type
+    SignedType type = parse_type_spec(p); // Type
     expect_tk(&p->l, TK_IDENT); // Name
     FnArg *arg = new_fn_arg();
     arg->local = def_local(p, p->l.info, type);
@@ -894,7 +930,7 @@ static FnDef * parse_fn_def(Parser *p) {
     p->fn = def;
 
     def->decl = new_fn_decl();
-    def->decl->return_type = parse_decl_spec(p); // Return type
+    def->decl->return_type = parse_type_spec(p); // Return type
 
     expect_tk(&p->l, TK_IDENT); // Name
     def->decl->local = def_local(p, p->l.info, signed_none());

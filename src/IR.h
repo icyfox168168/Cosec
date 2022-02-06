@@ -67,6 +67,12 @@ typedef struct local {
     struct ir_ins *alloc; // The IR_ALLOC instruction for this local
 } Local;
 
+typedef struct {
+    SignedType type;
+    TkInfo name;
+    TkInfo tk;
+} Declarator;
+
 typedef enum {
     EXPR_KINT,    // Constant integer
     EXPR_LOCAL,   // Local variable
