@@ -310,24 +310,29 @@ static IrIns * compile_operation(Compiler *c, Expr *binary) {
 }
 
 static IrIns * compile_assign(Compiler *c, Expr *assign) {
-    IrIns *right;
+    IrIns *target, *right;
     if (assign->op != '=') {
         right = compile_operation(c, assign);
+        // 'right' is an arith (e.g., IR_ADD); 'right->l' will be the IR_LOAD
+        // for the lvalue we want to assign to. Don't just call 'compile_expr'
+        // again because 'compile_operation' already did it; we'd be duplicating
+        // the lvalue calculation otherwise
+        target = new_ir(IR_LOAD);
+        *target = *right->l;
+        target->next = NULL;
+        emit(c, target);
     } else {
-        right = compile_expr(c, assign->r);
+        right = compile_expr(c, assign->r); // Value for assignment
         right = discharge_cond(c, right);
+        // Compute the lvalue to assign to
+        target = compile_expr(c, assign->l);
     }
-    // Emit an IR_LOAD instruction and change it to IR_STORE
-    IrIns *store = compile_expr(c, assign->l);
-    assert(store->op == IR_LOAD); // Ensure 'assign->l' is an lvalue
-    // We delete the store, modify it, then re-emit it to trigger all the
-    // sanity type checking that happens on calling 'emit'
-    delete_ir(store);
-    store->op = IR_STORE;
+    // Change an IR_LOAD instruction into an IR_STORE
+    assert(target->op == IR_LOAD); // Ensure 'assign->l' is an lvalue
+    target->op = IR_STORE;
     // IR_STORE destination is the same as the IR_LOAD (don't change store->l)
-    store->r = right;
-    store->type = type_none(); // Clear the type set by the IR_LOAD
-    emit(c, store);
+    target->r = right;
+    target->type = type_none(); // Clear the type set by the IR_LOAD
     return right; // Assignment evaluates to its right operand
 }
 
@@ -428,6 +433,15 @@ static IrIns * compile_addr(Compiler *c, Expr *unary) {
     return alloc;
 }
 
+static IrIns * compile_deref(Compiler *c, Expr *unary) {
+    IrIns *result = compile_expr(c, unary->l);
+    IrIns *load = new_ir(IR_LOAD);
+    load->l = result;
+    load->type = signed_to_type(unary->type);
+    emit(c, load);
+    return load;
+}
+
 // Compiles ++ or -- as a prefix or postfix operator. We could've had the
 // parser expand '++a' into 'a = a + 1', but this would've created two extra
 // CONVs if 'a' is smaller than an i32. Since '++a' involves immediately
@@ -435,19 +449,13 @@ static IrIns * compile_addr(Compiler *c, Expr *unary) {
 // we get the compiler to handle prefix/postfix ++ and -- as special
 // unary/postfix instructions.
 static IrIns * compile_inc_dec(Compiler *c, Expr *unary, int is_prefix) {
-    assert(unary->l->kind == EXPR_LOCAL); // lvalue
     Expr *one = new_expr(EXPR_KINT);
     one->kint = 1;
-    one->type = unary->type; // Use the same time as what we're adding to
-    Expr *add = new_expr(EXPR_BINARY);
-    add->op = unary->op == TK_INC ? '+' : '-';
-    add->l = unary->l;
-    add->r = one;
-    add->type = unary->type;
+    one->type = unary->type; // Use the same type as what we're adding to
     Expr *assign = new_expr(EXPR_BINARY);
-    assign->op = '=';
+    assign->op = unary->op == TK_INC ? TK_ADD_ASSIGN : TK_SUB_ASSIGN;
     assign->l = unary->l;
-    assign->r = add;
+    assign->r = one;
     assign->type = unary->type;
     IrIns *result = compile_assign(c, assign);
     if (is_prefix) {
@@ -465,6 +473,7 @@ static IrIns * compile_unary(Compiler *c, Expr *unary) {
         case '~': return compile_bit_not(c, unary);
         case '!': return compile_not(c, unary);
         case '&': return compile_addr(c, unary);
+        case '*': return compile_deref(c, unary);
         case TK_INC: case TK_DEC: return compile_inc_dec(c, unary, 1);
         default: UNREACHABLE();
     }

@@ -77,13 +77,19 @@ test(cond20 expressions/conditional/20.c)
 test(cond21 expressions/conditional/21.c)
 test(cond22 expressions/conditional/22.c)
 
+test(pointers1 expressions/pointers/1.c)
+test(pointers2 expressions/pointers/2.c)
+test(pointers3 expressions/pointers/3.c)
+test(pointers4 expressions/pointers/4.c)
+test(pointers5 expressions/pointers/5.c)
+
 test(return1 return/1.c)
 test(return2 return/2.c)
 test(return3 return/3.c)
 
-test(decl1 decl/1.c)
-test(decl2 decl/2.c)
-test(decl3 decl/3.c)
+test(decl1 declarations/1.c)
+test(decl2 declarations/2.c)
+test(decl3 declarations/3.c)
 
 test(if1 if/1.c)
 test(if2 if/2.c)

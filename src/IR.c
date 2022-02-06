@@ -148,7 +148,7 @@ Fn * new_fn() {
     fn->next = NULL;
     fn->entry = NULL;
     fn->last = NULL;
-    fn->num_vregs = 0;
+    fn->num_regs = 0;
     return fn;
 }
 
@@ -201,23 +201,22 @@ void delete_ir(IrIns *ins) {
     }
 }
 
-static AsmIns * new_asm(AsmOpcode op) {
+AsmIns * new_asm(AsmOpcode op) {
     AsmIns *ins = malloc(sizeof(AsmIns));
     ins->next = NULL;
     ins->prev = NULL;
     ins->idx = -1;
     ins->op = op;
     ins->l.type = 0;
-    ins->l.vreg = 0;
+    ins->l.reg = 0;
     ins->l.size = REG_Q;
     ins->r.type = 0;
-    ins->r.vreg = 0;
+    ins->r.reg = 0;
     ins->r.size = REG_Q;
     return ins;
 }
 
-AsmIns * emit_asm(BB *bb, AsmOpcode op) {
-    AsmIns *ins = new_asm(op);
+AsmIns * emit_asm(BB *bb, AsmIns *ins) {
     ins->bb = bb;
     ins->prev = bb->asm_last;
     if (bb->asm_last) {

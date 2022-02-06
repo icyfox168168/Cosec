@@ -1,6 +1,5 @@
 
 #include <assert.h>
-
 #include "Emitter.h"
 
 static char *X86_OPCODE_NAMES[] = {
@@ -16,32 +15,44 @@ static char *NASM_MEM_PREFIX[] = {
     [8] = "qword",
 };
 
-static void write_operand(AsmOperand op, FILE *out) {
-    switch (op.type) {
-    case OP_IMM: fprintf(out, "%d", op.imm); break;
-    case OP_REG: fprintf(out, "%s", REG_NAMES[op.reg][op.size]); break;
-    case OP_VREG:
-        fprintf(out, "%%%d", op.vreg);
-        switch (op.size) {
+static void write_reg(int reg, RegSize size, FILE *out) {
+    assert(size != REG_NONE);
+    if (reg < LAST_PREG) {
+        fprintf(out, "%s", REG_NAMES[reg][size]);
+    } else {
+        fprintf(out, "%%%d", reg - LAST_PREG);
+        switch (size) {
             case REG_Q: fprintf(out, "(q)"); break;
             case REG_D: fprintf(out, "(d)"); break;
             case REG_W: fprintf(out, "(w)"); break;
             case REG_H: fprintf(out, "(h)"); break;
             case REG_L: fprintf(out, "(l)"); break;
+            default: UNREACHABLE();
         }
-        break;
+    }
+}
+
+static void write_operand(AsmOperand op, FILE *out) {
+    switch (op.type) {
+    case OP_IMM: fprintf(out, "%d", op.imm); break;
+    case OP_REG: write_reg(op.reg, op.size, out); break;
     case OP_MEM:
-        if (op.bytes > 0) {
-            fprintf(out, "%s ", NASM_MEM_PREFIX[op.bytes]);
+        if (op.access_size > 0) {
+            fprintf(out, "%s ", NASM_MEM_PREFIX[op.access_size]);
         }
-        fprintf(out, "[%s", REG_NAMES[op.base][op.size]); // Base
-        if (op.scale > 1) { // Scale
-            fprintf(out, "*%d", op.scale);
+        fprintf(out, "[");
+        write_reg(op.base_reg, op.base_size, out); // Base
+        if (op.index_size > REG_NONE) { // Index
+            fprintf(out, " + ");
+            write_reg(op.index_reg, op.index_size, out);
+            if (op.scale > 1) { // Scale
+                fprintf(out, "*%d", op.scale);
+            }
         }
-        if (op.index > 0) { // Index
-            fprintf(out, " + %d", op.index);
-        } else if (op.index < 0) {
-            fprintf(out, " - %d", -op.index);
+        if (op.disp > 0) {
+            fprintf(out, " + %d", op.disp);
+        } else if (op.disp < 0) {
+            fprintf(out, " - %d", -op.disp);
         }
         fprintf(out, "]");
         break;

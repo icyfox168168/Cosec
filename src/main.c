@@ -49,16 +49,16 @@ static void print_help() {
 
 static void pipeline(char *file) {
     // AST
-    AstModule *ast = parse(file);
     printf("---- AST\n");
+    AstModule *ast = parse(file);
     for (FnDef *fn = ast->fns; fn; fn = fn->next) {
         print_ast(fn);
         printf("\n");
     }
 
     // SSA IR
-    Module *module = compile(ast);
     printf("---- SSA IR\n");
+    Module *module = compile(ast);
     for (Fn *fn = module->fns; fn; fn = fn->next) {
         printf("%s:\n", fn->name);
         print_ir(fn);
@@ -71,8 +71,8 @@ static void pipeline(char *file) {
     }
 
     // Assembler
-    assemble(module);
     printf("---- Assembly IR\n");
+    assemble(module);
     emit_nasm(module, stdout);
     printf("\n");
 

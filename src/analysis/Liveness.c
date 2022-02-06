@@ -48,18 +48,19 @@ static void add_program_point(LiveRange *range, int point) {
 // Returns true if the instruction defines its left operand
 static int defs_left(AsmIns *ins) {
     AsmOpcode op = ins->op;
-    return (op >= X86_MOV && op <= X86_LEA) ||
+    return ins->l.type == OP_REG &&
+           ((op >= X86_MOV && op <= X86_LEA) ||
            (op >= X86_ADD && op <= X86_MUL) ||
            (op >= X86_AND && op <= X86_SAR) ||
            (op >= X86_SETE && op <= X86_SETAE) ||
-           (op == X86_POP);
+           (op == X86_POP));
 }
 
 // Returns true if an instruction uses its left operand
 static int uses_left(AsmIns *ins) {
     // movs and setxx don't use their left argument, they only define it
     AsmOpcode op = ins->op;
-    return X86_OPCODE_NARGS[op] >= 1 &&
+    return X86_OPCODE_NARGS[op] >= 1 && ins->l.type == OP_REG &&
            !(op >= X86_MOV && op <= X86_LEA) &&
            !(op >= X86_SETE && op <= X86_SETAE) &&
            op != X86_POP;
@@ -68,7 +69,52 @@ static int uses_left(AsmIns *ins) {
 // Returns true if an instruction uses its right operand
 static int uses_right(AsmIns *ins) {
     // If it has 2 arguments, then it uses its right operand
-    return X86_OPCODE_NARGS[ins->op] >= 2;
+    return X86_OPCODE_NARGS[ins->op] >= 2 && ins->r.type == OP_REG;
+}
+
+// Marks regs that are used in a memory access operand as live in the given
+// 'live' map
+static void mark_mem_operand_uses_as_live(int *live, AsmOperand *mem_op) {
+    if (mem_op->type != OP_MEM) {
+        return;
+    }
+    if (mem_op->base_size > REG_NONE) {
+        live[mem_op->base_reg] = 1; // Base reg is used
+    }
+    if (mem_op->index_size > REG_NONE) {
+        live[mem_op->index_reg] = 1; // Index reg is used
+    }
+}
+
+// Marks regs that are used by the instruction as live in the given 'live' map
+static void mark_uses_as_live(int *live, AsmIns *ins) {
+    // Regs used or defined are live
+    if (uses_left(ins) || defs_left(ins)) {
+        live[ins->l.reg] = 1; // Left operand is a reg and is used
+    }
+    if (uses_right(ins)) {
+        live[ins->r.reg] = 1; // Right operand is a reg and is used
+    }
+
+    // Regs used in memory accesses are live
+    mark_mem_operand_uses_as_live(live, &ins->l);
+    mark_mem_operand_uses_as_live(live, &ins->r);
+}
+
+// Marks regs that are defined by the instruction as not live in the given
+// 'live' map
+static void mark_defs_as_dead(int *live, AsmIns *ins) {
+    // Regs defined are no longer live before the current instruction
+    if (defs_left(ins)) {
+        live[ins->l.reg] = 0; // Left operand is a reg and is defined
+    }
+}
+
+// Marks every physical register as dead in the given 'live' map
+static void mark_all_pregs_as_dead(int *live) {
+    for (int preg = 0; preg < LAST_PREG; preg++) {
+        live[preg] = 0;
+    }
 }
 
 // Returns 1 if the live-in list for the BB was changed
@@ -85,53 +131,47 @@ static int uses_right(AsmIns *ins) {
 // a basic block is a subset of the live in set on the next iteration.
 static int live_ranges_for_bb(Fn *fn, LiveRange *ranges, BB *bb) {
     // Keep track of vregs that are live at each program point
-    int live[fn->num_vregs];
-    memset(live, 0, sizeof(int) * fn->num_vregs);
+    int live[fn->num_regs];
+    memset(live, 0, sizeof(int) * fn->num_regs);
 
     // Find everything that's live out for the BB
     for (int i = 0; i < bb->cfg.num_succ; i++) {
         BB *successor = bb->cfg.succ[i];
-        for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
-            live[vreg] |= successor->live.in[vreg];
+        for (int vreg = LAST_PREG; vreg < fn->num_regs; vreg++) {
+            live[vreg] |= successor->live.in[vreg - LAST_PREG];
         }
     }
 
     // Iterate over all instructions in reverse order
     for (AsmIns *ins = bb->asm_last; ins; ins = ins->prev) {
-        // Vregs used or defined are live
-        if ((uses_left(ins) || defs_left(ins)) && ins->l.type == OP_VREG) {
-            live[ins->l.vreg] = 1;
-        }
-        if (uses_right(ins) && ins->r.type == OP_VREG) {
-            live[ins->r.vreg] = 1;
-        }
+        mark_uses_as_live(live, ins);
 
-        // Add the live vregs to the 'live ranges' structure
-        for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
-            LiveRange *range = &ranges[NUM_REGS + vreg];
-            if (live[vreg]) {
+        // Add live regs to the 'live ranges' structure
+        for (int reg = 0; reg < fn->num_regs; reg++) {
+            LiveRange *range = &ranges[reg];
+            if (live[reg]) {
                 add_program_point(range, ins->idx);
             }
         }
+        mark_defs_as_dead(live, ins);
 
-        // Regs defined are no longer live before the current instruction
-        if (defs_left(ins) && ins->l.type == OP_VREG) {
-            live[ins->l.vreg] = 0;
-        }
+        // Physical registers are only live for the single instruction in which
+        // they're used
+        mark_all_pregs_as_dead(live);
     }
 
     // Everything left over is now live-in for the BB
     int changed = 0;
-    for (int vreg = 0; vreg < fn->num_vregs; vreg++) {
+    for (int vreg = LAST_PREG; vreg < fn->num_regs; vreg++) {
         if (live[vreg]) {
-            changed |= !bb->live.in[vreg];
-            bb->live.in[vreg] = 1;
+            changed |= !bb->live.in[vreg - LAST_PREG];
+            bb->live.in[vreg - LAST_PREG] = 1;
         }
     }
     return changed;
 }
 
-static void live_ranges_for_vregs(Fn *fn, LiveRange *ranges) {
+static void live_ranges(Fn *fn, LiveRange *ranges) {
     // Count the basic blocks for the worklist size
     int num_bbs = 0;
     for (BB *bb = fn->entry; bb; bb = bb->next) { num_bbs++; }
@@ -160,36 +200,18 @@ static void live_ranges_for_vregs(Fn *fn, LiveRange *ranges) {
     }
 }
 
-static void live_ranges_for_pregs(Fn *fn, LiveRange *ranges) {
-    // Iterate over all instructions
-    for (BB *bb = fn->entry; bb; bb = bb->next) {
-        for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
-            // Physical registers are only marked live for the single
-            // instruction that uses them
-            if ((uses_left(ins) || defs_left(ins)) && ins->l.type == OP_REG) {
-                add_program_point(&ranges[ins->l.reg], ins->idx);
-            }
-            if (uses_right(ins) && ins->r.type == OP_REG) {
-                add_program_point(&ranges[ins->r.reg], ins->idx);
-            }
-        }
-    }
-}
-
 LiveRange * analyse_live_ranges(Fn *fn) {
     number_ins(fn);
 
     // Allocate the live ranges array, all starting with NULL
-    int num_regs = NUM_REGS + fn->num_vregs;
-    LiveRange *ranges = calloc(num_regs, sizeof(LiveRange));
+    LiveRange *ranges = calloc(fn->num_regs, sizeof(LiveRange));
 
     // Allocate the live-in array for each basic block
     for (BB *bb = fn->entry; bb; bb = bb->next) {
-        bb->live.in = calloc(fn->num_vregs, sizeof(int));
+        bb->live.in = calloc(fn->num_regs - LAST_PREG, sizeof(int));
     }
 
-    live_ranges_for_vregs(fn, ranges);
-    live_ranges_for_pregs(fn, ranges);
+    live_ranges(fn, ranges);
     return ranges;
 }
 
@@ -247,15 +269,15 @@ void print_live_range(LiveRange range) {
     }
 }
 
-void print_live_ranges(LiveRange *ranges, int num_vregs) {
-    for (int reg = 0; reg < NUM_REGS + num_vregs; reg++) {
+void print_live_ranges(LiveRange *ranges, int num_regs) {
+    for (int reg = 0; reg < num_regs; reg++) {
         if (!ranges[reg]) {
             continue; // Reg not used (no live range)
         }
-        if (reg < NUM_REGS) { // Physical register
+        if (reg < LAST_PREG) { // Physical register
             printf("%s", REG_NAMES[reg][REG_Q]);
         } else { // Virtual register
-            printf("%%%d", reg - NUM_REGS);
+            printf("%%%d", reg - LAST_PREG);
         }
         printf(" live at: ");
         print_live_range(ranges[reg]);

@@ -71,6 +71,7 @@ static Prec UNARY_PREC[NUM_TKS] = {
     ['~'] = PREC_UNARY, // Bitwise not
     ['!'] = PREC_UNARY, // Logical not
     ['&'] = PREC_UNARY, // Address-of
+    ['*'] = PREC_UNARY, // Dereference
     [TK_INC] = PREC_UNARY, // Increment
     [TK_DEC] = PREC_UNARY, // Decrement
 };
@@ -129,29 +130,30 @@ static int IS_RIGHT_ASSOC[NUM_TKS] = {
     [TK_RSHIFT_ASSIGN] = 1,
 };
 
-static Tk ASSIGN_OP[NUM_TKS] = {
-    [TK_ADD_ASSIGN] = '+',
-    [TK_SUB_ASSIGN] = '-',
-    [TK_MUL_ASSIGN] = '*',
-    [TK_DIV_ASSIGN] = '/',
-    [TK_MOD_ASSIGN] = '%',
-    [TK_AND_ASSIGN] = '&',
-    [TK_OR_ASSIGN] = '|',
-    [TK_XOR_ASSIGN] = '^',
-    [TK_LSHIFT_ASSIGN] = TK_LSHIFT,
-    [TK_RSHIFT_ASSIGN] = TK_RSHIFT,
-};
-
 static void ensure_lvalue(Expr *lvalue) {
-    if (lvalue->kind != EXPR_LOCAL) {
-        trigger_error_at(lvalue->tk, "expression is not assignable");
+    if (lvalue->kind == EXPR_LOCAL) {
+        return; // Assigning to a local
     }
+    if (lvalue->kind == EXPR_UNARY && lvalue->op == '*') {
+        return; // Assigning to a pointer dereference
+    }
+    trigger_error_at(lvalue->tk, "expression is not assignable");
 }
 
 static void ensure_can_take_addr(Expr *operand) {
     // TODO: there's a few more than just lvalues, see 6.5.3.2 in standard
-    if (operand->kind != EXPR_LOCAL) {
-        trigger_error_at(operand->tk, "cannot take address of operand");
+    if (operand->kind == EXPR_LOCAL) {
+        return; // Address of a local
+    }
+    if (operand->kind == EXPR_UNARY && operand->op == '*') {
+        return; // Address of dereference
+    }
+    trigger_error_at(operand->tk, "cannot take address of operand");
+}
+
+static void ensure_can_deref(Expr *operand) {
+    if (operand->type.ptrs < 1) {
+        trigger_error_at(operand->tk, "cannot dereference operand");
     }
 }
 
@@ -293,15 +295,12 @@ static Expr * parse_cmp(Tk op, Expr *left, Expr *right) {
 }
 
 static Expr * parse_assign(Tk op, Expr *left, Expr *right) {
-    if (op != '=') {
-        // Expand arithmetic assignments to their full thing, e.g., a += 1
-        // becomes a = a + 1 in the AST; makes IR generation easier
-        right = parse_arith(ASSIGN_OP[op], left, right);
-    }
+    // Don't expand +=, etc. to the full a = a + 1; doing so would cause the
+    // compiler to evaluate the lvalue TWICE, when it should only happen once
     ensure_lvalue(left);
     right = conv_to(right, left->type);
     Expr *assign = new_expr(EXPR_BINARY);
-    assign->op = '=';
+    assign->op = op;
     assign->l = left;
     assign->r = right;
     assign->type = right->type; // Assignment results in its right operand
@@ -444,6 +443,16 @@ static Expr * parse_addr(Expr *operand) {
     return addr;
 }
 
+static Expr * parse_deref(Expr *operand) {
+    ensure_can_deref(operand);
+    Expr *deref = new_expr(EXPR_UNARY);
+    deref->op = '*';
+    deref->l = operand;
+    deref->type = operand->type;
+    deref->type.ptrs--;
+    return deref;
+}
+
 static Expr * parse_prefix_inc_dec(Tk op, Expr *operand) {
     // Don't convert everything to i32s for prefix/postfix ++ and --, since
     // it'll just get SEXT'd then TRUNC'd anyway
@@ -482,6 +491,7 @@ static Expr * parse_unary(Parser *p) {
     switch (op) {
         case '!':    unary = parse_not(operand); break;
         case '&':    unary = parse_addr(operand); break;
+        case '*':    unary = parse_deref(operand); break;
         case TK_INC:
         case TK_DEC: unary = parse_prefix_inc_dec(op, operand); break;
         default:     unary = parse_unary_arith(op, operand); break;

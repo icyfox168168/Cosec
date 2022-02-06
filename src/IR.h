@@ -301,10 +301,11 @@ typedef enum {
 #define X(name, _, __, ___, ____, _____) REG_ ## name,
     X86_REGS
 #undef X
-    NUM_REGS,
+    LAST_PREG,
 } Reg;
 
 typedef enum {
+    REG_NONE, // Don't use the reg
     REG_L, // Lowest 8 bits (e.g., al)
     REG_H, // Highest 8 bits of the lowest 16 bits (e.g., ah)
     REG_W, // Lowest 16 bits (e.g., ax)
@@ -312,19 +313,19 @@ typedef enum {
     REG_Q, // All 64 bits (e.g., rax)
 } RegSize;
 
-static char *REG_NAMES[][5] = {
-#define X(name, q, d, w, h, l) {[REG_Q] = (q), [REG_D] = (d), [REG_W] = (w), \
-                                [REG_H] = (h), [REG_L] = (l)},
+static char *REG_NAMES[][6] = {
+#define X(name, q, d, w, h, l) \
+    {[REG_Q] = (q), [REG_D] = (d), [REG_W] = (w), [REG_H] = (h), [REG_L] = (l)},
     X86_REGS
 #undef X
 };
 
 // Tells us the RegSize to use for a 'Type' of a certain number of BYTES.
 static RegSize REG_SIZE[] = {
-    [8] = REG_Q,
-    [4] = REG_D,
-    [2] = REG_W,
     [1] = REG_L,
+    [2] = REG_W,
+    [4] = REG_D,
+    [8] = REG_Q,
 };
 
 #define X86_OPCODES          \
@@ -396,22 +397,27 @@ static int X86_OPCODE_NARGS[] = { // Number of arguments each opcode takes
 
 typedef enum {
     OP_IMM,   // Immediate (constant)
-    OP_REG,   // Physical register (e.g., rax, etc.)
-    OP_VREG,  // Virtual register (only prior to register allocation)
+    OP_REG,   // Physical or virtual register (e.g., rax, %3, etc.)
     OP_MEM,   // Memory access
     OP_LABEL, // Symbol for a branch
     OP_FN,    // Symbol for a call
 } AsmOperandType;
 
+// For OP_REG, 'operand.reg' is >= LAST_PREG if the operand represents a
+// virtual register. 'operand.reg' < LAST_PREG indicates a physical register
 typedef struct {
     AsmOperandType type;
     union {
-        int imm;                           // OP_IMM
-        struct { RegSize size; Reg reg; }; // OP_REG
-        struct { RegSize _s1; int vreg; }; // OP_VREG
-        struct { RegSize _s2; Reg base; int scale, index, bytes; }; // OP_MEM
-        struct bb *bb;                     // OP_LABEL
-        struct fn *fn;                     // OP_FN
+        int imm; // OP_IMM
+        struct { RegSize size; int reg; }; // OP_REG (physical or virtual)
+        struct { // OP_MEM
+            int base_reg; RegSize base_size;
+            int index_reg; RegSize index_size;
+            int scale, disp;
+            int access_size;
+        };
+        struct bb *bb; // OP_LABEL
+        struct fn *fn; // OP_FN
     };
 } AsmOperand;
 
@@ -450,7 +456,7 @@ typedef struct fn {
     struct fn *next;  // Linked list of functions
     char *name;       // Output name for the function
     BB *entry, *last; // Linked list of basic blocks
-    int num_vregs;    // For the assembler (number of vregs used)
+    int num_regs;    // For the assembler (number of vregs used)
 } Fn;
 
 typedef struct {
@@ -466,7 +472,8 @@ IrIns * new_ir(IrOpcode op);
 void emit_ir(BB *bb, IrIns *ins);
 void delete_ir(IrIns *ins);
 
-AsmIns * emit_asm(BB *bb, AsmOpcode op); // TODO: split into new_asm and emit_asm
+AsmIns * new_asm(AsmOpcode op);
+AsmIns * emit_asm(BB *bb, AsmIns *ins);
 void delete_asm(AsmIns *ins);
 
 #endif

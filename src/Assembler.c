@@ -8,7 +8,7 @@
 typedef struct {
     BB *bb;         // Current basic block we're assembling
     int stack_size; // Number of bytes allocated on the stack by 'IR_ALLOC's
-    int vreg;       // Next virtual register slot to use
+    int next_reg;       // Next virtual register slot to use
 } Assembler;
 
 // Tells us which register each function argument is in, according to the
@@ -66,83 +66,102 @@ static AsmOpcode INVERT_COND[NUM_X86_OPS] = { // Invert a conditional opcode
     [X86_JAE] = X86_JB,
 };
 
-static Assembler new_asm() {
+static Assembler new_assembler() {
     Assembler a;
     a.bb = NULL;
     a.stack_size = 0;
-    a.vreg = 0;
+    a.next_reg = LAST_PREG; // Save the first LAST_PREG for physical registers
     return a;
 }
 
-static AsmIns * emit(Assembler *a, AsmOpcode op) {
-    return emit_asm(a->bb, op);
-}
-
-// Converts an IR_ALLOC instruction to a memory access assembly operand, e.g.,
-// to [rbp - 4]
-static AsmOperand alloc_to_mem_operand(IrIns *ir_alloc) {
-    AsmOperand operand;
-    operand.type = OP_MEM;  // From memory
-    operand.base = REG_RBP; // Offset relative to rbp
-    operand.size = REG_Q;
-    operand.scale = 1;
-    Type t = ir_alloc->type;
-    t.ptrs--;
-    operand.bytes = bytes(t); // Number of bytes to read/write
-    operand.index = -ir_alloc->stack_slot;
-    return operand;
+static void emit(Assembler *a, AsmIns *ins) {
+    emit_asm(a->bb, ins);
 }
 
 static AsmOperand discharge(Assembler *a, IrIns *ins); // Forward declarations
 static void asm_cmp(Assembler *a, IrIns *ir_cmp);
 
+// Converts a pointer instruction (i.e., IR_ALLOC, IR_IDX, or some other pointer
+// value) to a memory access assembly operand, e.g., to [rbp - 4] or [rax]
+static AsmOperand to_mem_operand(Assembler *a, IrIns *ir_ptr) {
+    AsmOperand result;
+    if (ir_ptr->op == IR_ALLOC) { // Load from stack
+        result.type = OP_MEM;  // From memory
+        result.base_reg = REG_RBP; // Offset relative to rbp
+        result.base_size = REG_Q;
+        result.index_reg = 0;
+        result.index_size = REG_NONE;
+        result.scale = 1;
+        result.disp = -ir_ptr->stack_slot;
+    } else { // Load from a vreg
+        AsmOperand l = discharge(a, ir_ptr);
+        result.type = OP_MEM; // From memory
+        result.base_reg = l.reg;  // Indexed by a vreg
+        result.base_size = l.size; // Should be REG_Q
+        assert(l.size == REG_Q);
+        result.index_reg = 0;
+        result.index_size = REG_NONE;
+        result.scale = 1;
+        result.disp = 0;
+    }
+    result.scale = 1;
+    Type t = ir_ptr->type;
+    t.ptrs--;
+    result.access_size = bytes(t); // Number of bytes to read/write
+    return result;
+}
+
 static AsmOperand discharge_imm(Assembler *a, IrIns *ir_k) {
-    ir_k->vreg = a->vreg++;
-    AsmIns *mov = emit(a, X86_MOV);
-    mov->l.type = OP_VREG;
-    mov->l.vreg = ir_k->vreg;
+    ir_k->vreg = a->next_reg++;
+    AsmIns *mov = new_asm(X86_MOV);
+    mov->l.type = OP_REG;
+    mov->l.reg = ir_k->vreg;
     mov->l.size = REG_SIZE[bytes(ir_k->type)];
     mov->r.type = OP_IMM;
     mov->r.imm = ir_k->kint;
+    emit(a, mov);
     return mov->l; // The vreg we 'mov'd into is the result
 }
 
 static AsmOperand discharge_load(Assembler *a, IrIns *ir_load) {
-    assert(ir_load->l->op == IR_ALLOC); // Only IR_ALLOC can create pointers
-    ir_load->vreg = a->vreg++;
-    AsmIns *mov = emit(a, X86_MOV);
-    mov->l.type = OP_VREG; // Load into a vreg
-    mov->l.vreg = ir_load->vreg;
+    ir_load->vreg = a->next_reg++;
+    AsmIns *mov = new_asm(X86_MOV);
+    mov->l.type = OP_REG; // Load into a vreg
+    mov->l.reg = ir_load->vreg;
     mov->l.size = REG_SIZE[bytes(ir_load->type)];
-    mov->r = alloc_to_mem_operand(ir_load->l);
+    mov->r = to_mem_operand(a, ir_load->l);
+    emit(a, mov);
     return mov->l;
 }
 
 static AsmOperand discharge_alloc(Assembler *a, IrIns *ir_alloc) {
     // TODO: pointers must be 8 byte aligned as per C standard!
-    ir_alloc->vreg = a->vreg++;
-    AsmIns *lea = emit(a, X86_LEA);
-    lea->l.type = OP_VREG;
-    lea->l.vreg = ir_alloc->vreg;
+    ir_alloc->vreg = a->next_reg++;
+    AsmIns *lea = new_asm(X86_LEA);
+    lea->l.type = OP_REG;
+    lea->l.reg = ir_alloc->vreg;
     lea->l.size = REG_SIZE[bytes(ir_alloc->type)];
-    lea->r = alloc_to_mem_operand(ir_alloc);
-    lea->r.bytes = 0; // Don't care about bytes for a LEA instruction
+    lea->r = to_mem_operand(a, ir_alloc);
+    lea->r.access_size = 0; // Don't care about bytes for a LEA instruction
+    emit(a, lea);
     return lea->l;
 }
 
 static AsmOperand discharge_rel(Assembler *a, IrIns *ir_rel) {
     asm_cmp(a, ir_rel); // Emit a comparison instruction
-    ir_rel->vreg = a->vreg++;
-    AsmIns *set = emit(a, IR_OP_TO_SETXX[ir_rel->op]); // SETcc operation
-    set->l.type = OP_VREG;
-    set->l.vreg = ir_rel->vreg;
+    ir_rel->vreg = a->next_reg++;
+    AsmIns *set = new_asm(IR_OP_TO_SETXX[ir_rel->op]); // SETcc operation
+    set->l.type = OP_REG;
+    set->l.reg = ir_rel->vreg;
     set->l.size = REG_L; // Lowest 8 bits of the vreg
-    AsmIns *and = emit(a, X86_AND); // Clear the rest of the vreg
-    and->l.type = OP_VREG;
-    and->l.vreg = ir_rel->vreg;
+    emit(a, set);
+    AsmIns *and = new_asm(X86_AND); // Clear the rest of the vreg
+    and->l.type = OP_REG;
+    and->l.reg = ir_rel->vreg;
     and->l.size = REG_L; // Lowest 8 bits (ir_rel type is always i1)
     and->r.type = OP_IMM;
     and->r.imm = 1;
+    emit(a, and);
     return and->l;
 }
 
@@ -150,8 +169,8 @@ static AsmOperand discharge_rel(Assembler *a, IrIns *ir_rel) {
 static AsmOperand discharge(Assembler *a, IrIns *ins) {
     if (ins->vreg >= 0) { // Already in a vreg
         AsmOperand result;
-        result.type = OP_VREG;
-        result.vreg = ins->vreg;
+        result.type = OP_REG;
+        result.reg = ins->vreg;
         result.size = REG_SIZE[bytes(ins->type)];
         return result;
     }
@@ -174,7 +193,7 @@ static AsmOperand fold_load(Assembler *a, IrIns *ir_load) {
         return discharge(a, ir_load); // Already in a vreg
     }
     // Otherwise, only has ONE use, so inline the load
-    return alloc_to_mem_operand(ir_load->l);
+    return to_mem_operand(a, ir_load->l);
 }
 
 static AsmOperand inline_kint_or_load(Assembler *a, IrIns *kint_or_load) {
@@ -197,15 +216,16 @@ static AsmOperand inline_kint_or_load(Assembler *a, IrIns *kint_or_load) {
 }
 
 static void asm_farg(Assembler *a, IrIns *ir_farg) {
-    AsmIns *mov = emit(a, X86_MOV);
-    ir_farg->vreg = a->vreg++;
-    mov->l.type = OP_VREG;
-    mov->l.vreg = ir_farg->vreg;
+    AsmIns *mov = new_asm(X86_MOV);
+    ir_farg->vreg = a->next_reg++;
+    mov->l.type = OP_REG;
+    mov->l.reg = ir_farg->vreg;
     mov->l.size = REG_SIZE[bytes(ir_farg->type)];
     mov->r.type = OP_REG;
     // Pull the argument out of the register specified by the ABI
     mov->r.reg = FN_ARGS_REGS[ir_farg->arg_num];
     mov->r.size = mov->l.size;
+    emit(a, mov);
 }
 
 static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
@@ -216,7 +236,6 @@ static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
 }
 
 static void asm_store(Assembler *a, IrIns *ir_store) {
-    assert(ir_store->l->op == IR_ALLOC); // Only source of pointers is IR_ALLOC
     AsmOperand r; // Right operand either an immediate or vreg (not memory)
     if (ir_store->r->op == IR_KINT) { // Constant
         r.type = OP_IMM;
@@ -224,9 +243,10 @@ static void asm_store(Assembler *a, IrIns *ir_store) {
     } else {
         r = discharge(a, ir_store->r); // vreg
     }
-    AsmIns *mov = emit(a, X86_MOV); // Store into memory
-    mov->l = alloc_to_mem_operand(ir_store->l);
+    AsmIns *mov = new_asm(X86_MOV); // Store into memory
+    mov->l = to_mem_operand(a, ir_store->l);
     mov->r = r;
+    emit(a, mov);
 }
 
 static void asm_load(Assembler *a, IrIns *ir_load) {
@@ -245,13 +265,14 @@ static void asm_load(Assembler *a, IrIns *ir_load) {
 // code, i.e., 'a = b + c' becomes 'mov a, b; add a, c'
 static void asm_arith(Assembler *a, IrIns *ir_arith) {
     AsmOperand l = discharge(a, ir_arith->l); // Left operand always a vreg
-    ir_arith->vreg = a->vreg++; // Allocate a new vreg for the result
+    ir_arith->vreg = a->next_reg++; // Allocate a new vreg for the result
 
-    AsmIns *mov = emit(a, X86_MOV); // Emit a mov for the new vreg
-    mov->l.type = OP_VREG;
-    mov->l.vreg = ir_arith->vreg;
+    AsmIns *mov = new_asm(X86_MOV); // Emit a mov for the new vreg
+    mov->l.type = OP_REG;
+    mov->l.reg = ir_arith->vreg;
     mov->l.size = l.size;
     mov->r = l;
+    emit(a, mov);
 
     AsmOperand r = inline_kint_or_load(a, ir_arith->r);
     AsmOpcode op;
@@ -264,9 +285,10 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
         case IR_XOR: op = X86_XOR; break;
         default: UNREACHABLE();
     }
-    AsmIns *arith = emit(a, op);
+    AsmIns *arith = new_asm(op);
     arith->l = mov->l;
     arith->r = r;
+    emit(a, arith);
 }
 
 static void asm_div_mod(Assembler *a, IrIns *ir_div) {
@@ -279,12 +301,13 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
     }
 
     // TODO: doesn't work for i64s
-    AsmIns *mov1 = emit(a, X86_MOV); // Mov dividend into eax
+    AsmIns *mov1 = new_asm(X86_MOV); // Mov dividend into eax
     mov1->l.type = OP_REG;
     mov1->l.reg = REG_RAX;
     mov1->l.size = REG_D;
     mov1->r = dividend;
-    emit(a, X86_CDQ); // Sign extend eax into edx
+    emit(a, mov1);
+    emit(a, new_asm(X86_CDQ)); // Sign extend eax into edx
 
     AsmOpcode op;
     switch (ir_div->op) {
@@ -292,13 +315,14 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
         case IR_UDIV: case IR_UMOD: op = X86_DIV;  break;
         default: UNREACHABLE();
     }
-    AsmIns *div = emit(a, op); // Performs edx:eax / <operand>
+    AsmIns *div = new_asm(op); // Performs edx:eax / <operand>
     div->l = divisor;
+    emit(a, div);
 
-    ir_div->vreg = a->vreg++; // Allocate a new vreg for the result
-    AsmIns *mov2 = emit(a, X86_MOV); // Move the result into a new vreg
-    mov2->l.type = OP_VREG;
-    mov2->l.vreg = ir_div->vreg;
+    ir_div->vreg = a->next_reg++; // Allocate a new vreg for the result
+    AsmIns *mov2 = new_asm( X86_MOV); // Move the result into a new vreg
+    mov2->l.type = OP_REG;
+    mov2->l.reg = ir_div->vreg;
     mov2->l.size = REG_SIZE[bytes(ir_div->type)];
     mov2->r.type = OP_REG;
     if (ir_div->op == IR_SDIV || ir_div->op == IR_UDIV) {
@@ -307,17 +331,19 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
         mov2->r.reg = REG_RDX; // Modulo (remainder in rdx)
     }
     mov2->r.size = mov2->l.size;
+    emit(a, mov2);
 }
 
 static void asm_shift(Assembler *a, IrIns *ir_shift) {
     AsmOperand l = discharge(a, ir_shift->l); // Left operand always a vreg
-    ir_shift->vreg = a->vreg++; // Allocate a new vreg for the result
+    ir_shift->vreg = a->next_reg++; // Allocate a new vreg for the result
 
-    AsmIns *mov1 = emit(a, X86_MOV); // Emit a mov for the new vreg
-    mov1->l.type = OP_VREG;
-    mov1->l.vreg = ir_shift->vreg;
+    AsmIns *mov1 = new_asm(X86_MOV); // Emit a mov for the new vreg
+    mov1->l.type = OP_REG;
+    mov1->l.reg = ir_shift->vreg;
     mov1->l.size = l.size;
     mov1->r = l;
+    emit(a, mov1);
 
     AsmOperand r; // Right operand either an immediate or cl
     if (ir_shift->r->op == IR_KINT) { // Can shift by an immediate
@@ -325,11 +351,12 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
         r.imm = ir_shift->r->kint;
     } else { // Otherwise, shift count has to be in cl
         AsmOperand discharged = discharge(a, ir_shift->r);
-        AsmIns *mov2 = emit(a, X86_MOV); // Move shift count into rcx
+        AsmIns *mov2 = new_asm(X86_MOV); // Move shift count into rcx
         mov2->l.type = OP_REG;
         mov2->l.reg = REG_RCX;
         mov2->l.size = discharged.size;
         mov2->r = discharged;
+        emit(a, mov2);
         r.type = OP_REG;
         r.reg = REG_RCX; // Use cl
         r.size = REG_L;
@@ -342,39 +369,43 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
         case IR_LSHR: op = X86_SHR; break;
         default: UNREACHABLE();
     }
-    AsmIns *shift = emit(a, op);
+    AsmIns *shift = new_asm(op);
     shift->l = mov1->l;
     shift->r = r;
+    emit(a, shift);
 }
 
 static void asm_cmp(Assembler *a, IrIns *ir_cmp) {
     AsmOperand l = discharge(a, ir_cmp->l); // Left operand always a vreg
     AsmOperand r = inline_kint_or_load(a, ir_cmp->r);
-    AsmIns *cmp = emit(a, X86_CMP); // Comparison
+    AsmIns *cmp = new_asm(X86_CMP); // Comparison
     cmp->l = l;
     cmp->r = r;
+    emit(a, cmp);
 }
 
 static void asm_trunc_or_ext(Assembler *a, IrIns *ir_trunc_ext, AsmOpcode op) {
     AsmOperand src = inline_kint_or_load(a, ir_trunc_ext->l);
-    ir_trunc_ext->vreg = a->vreg++; // New vreg for result
-    AsmIns *mov = emit(a, op); // Move into a smaller reg
-    mov->l.type = OP_VREG;
-    mov->l.vreg = ir_trunc_ext->vreg;
+    ir_trunc_ext->vreg = a->next_reg++; // New vreg for result
+    AsmIns *mov = new_asm(op); // Move into a smaller reg
+    mov->l.type = OP_REG;
+    mov->l.reg = ir_trunc_ext->vreg;
     // If we're truncating, we can't do mov eax, qword [rbp-8]; we have to
     // load into rax then use eax afterwards
     RegSize dst_size = REG_SIZE[bytes(ir_trunc_ext->type)];
     mov->l.size = dst_size < src.size ? src.size : dst_size;
     mov->r = src;
+    emit(a, mov);
 }
 
 static void asm_br(Assembler *a, IrIns *ir_br) {
     if (ir_br->br == a->bb->next) { // If the branch is to the next BB
         return; // Don't emit_ins a JMP to the very next instruction
     }
-    AsmIns *jmp = emit(a, X86_JMP);
+    AsmIns *jmp = new_asm(X86_JMP);
     jmp->l.type = OP_LABEL;
     jmp->l.bb = ir_br->br;
+    emit(a, jmp);
 }
 
 static void asm_cond_br(Assembler *a, IrIns *ir_br) {
@@ -386,21 +417,23 @@ static void asm_cond_br(Assembler *a, IrIns *ir_br) {
     if (a->bb->next == ir_br->true) { // If the true case falls through
         op = INVERT_COND[op]; // Invert the condition
     }
-    AsmIns *jmp = emit(a, op); // Emit a conditional JMP instruction
+    AsmIns *jmp = new_asm(op); // Emit a conditional JMP instruction
     jmp->l.type = OP_LABEL;
     if (a->bb->next == ir_br->true) { // If true case falls through
         jmp->l.bb = ir_br->false; // Jump to the false block
     } else { // Otherwise, the false case falls through
         jmp->l.bb = ir_br->true; // Jump to the true block
     }
+    emit(a, jmp);
 }
 
 static void asm_ret0(Assembler *a) {
-    AsmIns *pop = emit(a, X86_POP); // pop rbp
+    AsmIns *pop = new_asm(X86_POP); // pop rbp
     pop->l.type = OP_REG;
     pop->l.reg = REG_RBP;
     pop->l.size = REG_Q;
-    emit(a, X86_RET);
+    emit(a, pop);
+    emit(a, new_asm(X86_RET));
 }
 
 static void asm_ret1(Assembler *a, IrIns *ir_ret) {
@@ -408,11 +441,12 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
     // Make sure to zero the rest of eax by using movsx if the function returns
     // something smaller than an int
     int needs_sext = bits(ir_ret->l->type) < 32;
-    AsmIns *mov = emit(a, needs_sext ? X86_MOVSX : X86_MOV);
+    AsmIns *mov = new_asm(needs_sext ? X86_MOVSX : X86_MOV);
     mov->l.type = OP_REG;
     mov->l.reg = REG_RAX;
     mov->l.size = needs_sext ? REG_D : REG_SIZE[bytes(ir_ret->l->type)];
     mov->r = result;
+    emit(a, mov);
     asm_ret0(a);
 }
 
@@ -452,29 +486,30 @@ static void asm_bb(Assembler *a, BB *ir_bb) {
 }
 
 static void asm_fn_preamble(Assembler *a) {
-    AsmIns *ins;
-    ins = emit(a, X86_PUSH); // push rbp
-    ins->l.type = OP_REG;
-    ins->l.reg = REG_RBP;
-    ins->l.size = REG_Q;
-    ins = emit(a, X86_MOV); // mov rbp, rsp
-    ins->l.type = OP_REG;
-    ins->l.reg = REG_RBP;
-    ins->l.size = REG_Q;
-    ins->r.type = OP_REG;
-    ins->r.reg = REG_RSP;
-    ins->r.size = REG_Q;
+    AsmIns *push = new_asm(X86_PUSH); // push rbp
+    push->l.type = OP_REG;
+    push->l.reg = REG_RBP;
+    push->l.size = REG_Q;
+    emit(a, push);
+    AsmIns *mov = new_asm(X86_MOV); // mov rbp, rsp
+    mov->l.type = OP_REG;
+    mov->l.reg = REG_RBP;
+    mov->l.size = REG_Q;
+    mov->r.type = OP_REG;
+    mov->r.reg = REG_RSP;
+    mov->r.size = REG_Q;
+    emit(a, mov);
 }
 
 static void asm_fn(Fn *fn) {
-    Assembler a = new_asm();
+    Assembler a = new_assembler();
     a.bb = fn->entry;
     asm_fn_preamble(&a); // Add the function preamble to the entry BB
     for (BB *bb = fn->entry; bb; bb = bb->next) { // Assemble each BB
         a.bb = bb;
         asm_bb(&a, bb);
     }
-    fn->num_vregs = a.vreg;
+    fn->num_regs = a.next_reg;
 }
 
 // The 'main' function isn't the first thing that gets executed when the kernel
@@ -501,37 +536,47 @@ static Fn * asm_start(Fn *main) {
     BB *entry = new_bb();
     start->entry = entry;
 
-    Assembler a = new_asm();
+    Assembler a = new_assembler();
     a.bb = entry;
-
     AsmIns *i;
-    i = emit(&a, X86_XOR); // Zero rbp
+    i = new_asm(X86_XOR); // Zero rbp
     i->l.type = OP_REG; i->l.reg = REG_RBP; i->l.size = REG_D;
     i->r.type = OP_REG; i->r.reg = REG_RBP; i->r.size = REG_D;
-    i = emit(&a, X86_MOV); // Take argc off the stack
+    emit(&a, i);
+    i = new_asm(X86_MOV); // Take argc off the stack
     i->l.type = OP_REG; i->l.reg = REG_RDI; i->l.size = REG_D;
-    i->r.type = OP_MEM; i->r.base = REG_RSP; i->r.size = REG_Q; i->r.scale = 1;
-    i->r.index = 0; i->r.bytes = 4;
-    i = emit(&a, X86_LEA); // Take argv off the stack
+    i->r.type = OP_MEM; i->r.base_reg = REG_RSP; i->r.base_size = REG_Q;
+    i->r.index_reg = 0; i->r.index_size = REG_NONE; i->r.scale = 1;
+    i->r.disp = 0; i->r.access_size = 4;
+    emit(&a, i);
+    i = new_asm(X86_LEA); // Take argv off the stack
     i->l.type = OP_REG; i->l.reg = REG_RSI; i->l.size = REG_Q;
-    i->r.type = OP_MEM; i->r.base = REG_RSP; i->r.size = REG_Q; i->r.scale = 1;
-    i->r.index = 8; i->r.bytes = 8;
-    i = emit(&a, X86_LEA); // Take envp off the stack
+    i->r.type = OP_MEM; i->r.base_reg = REG_RSP; i->r.base_size = REG_Q;
+    i->r.index_reg = 0; i->r.index_size = REG_NONE; i->r.scale = 1;
+    i->r.disp = 8; i->r.access_size = 8;
+    emit(&a, i);
+    i = new_asm(X86_LEA); // Take envp off the stack
     i->l.type = OP_REG; i->l.reg = REG_RDX; i->l.size = REG_Q;
-    i->r.type = OP_MEM; i->r.base = REG_RSP; i->r.size = REG_Q; i->r.scale = 1;
-    i->r.index = 16; i->r.bytes = 8;
-    i = emit(&a, X86_XOR); // Zero eax (convention per ABI)
+    i->r.type = OP_MEM; i->r.base_reg = REG_RSP; i->r.base_size = REG_Q;
+    i->r.index_reg = 0; i->r.index_size = REG_NONE; i->r.scale = 1;
+    i->r.disp = 16; i->r.access_size = 8;
+    emit(&a, i);
+    i = new_asm(X86_XOR); // Zero eax (convention per ABI)
     i->l.type = OP_REG; i->l.reg = REG_RAX; i->l.size = REG_D;
     i->r.type = OP_REG; i->r.reg = REG_RAX; i->r.size = REG_D;
-    i = emit(&a, X86_CALL); // Call main
+    emit(&a, i);
+    i = new_asm(X86_CALL); // Call main
     i->l.type = OP_FN; i->l.fn = main;
-    i = emit(&a, X86_MOV); // syscall to exit
+    emit(&a, i);
+    i = new_asm(X86_MOV); // syscall to exit
     i->l.type = OP_REG; i->l.reg = REG_RDI; i->l.size = REG_Q;
     i->r.type = OP_REG; i->r.reg = REG_RAX; i->l.size = REG_Q;
-    i = emit(&a, X86_MOV);
+    emit(&a, i);
+    i = new_asm(X86_MOV);
     i->l.type = OP_REG; i->l.reg = REG_RAX; i->l.size = REG_Q;
     i->r.type = OP_IMM; i->r.imm = 0x2000001;
-    emit(&a, X86_SYSCALL);
+    emit(&a, i);
+    emit(&a, new_asm(X86_SYSCALL));
     return start;
 }
 
