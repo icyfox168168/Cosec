@@ -22,20 +22,25 @@ static Parser new_parser(char *file) {
 }
 
 static Local * find_local(Parser *p, char *name, int len) {
-    // TODO: compare against function names too
     for (Local *l = p->locals; l; l = l->next) {
         if (strlen(l->name) == len && strncmp(l->name, name, len) == 0) {
-            return l; // Already defined
+            return l;
         }
     }
     return NULL;
 }
 
-static Local * def_local(Parser *p, char *name, SignedType type) {
-    Local *new = new_local(name, type);
-    new->next = p->locals; // Prepend to the linked list
-    p->locals = new;
-    return new;
+static Local * def_local(Parser *p, TkInfo name, SignedType type) {
+    if (find_local(p, name.start, name.len)) {
+        trigger_error_at(name, "redefinition of '%.*s'", name.len, name.start);
+    }
+    char *name_str = malloc((name.len + 1) * sizeof(char));
+    strncpy(name_str, name.start, name.len);
+    name_str[name.len] = '\0';
+    Local *local = new_local(name_str, type);
+    local->next = p->locals; // Prepend to the linked list
+    p->locals = local;
+    return local;
 }
 
 
@@ -621,12 +626,10 @@ static Stmt * parse_decl(Parser *p) {
     Stmt **decl = &head;
     while (p->l.tk != ';') {
         expect_tk(&p->l, TK_IDENT);
-        char *name = malloc((p->l.len + 1) * sizeof(char));
-        strncpy(name, p->l.ident, p->l.len);
-        name[p->l.len] = '\0';
-        TkInfo local_tk = p->l.info;
-        if (find_local(p, name, p->l.len)) { // Check isn't already defined
-            trigger_error_at(local_tk, "redefinition of '%s'", name);
+        TkInfo name = p->l.info;
+        if (find_local(p, name.start, name.len)) { // Check not already defined
+            trigger_error_at(name, "redefinition of '%.*s'", name.len,
+                             name.start);
         }
         next_tk(&p->l);
 
@@ -644,7 +647,7 @@ static Stmt * parse_decl(Parser *p) {
             Expr *local_expr = new_expr(EXPR_LOCAL);
             local_expr->local = result->local;
             local_expr->type = result->local->type;
-            local_expr->tk = local_tk;
+            local_expr->tk = name;
             Stmt *assign = new_stmt(STMT_EXPR);
             assign->expr = parse_assign('=', local_expr, value);
             *decl = assign; // Chain the declaration and assignment
@@ -864,12 +867,9 @@ static Stmt * parse_stmt(Parser *p) {
 static FnArg * parse_fn_decl_arg(Parser *p) {
     SignedType type = parse_decl_spec(p); // Type
     expect_tk(&p->l, TK_IDENT); // Name
-    char *name = malloc((p->l.len + 1) * sizeof(char));
-    strncpy(name, p->l.ident, p->l.len);
-    name[p->l.len] = '\0';
-    next_tk(&p->l);
     FnArg *arg = new_fn_arg();
-    arg->local = def_local(p, name, type);
+    arg->local = def_local(p, p->l.info, type);
+    next_tk(&p->l);
     return arg;
 }
 
@@ -893,26 +893,22 @@ static FnArg * parse_fn_decl_args(Parser *p) {
     return head;
 }
 
-static FnDecl * parse_fn_decl(Parser *p) {
-    FnDecl *decl = new_fn_decl();
-    decl->return_type = parse_decl_spec(p);
-    expect_tk(&p->l, TK_IDENT);
-    decl->name = malloc((p->l.len + 1) * sizeof(char)); // Name
-    strncpy(decl->name, p->l.ident, p->l.len);
-    decl->name[p->l.len] = '\0';
-    next_tk(&p->l);
-    decl->args = parse_fn_decl_args(p);
-    return decl;
-}
-
 static FnDef * parse_fn_def(Parser *p) {
     FnDef *def = new_fn_def();
     p->fn = def;
-    // 'parse_fn_decl' creates new locals for the function arguments; create
-    // a new scope so that they get deleted once we've parsed the function
+
+    def->decl = new_fn_decl();
+    def->decl->return_type = parse_decl_spec(p); // Return type
+
+    expect_tk(&p->l, TK_IDENT); // Name
+    def->decl->local = def_local(p, p->l.info, signed_none());
+    next_tk(&p->l);
+
+    // 'parse_fn_decl_args' creates new locals for the function arguments;
+    // create a new scope so that they get deleted
     Local *scope = p->locals;
-    def->decl = parse_fn_decl(p);
-    def->body = parse_block(p);
+    def->decl->args = parse_fn_decl_args(p); // Arguments
+    def->body = parse_block(p); // Body
     p->locals = scope;
     return def;
 }

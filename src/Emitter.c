@@ -9,14 +9,14 @@ static char *X86_OPCODE_NAMES[] = {
 #undef X
 };
 
-static char * NASM_MEM_PREFIX[] = {
+static char *NASM_MEM_PREFIX[] = {
     [1] = "byte",
     [2] = "word",
     [4] = "dword",
     [8] = "qword",
 };
 
-static void encode_operand(AsmOperand op, FILE *out) {
+static void write_operand(AsmOperand op, FILE *out) {
     switch (op.type) {
     case OP_IMM: fprintf(out, "%d", op.imm); break;
     case OP_REG: fprintf(out, "%s", REG_NAMES[op.reg][op.size]); break;
@@ -49,40 +49,40 @@ static void encode_operand(AsmOperand op, FILE *out) {
     }
 }
 
-static void encode_ins(AsmIns *ins, FILE *out) {
+static void write_ins(AsmIns *ins, FILE *out) {
     fprintf(out, "    "); // Indent instructions by 4 spaces
     fprintf(out, "%s", X86_OPCODE_NAMES[ins->op]); // Opcode
     if (X86_OPCODE_NARGS[ins->op] >= 1) { // First argument
         fprintf(out, " ");
-        encode_operand(ins->l, out);
+        write_operand(ins->l, out);
     }
     if (X86_OPCODE_NARGS[ins->op] >= 2) { // Second argument
         fprintf(out, ", ");
-        encode_operand(ins->r, out);
+        write_operand(ins->r, out);
     }
     fprintf(out, "\n");
 }
 
-static void encode_bb(BB *bb, FILE *out) {
+static void write_bb(BB *bb, FILE *out) {
     if (bb->label) {
         fprintf(out, "%s:\n", bb->label);
     }
     for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
-        encode_ins(ins, out); // Print every instruction in the BB
+        write_ins(ins, out); // Print every instruction in the BB
     }
 }
 
-static void encode_fn(Fn *fn, FILE *out) {
+static void write_fn(Fn *fn, FILE *out) {
     fprintf(out, "global %s\n", fn->name); // Make every function global
     fprintf(out, "%s:\n", fn->name);
     for (BB *bb = fn->entry; bb; bb = bb->next) {
-        encode_bb(bb, out); // Print every basic block in the function
+        write_bb(bb, out); // Print every basic block in the function
     }
 }
 
-void encode_nasm(Module *m, FILE *out) {
+void emit_nasm(Module *m, FILE *out) {
     for (Fn *fn = m->fns; fn; fn = fn->next) {
-        encode_fn(fn, out); // Print every function in the module
+        write_fn(fn, out); // Print every function in the module
         if (fn->next) {
             fprintf(out, "\n"); // Separated by a new line
         }

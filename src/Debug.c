@@ -162,7 +162,7 @@ void print_ast(FnDef *fn) {
         return;
     }
     print_type(signed_to_type(fn->decl->return_type));
-    printf(" %s ( ", fn->decl->name);
+    printf(" %s ( ", fn->decl->local->name);
     for (FnArg *arg = fn->decl->args; arg; arg = arg->next) {
         print_local(arg->local);
         if (arg->next) {

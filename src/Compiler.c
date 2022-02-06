@@ -772,7 +772,7 @@ static char * prepend_underscore(char *str) {
 static Fn * compile_fn_def(Compiler *c, FnDef *ast_fn) {
     Fn *fn = new_fn();
     c->fn = fn;
-    fn->name = prepend_underscore(ast_fn->decl->name);
+    fn->name = prepend_underscore(ast_fn->decl->local->name);
     fn->entry = emit_bb(c); // Entry block
     compile_fn_args(c, ast_fn->decl->args);
     compile_block(c, ast_fn->body); // Body

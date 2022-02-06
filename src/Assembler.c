@@ -540,10 +540,16 @@ static Fn * asm_start(Fn *main) {
 }
 
 void assemble(Module *module) {
-    module->main = module->fns; // TODO: first function is 'main'
     for (Fn *fn = module->fns; fn; fn = fn->next) {
+        if (strcmp(fn->name, "main") == 0) {
+            module->main = fn; // Set the main function
+        }
         asm_fn(fn);
     }
-    Fn *start = asm_start(module->main); // Insert 'start' stub
-    module->fns->next = start;
+    // Insert a 'start' stub if this module has a main function
+    if (module->main) {
+        Fn *start = asm_start(module->main);
+        start->next = module->fns;
+        module->fns = start;
+    }
 }

@@ -31,8 +31,12 @@ Current features include:
 * **Tests**: Cosec comes with a suite of (relatively basic) tests using a
   simple Python wrapper and CMake's unit testing feature.
 
-The compiler pipeline occurs in multiple stages, with the output of one stage
-being fed into the next:
+
+## Compiler Pipeline
+
+The compiler pipeline is the journey from C code to final output assembly. It
+occurs in multiple stages, with the output of one stage being fed into the
+next.
 
 1. **Lexing**: the C source code is read and converted into a sequence of
    tokens.
@@ -50,10 +54,10 @@ being fed into the next:
    passes are interleaved to try and generate more efficient assembly.
 6. **Assembling**: the three-address SSA IR is lowered to the two-address
    target assembly language IR (only x86-64 is supported, for now).
-8. **Register allocation**: the assembler generates IR that uses an unlimited
+7. **Register allocation**: the assembler generates IR that uses an unlimited
    number of virtual registers; it's the job of the register allocator to
    assign virtual registers to physical ones.
-9. **Emission**: the final assembly code is written to an output file (only
+8. **Emission**: the final assembly code is written to an output file (only
    NASM assembly format is supported, for now).
 
 

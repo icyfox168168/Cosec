@@ -87,7 +87,7 @@ FnDef * new_fn_def() {
 FnDecl * new_fn_decl() {
     FnDecl *decl = malloc(sizeof(FnDecl));
     decl->return_type = signed_none();
-    decl->name = NULL;
+    decl->local = NULL;
     decl->args = NULL;
     return decl;
 }

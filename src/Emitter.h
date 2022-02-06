@@ -14,6 +14,6 @@
 // are planned in the future, including one that implements the x86-64
 // instruction encoding.
 
-void encode_nasm(Module *m, FILE *out);
+void emit_nasm(Module *m, FILE *out);
 
 #endif

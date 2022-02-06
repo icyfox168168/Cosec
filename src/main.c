@@ -35,17 +35,62 @@ typedef struct {
     int help, version;
 } CLIOpts;
 
-void print_version() {
-    printf("Cosec v0.1\n");
-    printf("A toy optimising C compiler\n");
+static void print_version() {
+    printf("cosec 0.1.0\n");
 }
 
-void print_help() {
+static void print_help() {
     printf("Usage: cosec [options] <files>\n");
     printf("\n");
     printf("Options:\n");
     printf("  --help, -h       Print this help message\n");
     printf("  --version, -v    Print the compiler version\n");
+}
+
+static void pipeline(char *file) {
+    // AST
+    AstModule *ast = parse(file);
+    printf("---- AST\n");
+    for (FnDef *fn = ast->fns; fn; fn = fn->next) {
+        print_ast(fn);
+        printf("\n");
+    }
+
+    // SSA IR
+    Module *module = compile(ast);
+    printf("---- SSA IR\n");
+    for (Fn *fn = module->fns; fn; fn = fn->next) {
+        printf("%s:\n", fn->name);
+        print_ir(fn);
+        printf("\n");
+    }
+
+    // IR analysis
+    for (Fn *fn = module->fns; fn; fn = fn->next) {
+        analyse_use_chains(fn);
+    }
+
+    // Assembler
+    assemble(module);
+    printf("---- Assembly IR\n");
+    emit_nasm(module, stdout);
+    printf("\n");
+
+    // Register allocator
+    printf("---- Register allocation\n");
+    for (Fn *fn = module->fns; fn; fn = fn->next) {
+        printf("Register allocation for function '%s':\n", fn->name);
+        analyse_cfg(fn->entry);
+        LiveRange *live_ranges = analyse_live_ranges(fn);
+        reg_alloc(fn, live_ranges);
+        printf("\n");
+    }
+
+    // Emitter
+    printf("---- Final\n");
+    emit_nasm(module, stdout);
+    FILE *output = fopen("out.s", "w");
+    emit_nasm(module, output);
 }
 
 int main(int argc, char *argv[]) {
@@ -66,31 +111,7 @@ int main(int argc, char *argv[]) {
     } else if (opts.help || !file) {
         print_help();
     } else {
-        // TODO: only handles a single function for now
-        AstModule *ast = parse(file);
-        printf("---- AST\n");
-        print_ast(ast->fns);
-        printf("\n");
-
-        Module *module = compile(ast);
-        printf("---- IR\n");
-        print_ir(module->fns);
-        printf("\n");
-
-        analyse_use_chains(module->fns);
-        assemble(module);
-        printf("---- Assembly\n");
-        encode_nasm(module, stdout);
-        printf("\n");
-
-        printf("---- Register allocated assembly\n");
-        analyse_cfg(module->fns->entry);
-        LiveRange *live_ranges = analyse_live_ranges(module->fns);
-        reg_alloc(module->fns, live_ranges);
-        encode_nasm(module, stdout);
-
-        FILE *output = fopen("out.s", "w");
-        encode_nasm(module, output);
+        pipeline(file);
     }
     return 0;
 }

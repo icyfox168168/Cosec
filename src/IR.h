@@ -55,6 +55,7 @@ typedef struct {
 } SignedType;
 
 Type signed_to_type(SignedType t);
+SignedType signed_none();
 SignedType signed_i1();
 SignedType signed_i32();
 int signed_bits(SignedType t);  // Returns the size of a type in bits
@@ -129,7 +130,7 @@ typedef struct fn_arg {
 
 typedef struct {
     SignedType return_type;
-    char *name;
+    Local *local;
     FnArg *args; // Linked list of function arguments
 } FnDecl;
 
