@@ -28,6 +28,8 @@ Current features include:
 * **Register allocation**: Cosec uses a complex graph-colouring algorithm for
   register allocation, including support for pre-coloured nodes, register
   coalescing, and spilling.
+* **Tests**: Cosec comes with a suite of (relatively basic) tests using a
+  simple Python wrapper and CMake's unit testing feature.
 
 The compiler pipeline occurs in multiple stages, with the output of one stage
 being fed into the next:
@@ -98,7 +100,7 @@ Other command line arguments include:
 | `--asm`           | Output assembly IR (before register allocation) |
 
 
-## Compiling Cosec
+## Building Cosec
 
 You can build a release version of Cosec with [CMake](https://cmake.org/):
 
@@ -113,6 +115,13 @@ You can build a debug version with:
 
 ```bash
 $ cmake -DCMAKE_BUILD_TYPE=Debug ..
+$ make
+```
+
+You can run the test suite with:
+
+```bash
+$ make test
 ```
 
 Hopefully in the future, you'll be able to build Cosec with itself!

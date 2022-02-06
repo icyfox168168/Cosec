@@ -108,8 +108,10 @@ static void print_stmt(int indent, Stmt *stmt) {
         break;
     case STMT_WHILE:
         printf("while ");
-        print_expr(stmt->cond);
-        printf(" ");
+        if (stmt->cond) {
+            print_expr(stmt->cond);
+            printf(" ");
+        }
         print_block(indent + 1, stmt->body);
         printf("\n");
         break;

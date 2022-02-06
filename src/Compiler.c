@@ -553,7 +553,33 @@ static void compile_if(Compiler *c, Stmt *stmt) {
     patch_branch_chain(head, after);
 }
 
+static void compile_infinite_loop(Compiler *c, Stmt *stmt) {
+    IrIns *before_br = new_ir(IR_BR);
+    emit(c, before_br);
+
+    Loop loop;
+    loop.breaks = NULL;
+    loop.outer = c->loop;
+    c->loop = &loop;
+    BB *body = emit_bb(c);
+    before_br->br = body;
+    compile_block(c, stmt->body); // Body
+    IrIns *end_br = new_ir(IR_BR);
+    end_br->br = body;
+    emit(c, end_br);
+    c->loop = loop.outer;
+
+    BB *after = emit_bb(c);
+    patch_branch_chain(loop.breaks, after);
+}
+
 static void compile_while(Compiler *c, Stmt *stmt) {
+    if (!stmt->cond) { // Infinite loop, e.g., in the case of 'for (;;) ...'
+        // It's easier to special-case this than try deal with it below ->
+        // makes the code significantly more readable
+        compile_infinite_loop(c, stmt);
+        return;
+    }
     IrIns *before_br = new_ir(IR_BR);
     emit(c, before_br);
     BB *cond_bb = emit_bb(c);

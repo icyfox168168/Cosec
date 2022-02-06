@@ -84,8 +84,6 @@ static int uses_right(AsmIns *ins) {
 // This method is guaranteed to work since the live in set on one iteration of
 // a basic block is a subset of the live in set on the next iteration.
 static int live_ranges_for_bb(Fn *fn, LiveRange *ranges, BB *bb) {
-    bb->live.mark = 1; // We've processed this BB's live ranges now
-
     // Keep track of vregs that are live at each program point
     int live[fn->num_vregs];
     memset(live, 0, sizeof(int) * fn->num_vregs);
@@ -134,26 +132,28 @@ static int live_ranges_for_bb(Fn *fn, LiveRange *ranges, BB *bb) {
 }
 
 static void live_ranges_for_vregs(Fn *fn, LiveRange *ranges) {
-    // Count the basic blocks
+    // Count the basic blocks for the worklist size
     int num_bbs = 0;
     for (BB *bb = fn->entry; bb; bb = bb->next) { num_bbs++; }
 
-    // Create a worklist of basic blocks
-    BB *worklist[num_bbs];
+    // Create a worklist of basic blocks; the size of the worklist is the
+    // worst case scenario, where every BB is a predecessor of every other BB
+    BB *worklist[num_bbs * num_bbs];
     int num_worklist = 0;
-    worklist[num_worklist++] = fn->last; // Start with the LAST BB in the fn
+
+    // Add all the BB (in reverse order, so that we start with the last BB) to
+    // the worklist -> ensures that they ALL get analysed at least once
+    for (BB *bb = fn->last; bb; bb = bb->prev) {
+        worklist[num_worklist++] = bb;
+    }
 
     // Iterate until the worklist is empty
     while (num_worklist > 0) {
         BB *bb = worklist[--num_worklist]; // Pull the last BB off the worklist
         int changed = live_ranges_for_bb(fn, ranges, bb);
-
-        // Iterate over the predecessors
-        for (int pred_idx = 0; pred_idx < bb->cfg.num_pred; pred_idx++) {
-            BB *pred = bb->cfg.pred[pred_idx];
-            // Add the predecessor to the worklist if the live in list changed
-            // (add all predecessors), or if it is yet to been processed
-            if (changed || !pred->live.mark) {
+        if (changed) { // Add predecessors to worklist if live-in changed
+            for (int pred_idx = 0; pred_idx < bb->cfg.num_pred; pred_idx++) {
+                BB *pred = bb->cfg.pred[pred_idx];
                 worklist[num_worklist++] = pred;
             }
         }
@@ -186,7 +186,6 @@ LiveRange * analyse_live_ranges(Fn *fn) {
     // Allocate the live-in array for each basic block
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         bb->live.in = calloc(fn->num_vregs, sizeof(int));
-        bb->live.mark = 0;
     }
 
     live_ranges_for_vregs(fn, ranges);

@@ -31,7 +31,6 @@ typedef struct {
 // Liveness information consists of just the live-in vregs for each BB.
 typedef struct {
     int *in;  // Set of all vregs that are live-in at the start of a block
-    int mark; // Make sure we calculate liveness for every BB at least once
 } LivenessInfo;
 
 #endif

@@ -576,17 +576,21 @@ static Prim TYPE_COMBINATION_TO_PRIM[NUM_TYPE_COMBINATIONS] = {
     T_f64,  // long double
 };
 
+static int has_decl(Parser *p) {
+    return TYPE_SPECS[p->l.tk];
+}
+
 static SignedType parse_decl_spec(Parser *p) {
     // Check there's at least one type specifier
     TkInfo start = p->l.info;
-    if (!TYPE_SPECS[p->l.tk]) {
+    if (!has_decl(p)) {
         trigger_error_at(start, "expected declaration");
     }
     // Keep parsing type specifiers into a hash-map until there's no more
     int type_specs[COMBINATION_SIZE];
     memset(type_specs, 0, sizeof(int) * (NUM_TKS - FIRST_KEYWORD));
     TkInfo end = start;
-    while (TYPE_SPECS[p->l.tk]) {
+    while (has_decl(p)) {
         type_specs[p->l.tk - FIRST_KEYWORD]++;
         end = p->l.info;
         next_tk(&p->l);
@@ -718,33 +722,50 @@ static Stmt * parse_while(Parser *p) {
 }
 
 static Stmt * parse_for(Parser *p) {
-    Stmt *head;
+    Stmt *head = NULL;
     Stmt **stmt = &head;
     expect_tk(&p->l, TK_FOR);
     next_tk(&p->l);
     expect_tk(&p->l, '(');
     next_tk(&p->l);
     Local *scope = p->locals;
-    *stmt = parse_decl(p); // Declaration
-    while (*stmt) { // Find the end of the declaration
+
+    if (has_decl(p)) { // Initializer
+        *stmt = parse_decl(p); // Declaration initializer
+    } else if (p->l.tk != ';') {
+        *stmt = parse_expr_stmt(p); // Expression initializer
+    } else {
+        next_tk(&p->l); // No initializer, skip ';'
+    }
+    while (*stmt) { // Find the end of the initializer
         stmt = &(*stmt)->next;
     }
-    Expr *cond = parse_expr(p); // Condition
-    cond = to_cond(cond);
+
+    Expr *cond = NULL; // Condition
+    if (p->l.tk != ';') {
+        cond = parse_expr(p);
+        cond = to_cond(cond);
+    }
     expect_tk(&p->l, ';');
     next_tk(&p->l);
-    Expr *inc = parse_expr(p); // Increment
-    Stmt *inc_stmt = new_stmt(STMT_EXPR);
-    inc_stmt->expr = inc;
+
+    Stmt *inc_stmt = NULL;
+    if (p->l.tk != ')') {
+        Expr *inc = parse_expr(p); // Increment
+        inc_stmt = new_stmt(STMT_EXPR);
+        inc_stmt->expr = inc;
+    }
     expect_tk(&p->l, ')');
     next_tk(&p->l);
+
     Stmt *body = parse_block(p); // Body
     Stmt **end = &body;
     while (*end) { // Find the end of the body
         end = &(*end)->next;
     }
     *end = inc_stmt; // Put the increment statement at the end of the body
-    p->locals = scope; // Remove the declaration in the loop header
+    p->locals = scope; // Remove the declarations in the loop header
+
     Stmt *loop = new_stmt(STMT_WHILE);
     loop->cond = cond;
     loop->body = body;
@@ -804,7 +825,7 @@ static Stmt * parse_stmt(Parser *p) {
     case TK_BREAK:  return parse_break(p);       // Break
     case TK_RETURN: return parse_ret(p);         // Return
     default:
-        if (TYPE_SPECS[p->l.tk]) {
+        if (has_decl(p)) {
             return parse_decl(p);                // Declaration
         } else {
             return parse_expr_stmt(p);           // Expression
