@@ -602,36 +602,49 @@ static SignedType parse_decl_spec(Parser *p) {
 
 static Stmt * parse_decl(Parser *p) {
     SignedType type = parse_decl_spec(p); // Type
-    expect_tk(&p->l, TK_IDENT); // Name
-    char *name = malloc((p->l.len + 1) * sizeof(char));
-    strncpy(name, p->l.ident, p->l.len);
-    name[p->l.len] = '\0';
-    TkInfo local_tk = p->l.info;
-    if (find_local(p, name, p->l.len)) { // Check isn't already defined
-        trigger_error_at(local_tk, "redefinition of '%s'", name);
-    }
-    next_tk(&p->l);
+    Stmt *head;
+    Stmt **decl = &head;
+    while (p->l.tk != ';') {
+        expect_tk(&p->l, TK_IDENT);
+        char *name = malloc((p->l.len + 1) * sizeof(char));
+        strncpy(name, p->l.ident, p->l.len);
+        name[p->l.len] = '\0';
+        TkInfo local_tk = p->l.info;
+        if (find_local(p, name, p->l.len)) { // Check isn't already defined
+            trigger_error_at(local_tk, "redefinition of '%s'", name);
+        }
+        next_tk(&p->l);
 
-    Expr *value = NULL;
-    if (p->l.tk == '=') { // Assignment
-        next_tk(&p->l); // Skip the '=' token
-        value = parse_expr(p);
-    }
+        Expr *value = NULL;
+        if (p->l.tk == '=') { // Assignment
+            next_tk(&p->l); // Skip the '=' token
+            value = parse_expr(p);
+        }
 
-    Stmt *result = new_stmt(STMT_DECL);
-    result->local = def_local(p, name, type);
-    if (value) {
-        Expr *local_expr = new_expr(EXPR_LOCAL);
-        local_expr->local = result->local;
-        local_expr->type = result->local->type;
-        local_expr->tk = local_tk;
-        Stmt *assign = new_stmt(STMT_EXPR);
-        assign->expr = parse_assign('=', local_expr, value);
-        result->next = assign; // Chain the declaration and assignment
+        Stmt *result = new_stmt(STMT_DECL);
+        result->local = def_local(p, name, type);
+        *decl = result;
+        decl = &(*decl)->next;
+        if (value) {
+            Expr *local_expr = new_expr(EXPR_LOCAL);
+            local_expr->local = result->local;
+            local_expr->type = result->local->type;
+            local_expr->tk = local_tk;
+            Stmt *assign = new_stmt(STMT_EXPR);
+            assign->expr = parse_assign('=', local_expr, value);
+            *decl = assign; // Chain the declaration and assignment
+            decl = &(*decl)->next;
+        }
+
+        if (p->l.tk == ',') {
+            next_tk(&p->l); // Parse another declaration
+        } else {
+            break; // Stop parsing declarations
+        }
     }
     expect_tk(&p->l, ';');
     next_tk(&p->l);
-    return result;
+    return head;
 }
 
 static Stmt * parse_expr_stmt(Parser *p) {
