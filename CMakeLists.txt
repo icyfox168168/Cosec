@@ -13,7 +13,6 @@ add_executable(Cosec
         src/analysis/CFG.c src/analysis/CFG.h
         src/analysis/Liveness.c src/analysis/Liveness.h
         src/analysis/UseChain.c src/analysis/UseChain.h
-        src/opt/Fold.c src/opt/Fold.h
         src/Assembler.c src/Assembler.h
         src/Compiler.c src/Compiler.h
         src/Debug.c src/Debug.h
