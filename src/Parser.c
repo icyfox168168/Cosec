@@ -141,7 +141,7 @@ static void ensure_lvalue(Expr *lvalue) {
 }
 
 static void ensure_can_take_addr(Expr *operand) {
-    // TODO: there's a few more than just lvalues, see 6.5.3.2 in standard
+    // See 6.5.3.2 in C99 standard for what's allowed
     if (operand->kind == EXPR_LOCAL) {
         return; // Address of a local
     }

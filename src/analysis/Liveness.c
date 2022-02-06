@@ -99,6 +99,11 @@ static void mark_uses_as_live(int *live, AsmIns *ins) {
     // Regs used in memory accesses are live
     mark_mem_operand_uses_as_live(live, &ins->l);
     mark_mem_operand_uses_as_live(live, &ins->r);
+
+    // rsp and rbp shouldn't be used for register allocation -> mark them as
+    // live EVERYWHERE
+    live[REG_RBP] = 1;
+    live[REG_RSP] = 1;
 }
 
 // Marks regs that are defined by the instruction as not live in the given

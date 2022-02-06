@@ -312,25 +312,26 @@ static IrIns * compile_operation(Compiler *c, Expr *binary) {
 static IrIns * compile_assign(Compiler *c, Expr *assign) {
     IrIns *target, *right;
     if (assign->op != '=') {
+        // TODO: +=, etc. don't perform the standard integer type promotions!
+        // For example, compare LLVM output for 'char c = 3; c += 1;'
         right = compile_operation(c, assign);
-        // 'right' is an arith (e.g., IR_ADD); 'right->l' will be the IR_LOAD
-        // for the lvalue we want to assign to. Don't just call 'compile_expr'
-        // again because 'compile_operation' already did it; we'd be duplicating
-        // the lvalue calculation otherwise
+        // Don't just call 'compile_expr' again because 'compile_operation'
+        // has already done so; we'd be duplicating the lvalue calculation.
+        // 'right' is an arith (e.g., IR_ADD); 'right->l' is our IR_LOAD
         target = new_ir(IR_LOAD);
+        *target = *right->l;
         *target = *right->l;
         target->next = NULL;
         emit(c, target);
     } else {
         right = compile_expr(c, assign->r); // Value for assignment
         right = discharge_cond(c, right);
-        // Compute the lvalue to assign to
-        target = compile_expr(c, assign->l);
+        target = compile_expr(c, assign->l); // lvalue to assign to
     }
     // Change an IR_LOAD instruction into an IR_STORE
-    assert(target->op == IR_LOAD); // Ensure 'assign->l' is an lvalue
+    assert(target->op == IR_LOAD);
     target->op = IR_STORE;
-    // IR_STORE destination is the same as the IR_LOAD (don't change store->l)
+    // IR_STORE destination is the same as the IR_LOAD (don't change target->l)
     target->r = right;
     target->type = type_none(); // Clear the type set by the IR_LOAD
     return right; // Assignment evaluates to its right operand
