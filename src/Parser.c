@@ -662,6 +662,8 @@ static Stmt * parse_decl(Parser *p) {
     return head;
 }
 
+static Stmt * parse_stmt(Parser *p); // Forward declaration
+
 static Stmt * parse_expr_stmt(Parser *p) {
     Stmt *stmt = new_stmt(STMT_EXPR);
     stmt->expr = parse_expr(p);
@@ -669,8 +671,6 @@ static Stmt * parse_expr_stmt(Parser *p) {
     next_tk(&p->l);
     return stmt;
 }
-
-static Stmt * parse_block(Parser *p); // Forward declaration
 
 static Stmt * parse_if(Parser *p) {
     expect_tk(&p->l, TK_IF);
@@ -685,7 +685,7 @@ static Stmt * parse_if(Parser *p) {
         cond = to_cond(cond);
         expect_tk(&p->l, ')');
         next_tk(&p->l);
-        Stmt *body = parse_block(p); // Body
+        Stmt *body = parse_stmt(p); // Body
         IfChain *this_if = new_if_chain();
         this_if->cond = cond;
         this_if->body = body;
@@ -701,7 +701,7 @@ static Stmt * parse_if(Parser *p) {
     }
     if (has_else) {
         IfChain *this_else = new_if_chain();
-        this_else->body = parse_block(p);
+        this_else->body = parse_stmt(p);
         *if_chain = this_else;
     }
     return stmt;
@@ -717,7 +717,7 @@ static Stmt * parse_while(Parser *p) {
     stmt->cond = to_cond(cond);
     expect_tk(&p->l, ')');
     next_tk(&p->l);
-    stmt->body = parse_block(p); // Body
+    stmt->body = parse_stmt(p); // Body
     return stmt;
 }
 
@@ -758,7 +758,7 @@ static Stmt * parse_for(Parser *p) {
     expect_tk(&p->l, ')');
     next_tk(&p->l);
 
-    Stmt *body = parse_block(p); // Body
+    Stmt *body = parse_stmt(p); // Body
     Stmt **end = &body;
     while (*end) { // Find the end of the body
         end = &(*end)->next;
@@ -777,7 +777,7 @@ static Stmt * parse_do_while(Parser *p) {
     Stmt *stmt = new_stmt(STMT_DO_WHILE);
     expect_tk(&p->l, TK_DO);
     next_tk(&p->l);
-    stmt->body = parse_block(p); // Body
+    stmt->body = parse_stmt(p); // Body
     expect_tk(&p->l, TK_WHILE);
     next_tk(&p->l);
     expect_tk(&p->l, '(');
@@ -814,36 +814,19 @@ static Stmt * parse_ret(Parser *p) {
     return ret;
 }
 
-static Stmt * parse_stmt(Parser *p) {
-    switch (p->l.tk) {
-    case ';':       next_tk(&p->l); return NULL; // Empty
-    case '{':       return parse_block(p);       // Block
-    case TK_IF:     return parse_if(p);          // If/else if/else
-    case TK_WHILE:  return parse_while(p);       // While loop
-    case TK_FOR:    return parse_for(p);         // For loop
-    case TK_DO:     return parse_do_while(p);    // Do-while loop
-    case TK_BREAK:  return parse_break(p);       // Break
-    case TK_RETURN: return parse_ret(p);         // Return
-    default:
-        if (has_decl(p)) {
-            return parse_decl(p);                // Declaration
-        } else {
-            return parse_expr_stmt(p);           // Expression
-        }
-    }
-}
-
 static Stmt * parse_block(Parser *p) {
     expect_tk(&p->l, '{');
     next_tk(&p->l);
     Stmt *block = NULL;
     Stmt **stmt = &block;
-    Local *scope = p->locals;
+    Local *scope = p->locals; // New locals scope
     while (p->l.tk && p->l.tk != '}') {
-        *stmt = parse_stmt(p);
-        // Some 'stmt's returned by 'parse_stmt' contain multiple statements,
-        // some contain nothing, so find the last one
-        while (*stmt) {
+        if (has_decl(p)) { // Declarations can only occur in BLOCKS
+            *stmt = parse_decl(p);
+        } else {
+            *stmt = parse_stmt(p);
+        }
+        while (*stmt) { // Find the last statement in the chain
             stmt = &(*stmt)->next;
         }
     }
@@ -851,6 +834,20 @@ static Stmt * parse_block(Parser *p) {
     expect_tk(&p->l, '}');
     next_tk(&p->l);
     return block;
+}
+
+static Stmt * parse_stmt(Parser *p) {
+    switch (p->l.tk) {
+        case ';':       next_tk(&p->l); return NULL; // Empty
+        case '{':       return parse_block(p);       // Block
+        case TK_IF:     return parse_if(p);          // If/else if/else
+        case TK_WHILE:  return parse_while(p);       // While loop
+        case TK_FOR:    return parse_for(p);         // For loop
+        case TK_DO:     return parse_do_while(p);    // Do-while loop
+        case TK_BREAK:  return parse_break(p);       // Break
+        case TK_RETURN: return parse_ret(p);         // Return
+        default:        return parse_expr_stmt(p);   // Expression
+    }
 }
 
 
