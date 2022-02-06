@@ -12,7 +12,8 @@ add_executable(Cosec
         src/Assembler.c src/Assembler.h
         src/Compiler.c src/Compiler.h
         src/Debug.c src/Debug.h
-        src/Encoder.c src/Encoder.h
+        src/Emitter.c src/Emitter.h
+        src/Error.c src/Error.h
         src/IR.h src/IR.c
         src/Lexer.c src/Lexer.h
         src/main.c
@@ -28,10 +29,6 @@ macro(test name file)
             ${PROJECT_SOURCE_DIR}/tests/RunTest.py $<TARGET_FILE:Cosec> ${PROJECT_SOURCE_DIR}/tests/${file})
 endmacro()
 
-test(return1 return/1.c)
-test(return2 return/2.c)
-test(return3 return/3.c)
-
 test(arith1 expressions/arithmetic/1.c)
 test(arith2 expressions/arithmetic/2.c)
 test(arith3 expressions/arithmetic/3.c)
@@ -43,6 +40,7 @@ test(arith8 expressions/arithmetic/8.c)
 test(arith9 expressions/arithmetic/9.c)
 test(arith10 expressions/arithmetic/10.c)
 test(arith11 expressions/arithmetic/11.c)
+test(arith12 expressions/arithmetic/12.c)
 
 test(assign1 expressions/assignment/1.c)
 test(assign2 expressions/assignment/2.c)
@@ -71,6 +69,10 @@ test(cond19 expressions/conditional/19.c)
 test(cond20 expressions/conditional/20.c)
 test(cond21 expressions/conditional/21.c)
 test(cond22 expressions/conditional/22.c)
+
+test(return1 return/1.c)
+test(return2 return/2.c)
+test(return3 return/3.c)
 
 test(if1 if/1.c)
 test(if2 if/2.c)

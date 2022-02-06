@@ -1,12 +1,12 @@
 
-#ifndef COSEC_ENCODER_H
-#define COSEC_ENCODER_H
+#ifndef COSEC_EMITTER_H
+#define COSEC_EMITTER_H
 
 #include <stdio.h>
 
 #include "Assembler.h"
 
-// ENCODER -- writes the generated assembly code in NASM format to an output
+// EMITTER -- writes the generated assembly code in NASM format to an output
 // file. The output assembly code can then be assembled using NASM and linked
 // (using any linker) to produce an executable.
 //

@@ -5,7 +5,7 @@
 #include "Compiler.h"
 #include "Assembler.h"
 #include "RegAlloc.h"
-#include "Encoder.h"
+#include "Emitter.h"
 #include "Debug.h"
 
 #include "analysis/CFG.h"
@@ -18,7 +18,7 @@
 // 4. Optimiser -- optimises the SSA IR
 // 5. Assembler -- lowers the SSA IR to target-specific machine code IR
 // 6. Register allocation -- lowers virtual registers to physical ones
-// 7. Encoder -- writes assembly code to an output file
+// 7. Emitter -- writes assembly code to an output file
 //
 // Compile the generated assembly with (on my macOS machine):
 //     nasm -f macho64 out.s

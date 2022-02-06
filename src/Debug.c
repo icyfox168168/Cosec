@@ -21,29 +21,9 @@ static void print_type(Type t) {
 
 // ---- Abstract Syntax Tree --------------------------------------------------
 
-static char *TK_NAMES[NUM_TKS] = {
-#define X(name, str) [TK_ ## name] = (str),             // Value tokens
-#define Y(name, _, __, str) [TK_ ## name] = (str),      // Two characters
-#define Z(name, _, __, ___, str) [TK_ ## name] = (str), // Three characters
-#define K(name, str) [TK_ ## name] = (str),             // Keywords
-        TOKENS
-#undef K
-#undef Z
-#undef Y
-#undef X
-};
-
 static void print_local(Local *local) {
     print_type(signed_to_type(local->type));
     printf(" %s", local->name);
-}
-
-static void print_tk(Tk op) {
-    if (op < 256) { // Single character token
-        printf("%c", (char) op);
-    } else { // Multi-character token
-        printf("%s", TK_NAMES[op]);
-    }
 }
 
 static void print_expr(Expr *expr) {

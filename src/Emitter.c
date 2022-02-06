@@ -1,7 +1,7 @@
 
 #include <assert.h>
 
-#include "Encoder.h"
+#include "Emitter.h"
 
 static char *X86_OPCODE_NAMES[] = {
 #define X(_, str, __) str,

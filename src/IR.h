@@ -87,6 +87,7 @@ typedef struct expr {
         struct { Tk _op2; struct expr *_l2, *_r, *cond; }; // EXPR_TERNARY
         // Nothing for EXPR_CONV
     };
+    TkInfo tk;
 } Expr;
 
 typedef struct if_chain {

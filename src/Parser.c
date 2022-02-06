@@ -1,9 +1,9 @@
 
-#include <stdio.h>
 #include <string.h>
 #include <assert.h>
 
 #include "Parser.h"
+#include "Error.h"
 
 typedef struct {
     Lexer l;
@@ -21,15 +21,18 @@ static Parser new_parser(char *file) {
     return p;
 }
 
-static Local * def_local(Parser *p, char *name, SignedType type) {
+static Local * find_local(Parser *p, char *name, int len) {
     // TODO: compare against function names too
-    Local *new = new_local(name, type);
-    for (Local *l = p->locals; l; l = l->next) { // Check local isn't defined
-        if (strcmp(l->name, new->name) == 0) {
-            printf("local already defined\n");
-            exit(1);
+    for (Local *l = p->locals; l; l = l->next) {
+        if (strlen(l->name) == len && strncmp(l->name, name, len) == 0) {
+            return l; // Already defined
         }
     }
+    return NULL;
+}
+
+static Local * def_local(Parser *p, char *name, SignedType type) {
+    Local *new = new_local(name, type);
     new->next = p->locals; // Prepend to the linked list
     p->locals = new;
     return new;
@@ -133,8 +136,7 @@ static Tk ASSIGN_OP[NUM_TKS] = {
 
 static void ensure_lvalue(Expr *lvalue) {
     if (lvalue->kind != EXPR_LOCAL) {
-        printf("must assign to lvalue\n");
-        exit(1);
+        trigger_error_at(lvalue->tk, "expression is not assignable");
     }
 }
 
@@ -158,6 +160,7 @@ static SignedType binary_int_promotion(Expr *l, Expr *r) {
     //    convert signed operand to the unsigned type
     // 4. If signed type is larger than unsigned type -> convert unsigned
     //    operand to signed type
+    // Note: these don't apply to prefix/postfix ++ and --
     if (signed_bits(l->type) < 32 && signed_bits(r->type) < 32) {
         // 0. Implicit promotion to (signed) 'int' for "small" integer types
         return signed_i32();
@@ -202,6 +205,7 @@ static Expr * conv_to(Expr *expr, SignedType target) {
     Expr *conv = new_expr(EXPR_CONV);
     conv->l = expr;
     conv->type = target;
+    conv->tk = expr->tk;
     return conv;
 }
 
@@ -220,6 +224,7 @@ static Expr * to_cond(Expr *expr) {
     // If 'expr' isn't a comparison or condition, then emit a '!= 0'
     Expr *zero = new_expr(EXPR_KINT);
     zero->kint = 0;
+    zero->tk = expr->tk;
     return parse_cmp(TK_NEQ, expr, zero);
 }
 
@@ -238,6 +243,7 @@ static Expr * parse_ternary(Parser *p, Expr *cond, Expr *left) {
     ternary->l = left;
     ternary->r = right;
     ternary->type = target;
+    ternary->tk = merge_tks(cond->tk, right->tk);
     return ternary;
 }
 
@@ -251,6 +257,7 @@ static Expr * parse_arith(Tk op, Expr *left, Expr *right) {
     arith->l = left;
     arith->r = right;
     arith->type = target;
+    arith->tk = merge_tks(left->tk, right->tk);
     return arith;
 }
 
@@ -265,6 +272,7 @@ static Expr * parse_cmp(Tk op, Expr *left, Expr *right) {
     cmp->r = right;
     cmp->type = signed_i1(); // Comparisons always result in a boolean value
     cmp->type.is_signed = target.is_signed; // Save signed-ness
+    cmp->tk = merge_tks(left->tk, right->tk);
     return cmp;
 }
 
@@ -281,6 +289,7 @@ static Expr * parse_assign(Tk op, Expr *left, Expr *right) {
     assign->l = left;
     assign->r = right;
     assign->type = right->type; // Assignment results in its right operand
+    assign->tk = merge_tks(left->tk, right->tk);
     return assign;
 }
 
@@ -293,6 +302,7 @@ static Expr * parse_cond(Tk op, Expr *left, Expr *right) {
     cond->l = left; // No conv necessary -> guaranteed to be a condition
     cond->r = right;
     cond->type = signed_i1(); // Conditions always result in a boolean value
+    cond->tk = merge_tks(left->tk, right->tk);
     return cond;
 }
 
@@ -320,10 +330,11 @@ static Expr * parse_binary(Parser *p, Tk op, Expr *left, Expr *right) {
 static Expr * parse_kint(Parser *p) {
     expect_tk(&p->l, TK_NUM);
     int value = p->l.num;
-    next_tk(&p->l);
     Expr *kint = new_expr(EXPR_KINT);
     kint->kint = value;
     // kint->type gets filled in on-the-fly
+    kint->tk = p->l.info;
+    next_tk(&p->l);
     return kint;
 }
 
@@ -331,29 +342,25 @@ static Expr * parse_local(Parser *p) {
     expect_tk(&p->l, TK_IDENT);
     char *name = p->l.ident;
     int len = p->l.len;
-    next_tk(&p->l);
-    Local *local = NULL;
-    for (Local *l = p->locals; l; l = l->next) {
-        if (len == strlen(l->name) && strncmp(name, l->name, len) == 0) {
-            local = l;
-            break;
-        }
-    }
+    Local *local = find_local(p, name, len);
     if (!local) { // Check the local exists
-        printf("undeclared variable\n");
-        exit(1);
+        trigger_error_at(p->l.info, "undeclared identifier '%.*s'", len, name);
     }
     Expr *expr = new_expr(EXPR_LOCAL);
     expr->local = local;
     expr->type = local->type;
+    expr->tk = p->l.info;
+    next_tk(&p->l);
     return expr;
 }
 
 static Expr * parse_braced_subexpr(Parser *p) {
+    TkInfo start = p->l.info;
     expect_tk(&p->l, '(');
     next_tk(&p->l);
     Expr *expr = parse_subexpr(p, PREC_NONE);
     expect_tk(&p->l, ')');
+    expr->tk = merge_tks(start, p->l.info);
     next_tk(&p->l);
     return expr;
 }
@@ -363,7 +370,7 @@ static Expr * parse_operand(Parser *p) {
         case TK_NUM:   return parse_kint(p);
         case TK_IDENT: return parse_local(p);
         case '(':      return parse_braced_subexpr(p);
-        default:       printf("expected expression\n"); exit(1);
+        default:       trigger_error_at(p->l.info, "expected expression");
     }
 }
 
@@ -384,8 +391,10 @@ static Expr * parse_postfix_inc_dec(Tk op, Expr *operand) {
 static Expr * parse_postfix(Parser *p, Expr *operand) {
     Tk op = p->l.tk;
     if (POSTFIX_PREC[op]) { // ++ and -- are the only postfix operators for now
+        Expr *operation = parse_postfix_inc_dec(op, operand);
+        operation->tk = merge_tks(operand->tk, p->l.info);
         next_tk(&p->l); // Skip the operator
-        return parse_postfix_inc_dec(op, operand);
+        return operation;
     }
     return operand; // No postfix operation
 }
@@ -425,18 +434,28 @@ static Expr * parse_unary_arith(Tk op, Expr *operand) {
 
 static Expr * parse_unary(Parser *p) {
     Tk op = p->l.tk;
-    if (UNARY_PREC[op]) { // Is there a unary operator
-        next_tk(&p->l); // Skip the unary operator
-        Expr *operand = parse_subexpr(p, UNARY_PREC[op]);
-        switch (op) {
-            case '!': return parse_not(operand);
-            case TK_INC: case TK_DEC: return parse_prefix_inc_dec(op, operand);
-            default: return parse_unary_arith(op, operand);
-        }
+    if (!UNARY_PREC[op]) { // Is there a unary operator
+        // Parse an operand and a potential postfix operator
+        Expr *operand = parse_operand(p);
+        return parse_postfix(p, operand);
     }
-    // Otherwise, parse an operand and (maybe) a postfix operator
-    Expr *operand = parse_operand(p);
-    return parse_postfix(p, operand);
+    TkInfo operator_tk = p->l.info;
+    next_tk(&p->l); // Skip the unary operator
+    Expr *operand = parse_subexpr(p, UNARY_PREC[op]);
+    Expr *unary;
+    switch (op) {
+    case '!':
+        unary = parse_not(operand);
+        break;
+    case TK_INC: case TK_DEC:
+        unary = parse_prefix_inc_dec(op, operand);
+        break;
+    default:
+        unary = parse_unary_arith(op, operand);
+        break;
+    }
+    unary->tk = merge_tks(operator_tk, operand->tk);
+    return unary;
 }
 
 static Expr * parse_subexpr(Parser *p, Prec min_prec) {
@@ -548,15 +567,17 @@ static Prim TYPE_COMBINATION_TO_PRIM[NUM_TYPE_COMBINATIONS] = {
 
 static SignedType parse_decl_spec(Parser *p) {
     // Check there's at least one type specifier
+    TkInfo start = p->l.info;
     if (!TYPE_SPECS[p->l.tk]) {
-        printf("expected declaration\n");
-        exit(1);
+        trigger_error_at(start, "expected declaration");
     }
     // Keep parsing type specifiers into a hash-map until there's no more
     int type_specs[COMBINATION_SIZE];
     memset(type_specs, 0, sizeof(int) * (NUM_TKS - FIRST_KEYWORD));
+    TkInfo end = start;
     while (TYPE_SPECS[p->l.tk]) {
         type_specs[p->l.tk - FIRST_KEYWORD]++;
+        end = p->l.info;
         next_tk(&p->l);
     }
     // Find the corresponding combination in TYPE_COMBINATIONS
@@ -569,8 +590,8 @@ static SignedType parse_decl_spec(Parser *p) {
         }
     }
     if (combination == -1) {
-        printf("invalid type specifiers in declaration\n");
-        exit(1);
+        TkInfo tk = merge_tks(start, end);
+        trigger_error_at(tk, "invalid combination of type specifiers");
     }
     SignedType type;
     type.prim = TYPE_COMBINATION_TO_PRIM[combination];
@@ -585,10 +606,14 @@ static Stmt * parse_decl(Parser *p) {
     char *name = malloc((p->l.len + 1) * sizeof(char));
     strncpy(name, p->l.ident, p->l.len);
     name[p->l.len] = '\0';
+    TkInfo local_tk = p->l.info;
+    if (find_local(p, name, p->l.len)) { // Check isn't already defined
+        trigger_error_at(local_tk, "redefinition of '%s'", name);
+    }
     next_tk(&p->l);
 
     Expr *value = NULL;
-    if (p->l.tk == '=') {
+    if (p->l.tk == '=') { // Assignment
         next_tk(&p->l); // Skip the '=' token
         value = parse_expr(p);
     }
@@ -599,6 +624,7 @@ static Stmt * parse_decl(Parser *p) {
         Expr *local_expr = new_expr(EXPR_LOCAL);
         local_expr->local = result->local;
         local_expr->type = result->local->type;
+        local_expr->tk = local_tk;
         Stmt *assign = new_stmt(STMT_EXPR);
         assign->expr = parse_assign('=', local_expr, value);
         result->next = assign; // Chain the declaration and assignment

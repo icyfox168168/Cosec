@@ -2,9 +2,9 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
-#include <assert.h>
 
 #include "Lexer.h"
+#include "Error.h"
 
 static char *KEYWORDS[] = {
 #define X(_, __)
@@ -38,32 +38,61 @@ Lexer new_lexer(char *file) {
     Lexer l;
     l.file = file;
     l.source = read_file(file);
-    assert(l.source != NULL);
+    if (!l.source) {
+        trigger_error("couldn't read file '%s'", file);
+    }
     l.c = l.source;
+    l.line = 1;
+    l.line_str = l.source;
     l.tk = 0;
     l.ident = NULL;
     l.len = 0;
     return l;
 }
 
+static TkInfo info_at(Lexer *l) {
+    TkInfo info;
+    info.file = l->file;
+    info.start = l->c;
+    info.len = 0;
+    info.line = l->line;
+    info.col = (int) (l->c - l->line_str) + 1;
+    info.line_str = l->line_str;
+    return info;
+}
+
+static void check_newline(Lexer *l) {
+    if (*l->c == '\n' || *l->c == '\r') {
+        if (*l->c == '\r' && *(l->c + 1) == '\n') {
+            l->c++; // Treat \r\n as a single newline (stupid Windows)
+        }
+        l->line++;
+        l->line_str = l->c + 1; // Next character is start of new line
+    }
+}
+
 static void lex_whitespace(Lexer *l) {
     while (isspace(*l->c)) {
+        check_newline(l);
         l->c++;
     }
 }
 
 static void lex_comments(Lexer *l) {
     if (*l->c == '/' && *(l->c + 1) == '/') {
-        while (*l->c != 0 && *l->c != '\n' && *l->c != '\r') {
+        while (*l->c && *l->c != '\n' && *l->c != '\r') {
             l->c++;
         }
     } else if (*l->c == '/' && *(l->c + 1) == '*') {
-        while (*l->c != 0 && *l->c != '*' && *(l->c + 1) != '/') {
+        TkInfo info = info_at(l);
+        info.len = 2;
+        l->c += 2; // Skip initial '/*'
+        while (*l->c && !(*l->c == '*' && *(l->c + 1) == '/')) {
+            check_newline(l);
             l->c++;
         }
-        if (!l->c) {
-            printf("unclosed multiline comment\n");
-            exit(1);
+        if (!*l->c) {
+            trigger_error_at(info, "unterminated '/*' comment");
         }
         l->c += 2; // Skip final '*/'
     }
@@ -93,14 +122,16 @@ static void lex_int(Lexer *l) {
     int num = (int) strtol(l->c, &end, 0); // Read the number
     l->c = end;
     if (isalnum(*l->c)) { // Check the character after the number is valid
-        printf("invalid number\n");
-        exit(1);
+        TkInfo info = info_at(l);
+        info.len = 1;
+        trigger_error_at(info, "invalid digit '%c' in number", *l->c);
     }
     l->tk = TK_NUM;
-    l->num =  num;
+    l->num = num;
 }
 
 static void lex_symbol(Lexer *l) {
+    if (0) {}
 #define X(_, __)
 #define Y(name, ch1, ch2, _) /* 2-character tokens */  \
     else if (*l->c == (ch1) && *(l->c + 1) == (ch2)) { \
@@ -110,10 +141,9 @@ static void lex_symbol(Lexer *l) {
 #define Z(name, ch1, ch2, ch3, _) /* 3-character tokens */                     \
     else if (*l->c == (ch1) && *(l->c + 1) == (ch2) && *(l->c + 2) == (ch3)) { \
         l->tk = TK_ ## name;                                                   \
-        l->c += 2;                                                             \
+        l->c += 3;                                                             \
     }
 #define K(_, __)
-    if (0) {}
     TOKENS
 #undef K
 #undef X
@@ -128,18 +158,54 @@ static void lex_symbol(Lexer *l) {
 void next_tk(Lexer *l) {
     lex_whitespace(l);
     lex_comments(l);
-    if (isalpha(*l->c) || *l->c == '_') { // Identifiers
+    l->info = info_at(l);
+    if (isalpha(*l->c) || *l->c == '_') { // Identifier
         lex_ident(l);
-    } else if (isnumber(*l->c)) { // Numbers
+    } else if (isnumber(*l->c)) { // Number
         lex_int(l);
-    } else { // Symbols
+    } else { // Symbol
         lex_symbol(l);
+    }
+    l->info.len = (int) (l->c - l->info.start);
+}
+
+static char *TK_NAMES[NUM_TKS] = {
+#define X(name, str) [TK_ ## name] = (str),             // Value tokens
+#define Y(name, _, __, str) [TK_ ## name] = (str),      // Two characters
+#define Z(name, _, __, ___, str) [TK_ ## name] = (str), // Three characters
+#define K(name, str) [TK_ ## name] = (str),             // Keywords
+    TOKENS
+#undef K
+#undef Z
+#undef Y
+#undef X
+};
+
+void print_tk(Tk tk) {
+    if (tk <= TK_FIRST) {
+        printf("'%c'", (char) tk);
+    } else if (tk >= TK_IDENT && tk <= TK_NUM) {
+        printf("%s", TK_NAMES[tk]); // Don't surround in quotes
+    } else {
+        printf("'%s'", TK_NAMES[tk]);
     }
 }
 
-void expect_tk(Lexer *l, Tk tk) {
-    if (l->tk != tk) {
-        printf("expected token '%d', found '%d'\n", tk, l->tk);
-        exit(1);
+TkInfo merge_tks(TkInfo start, TkInfo end) {
+    if (end.start < start.start) {
+        return merge_tks(end, start);
     }
+    if (end.start + end.len < start.start + start.len) {
+        return start; // 'start' is larger than 'end'
+    }
+    // Merge up until the end of the line
+    char *c = start.start;
+    while (*c && *c != '\n' && *c != '\r' && c < (end.start + end.len)) {
+        c++;
+    }
+    start.len = (int) (c - start.start);
+    if (*c == '\n' || *c == '\r') {
+        start.len++; // Include the newline in the arrow
+    }
+    return start;
 }

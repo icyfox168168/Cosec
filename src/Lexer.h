@@ -4,9 +4,7 @@
 
 #include <stdlib.h>
 
-// Allows us to map between the KEYWORDS array and the Tk type
 #define FIRST_KEYWORD TK_VOID
-
 #define TOKENS                             \
     /* Values */                           \
     X(IDENT, "identifier")                 \
@@ -69,15 +67,28 @@ enum {
 };
 
 typedef struct {
-    char *file, *source;  // Source code we're lexing
-    char *c;              // Character in 'source' that we're up to
-    Tk tk;                // Most recently lexed token
-    char *ident; int len; // Start and length of an identifier
-    int num;              // Number that's been converted to an integer
+    char *file;
+    char *start;
+    int len;
+    int line, col;
+    char *line_str;
+} TkInfo;
+
+typedef struct {
+    char *file, *source;
+    char *c; // Character in 'source' that we're up to
+    int line;
+    char *line_str;
+    TkInfo info; // Information about the most recently lexed token
+
+    Tk tk; // Most recently lexed token
+    char *ident; int len; // For TK_IDENT
+    int num;              // For TK_NUM
 } Lexer;
 
-Lexer new_lexer(char *file);     // Create a new lexer object
-void next_tk(Lexer *l);          // Lex the next token
-void expect_tk(Lexer *l, Tk tk); // Make sure the current token is 'tk'
+Lexer new_lexer(char *file);
+void next_tk(Lexer *l);
+void print_tk(Tk tk);
+TkInfo merge_tks(TkInfo start, TkInfo end);
 
 #endif
