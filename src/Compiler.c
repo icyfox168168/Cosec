@@ -434,6 +434,10 @@ static IrIns * compile_bit_not(Compiler *c, Expr *unary) {
     return compile_operation(c, xor);
 }
 
+static IrIns * compile_promotion(Compiler *c, Expr *unary) {
+    return compile_expr(c, unary->l); // Does the type promotion for us
+}
+
 static IrIns * compile_neg(Compiler *c, Expr *unary) {
     Expr *zero = new_expr(EXPR_KINT);
     zero->kint = 0;
@@ -449,6 +453,7 @@ static IrIns * compile_neg(Compiler *c, Expr *unary) {
 static IrIns * compile_unary(Compiler *c, Expr *unary) {
     switch (unary->op) {
         case '-': return compile_neg(c, unary);
+        case '+': return compile_promotion(c, unary);
         case '~': return compile_bit_not(c, unary);
         case '!': return compile_not(c, unary);
         case TK_INC: case TK_DEC: return compile_inc_dec(c, unary, 1);

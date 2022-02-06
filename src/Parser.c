@@ -67,7 +67,8 @@ typedef enum {
 
 static Prec UNARY_PREC[NUM_TKS] = {
     ['-'] = PREC_UNARY,  // Negation
-    ['~'] = PREC_UNARY, // Bitwise not
+    ['+'] = PREC_UNARY,  // Promotion
+    ['~'] = PREC_UNARY,  // Bitwise not
     ['!'] = PREC_UNARY,  // Logical not
     [TK_INC] = PREC_UNARY, // Increment
     [TK_DEC] = PREC_UNARY, // Decrement
@@ -460,15 +461,10 @@ static Expr * parse_unary(Parser *p) {
     Expr *operand = parse_subexpr(p, UNARY_PREC[op]);
     Expr *unary;
     switch (op) {
-    case '!':
-        unary = parse_not(operand);
-        break;
-    case TK_INC: case TK_DEC:
-        unary = parse_prefix_inc_dec(op, operand);
-        break;
-    default:
-        unary = parse_unary_arith(op, operand);
-        break;
+        case '!':    unary = parse_not(operand); break;
+        case TK_INC:
+        case TK_DEC: unary = parse_prefix_inc_dec(op, operand); break;
+        default:     unary = parse_unary_arith(op, operand); break;
     }
     unary->tk = merge_tks(operator_tk, operand->tk);
     return unary;
