@@ -11,19 +11,10 @@
 #include "analysis/CFG.h"
 #include "analysis/UseChain.h"
 
-// Cosec compiler structure:
-// 1. Lexer -- splits a module's source code up into tokens
-// 2. Parser -- generates an AST from the source tokens
-// 3. Compiler -- converts the AST into SSA form IR
-// 4. Optimiser -- optimises the SSA IR
-// 5. Assembler -- lowers the SSA IR to target-specific machine code IR
-// 6. Register allocation -- lowers virtual registers to physical ones
-// 7. Emitter -- writes assembly code to an output file
-//
 // Compile the generated assembly with (on my macOS machine):
 //     nasm -f macho64 out.s
 //     ld -L/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib -lSystem out.o
-// (Yes, the linker arguments are annoying, but necessary)
+// (Yes, the linker arguments are annoying but necessary on macOS Big Sur)
 //
 // For debugging, see the equivalent LLVM IR with:
 //     clang -emit_ins-llvm -Xclang -disable-O0-optnone -S test.c
