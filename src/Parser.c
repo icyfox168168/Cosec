@@ -104,6 +104,7 @@ static Prec BINARY_PREC[NUM_TKS] = {
     [TK_XOR_ASSIGN] = PREC_ASSIGN,
     [TK_LSHIFT_ASSIGN] = PREC_ASSIGN,
     [TK_RSHIFT_ASSIGN] = PREC_ASSIGN,
+    [','] = PREC_COMMA,
 };
 
 static int IS_RIGHT_ASSOC[NUM_TKS] = {
@@ -306,6 +307,16 @@ static Expr * parse_cond(Tk op, Expr *left, Expr *right) {
     return cond;
 }
 
+static Expr * parse_comma(Expr *left, Expr *right) {
+    Expr *comma = new_expr(EXPR_BINARY);
+    comma->op = ',';
+    comma->l = left;
+    comma->r = right;
+    comma->type = right->type; // Comma results in its RHS
+    comma->tk = merge_tks(left->tk, right->tk);
+    return comma;
+}
+
 static Expr * parse_binary(Parser *p, Tk op, Expr *left, Expr *right) {
     switch (op) {
     case '+': case '-': case '*': case '/': case '%':
@@ -321,8 +332,8 @@ static Expr * parse_binary(Parser *p, Tk op, Expr *left, Expr *right) {
         return parse_assign(op, left, right);
     case TK_AND: case TK_OR:
         return parse_cond(op, left, right);
-    case '?':
-        return parse_ternary(p, left, right);
+    case '?': return parse_ternary(p, left, right);
+    case ',': return parse_comma(left, right);
     default: UNREACHABLE();
     }
 }
@@ -463,7 +474,7 @@ static Expr * parse_subexpr(Parser *p, Prec min_prec) {
     while (BINARY_PREC[p->l.tk] > min_prec) {
         Tk op = p->l.tk;
         next_tk(&p->l); // Skip the binary operator
-        Prec prec = BINARY_PREC[op] - IS_RIGHT_ASSOC[op];
+        Prec prec = BINARY_PREC[op] + IS_RIGHT_ASSOC[op];
         Expr *right = parse_subexpr(p, prec); // Parse right operand
         left = parse_binary(p, op, left, right);
     }
@@ -618,7 +629,7 @@ static Stmt * parse_decl(Parser *p) {
         Expr *value = NULL;
         if (p->l.tk == '=') { // Assignment
             next_tk(&p->l); // Skip the '=' token
-            value = parse_expr(p);
+            value = parse_subexpr(p, PREC_COMMA); // Can't have commas
         }
 
         Stmt *result = new_stmt(STMT_DECL);

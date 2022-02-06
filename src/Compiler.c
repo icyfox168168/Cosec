@@ -348,6 +348,12 @@ static IrIns * compile_or(Compiler *c, Expr *binary) {
     return right;
 }
 
+static IrIns * compile_comma(Compiler *c, Expr *comma) {
+    compile_expr(c, comma->l); // Discard the result
+    IrIns *right = compile_expr(c, comma->r);
+    return right; // Comma results in its RHS
+}
+
 static IrIns * compile_binary(Compiler *c, Expr *binary) {
     switch (binary->op) {
     case '+': case '-': case '*': case '/': case '%':
@@ -360,10 +366,9 @@ static IrIns * compile_binary(Compiler *c, Expr *binary) {
     case TK_AND_ASSIGN: case TK_OR_ASSIGN:  case TK_XOR_ASSIGN:
     case TK_LSHIFT_ASSIGN: case TK_RSHIFT_ASSIGN:
         return compile_assign(c, binary);
-    case TK_AND:
-        return compile_and(c, binary);
-    case TK_OR:
-        return compile_or(c, binary);
+    case TK_AND: return compile_and(c, binary);
+    case TK_OR:  return compile_or(c, binary);
+    case ',':    return compile_comma(c, binary);
     default: UNREACHABLE();
     }
 }
