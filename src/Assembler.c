@@ -384,16 +384,28 @@ static void asm_cmp(Assembler *a, IrIns *ir_cmp) {
     emit(a, cmp);
 }
 
-static void asm_trunc_or_ext(Assembler *a, IrIns *ir_trunc_ext, AsmOpcode op) {
-    AsmOperand src = inline_kint_or_load(a, ir_trunc_ext->l);
-    ir_trunc_ext->vreg = a->next_reg++; // New vreg for result
+static void asm_ext(Assembler *a, IrIns *ir_ext) {
+    AsmOpcode op = ir_ext->op == IR_ZEXT ? X86_MOVZX : X86_MOVSX;
+    AsmOperand src = inline_kint_or_load(a, ir_ext->l);
+    ir_ext->vreg = a->next_reg++; // New vreg for result
     AsmIns *mov = new_asm(op); // Move into a smaller reg
     mov->l.type = OP_REG;
-    mov->l.reg = ir_trunc_ext->vreg;
-    // If we're truncating, we can't do mov eax, qword [rbp-8]; we have to
-    // load into rax then use eax afterwards
-    RegSize dst_size = REG_SIZE[bytes(ir_trunc_ext->type)];
-    mov->l.size = dst_size < src.size ? src.size : dst_size;
+    mov->l.reg = ir_ext->vreg;
+    mov->l.size = REG_SIZE[bytes(ir_ext->type)];
+    mov->r = src;
+    emit(a, mov);
+}
+
+static void asm_trunc(Assembler *a, IrIns *ir_trunc) {
+    AsmOperand src = inline_kint_or_load(a, ir_trunc->l);
+    ir_trunc->vreg = a->next_reg++; // New vreg for result
+    AsmIns *mov = new_asm(X86_MOV); // Move into a smaller reg
+    mov->l.type = OP_REG;
+    mov->l.reg = ir_trunc->vreg;
+    // We can't do mov ax, qword [rbp-4]; we have to mov into a register the
+    // same size as the SOURCE, then use the truncated register (i.e., ax) in
+    // future instructions
+    mov->l.size = REG_SIZE[bytes(ir_trunc->l->type)];
     mov->r = src;
     emit(a, mov);
 }
@@ -452,10 +464,10 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
 
 static void asm_ins(Assembler *a, IrIns *ir_ins) {
     switch (ir_ins->op) {
-    case IR_KINT:  break; // Don't do anything for constants
-    case IR_FARG:  asm_farg(a, ir_ins); break;
+    case IR_KINT: break; // Don't do anything for constants
+    case IR_FARG: asm_farg(a, ir_ins); break;
     case IR_ALLOC: asm_alloc(a, ir_ins); break;
-    case IR_LOAD:  asm_load(a, ir_ins); break;
+    case IR_LOAD: asm_load(a, ir_ins); break;
     case IR_STORE: asm_store(a, ir_ins); break;
     case IR_ADD: case IR_SUB: case IR_MUL:
     case IR_AND: case IR_OR: case IR_XOR:
@@ -468,9 +480,10 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
     case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
     case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
         break; // Don't do anything for comparisons
-    case IR_TRUNC:  asm_trunc_or_ext(a, ir_ins, X86_MOV); break;
-    case IR_SEXT:   asm_trunc_or_ext(a, ir_ins, X86_MOVSX); break;
-    case IR_ZEXT:   asm_trunc_or_ext(a, ir_ins, X86_MOVZX); break;
+    case IR_TRUNC:
+        asm_trunc(a, ir_ins); break;
+    case IR_SEXT: case IR_ZEXT:
+        asm_ext(a, ir_ins); break;
     case IR_BR:     asm_br(a, ir_ins); break;
     case IR_CONDBR: asm_cond_br(a, ir_ins); break;
     case IR_RET0:   asm_ret0(a); break;

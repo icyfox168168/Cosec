@@ -174,6 +174,23 @@ static void merge_branch_chains(BrChain **head, BrChain *to_append) {
     *head = to_append;
 }
 
+static IrIns * emit_conv(Compiler *c, IrIns *operand, SignedType target_type,
+                         SignedType src_type) {
+    IrOpcode opcode;
+    if (signed_bits(target_type) < signed_bits(src_type)) {
+        opcode = IR_TRUNC; // Target type is smaller
+    } else if (signed_bits(src_type) == 1 || !src_type.is_signed) {
+        opcode = IR_ZEXT; // Always zext an i1, or if the value is unsigned
+    } else {
+        opcode = IR_SEXT; // Value is signed and larger than i1
+    }
+    IrIns *ext_trunc = new_ir(opcode);
+    ext_trunc->l = operand;
+    ext_trunc->type = signed_to_type(target_type);
+    emit(c, ext_trunc);
+    return ext_trunc;
+}
+
 static IrIns * compile_expr(Compiler *c, Expr *expr); // Forward declaration
 
 // Convert a condition expression into a value (e.g., that can be stored by
@@ -309,31 +326,55 @@ static IrIns * compile_operation(Compiler *c, Expr *binary) {
     return operation;
 }
 
-static IrIns * compile_assign(Compiler *c, Expr *assign) {
-    IrIns *target, *right;
-    if (assign->op != '=') {
-        // TODO: +=, etc. don't perform the standard integer type promotions!
-        // For example, compare LLVM output for 'char c = 3; c += 1;'
-        right = compile_operation(c, assign);
-        // Don't just call 'compile_expr' again because 'compile_operation'
-        // has already done so; we'd be duplicating the lvalue calculation.
-        // 'right' is an arith (e.g., IR_ADD); 'right->l' is our IR_LOAD
-        target = new_ir(IR_LOAD);
-        *target = *right->l;
-        *target = *right->l;
-        target->next = NULL;
-        emit(c, target);
-    } else {
-        right = compile_expr(c, assign->r); // Value for assignment
-        right = discharge_cond(c, right);
-        target = compile_expr(c, assign->l); // lvalue to assign to
+static void convert_load_to_store(Compiler *c, IrIns *load, IrIns *to_store) {
+    load->op = IR_STORE;
+    // IR_STORE destination is the same as the IR_LOAD (don't change store->l)
+    load->r = to_store;
+    load->type = type_none(); // Clear the type set by IR_LOAD
+}
+
+static IrIns * compile_arith_assign(Compiler *c, Expr *assign) {
+    // The parser expects the output type for this assignment to be the type
+    // of the lvalue (not its integer promotion type) -> this stuffs up the
+    // return type of the arithmetic operation here, so fix it manually
+    assign->type = assign->l->type;
+    IrIns *right = compile_operation(c, assign);
+
+    // Find the lvalue expression, which gives us our target type for 'right'
+    Expr *lvalue_expr = assign->l;
+    if (lvalue_expr->kind == EXPR_CONV) {
+        lvalue_expr = lvalue_expr->l;
     }
-    // Change an IR_LOAD instruction into an IR_STORE
-    assert(target->op == IR_LOAD);
-    target->op = IR_STORE;
-    // IR_STORE destination is the same as the IR_LOAD (don't change target->l)
-    target->r = right;
-    target->type = type_none(); // Clear the type set by the IR_LOAD
+
+    // Find the emitted IR instruction corresponding to the lvalue.
+    // 'right' is an arith (e.g., IR_ADD). 'right->l' is a conversion or IR_LOAD
+    IrIns *lvalue = right->l;
+    if (lvalue->op != IR_LOAD) { // 'right->l' is a type conversion
+        lvalue = lvalue->l;
+    }
+    assert(lvalue->op == IR_LOAD);
+
+    // We may need to insert a truncation (which the parser hasn't done for us)
+    // e.g., in the case 'char a = 3; char *b = &a; *b += 1'
+    if (signed_bits(lvalue_expr->type) != signed_bits(assign->type)) {
+        right = emit_conv(c, right, lvalue_expr->type, assign->type);
+    }
+
+    // Copy the IR_LOAD and re-emit it, so we can modify it into an IR_STORE
+    IrIns *load = new_ir(IR_LOAD);
+    *load = *lvalue;
+    load->next = NULL;
+    emit(c, load);
+    convert_load_to_store(c, load, right);
+    return right; // Assignment evaluates to its right operand
+}
+
+static IrIns * compile_assign(Compiler *c, Expr *assign) {
+    IrIns *right = compile_expr(c, assign->r);
+    right = discharge_cond(c, right);
+    IrIns *load = compile_expr(c, assign->l);
+    assert(load->op == IR_LOAD);
+    convert_load_to_store(c, load, right);
     return right; // Assignment evaluates to its right operand
 }
 
@@ -376,11 +417,12 @@ static IrIns * compile_binary(Compiler *c, Expr *binary) {
     case '<': case TK_LE: case '>': case TK_GE: case TK_EQ: case TK_NEQ:
         return compile_operation(c, binary);
     case '=':
+        return compile_assign(c, binary);
     case TK_ADD_ASSIGN: case TK_SUB_ASSIGN:
     case TK_MUL_ASSIGN: case TK_DIV_ASSIGN: case TK_MOD_ASSIGN:
     case TK_AND_ASSIGN: case TK_OR_ASSIGN:  case TK_XOR_ASSIGN:
     case TK_LSHIFT_ASSIGN: case TK_RSHIFT_ASSIGN:
-        return compile_assign(c, binary);
+        return compile_arith_assign(c, binary);
     case TK_AND: return compile_and(c, binary);
     case TK_OR:  return compile_or(c, binary);
     case ',':    return compile_comma(c, binary);
@@ -453,17 +495,28 @@ static IrIns * compile_inc_dec(Compiler *c, Expr *unary, int is_prefix) {
     Expr *one = new_expr(EXPR_KINT);
     one->kint = 1;
     one->type = unary->type; // Use the same type as what we're adding to
-    Expr *assign = new_expr(EXPR_BINARY);
-    assign->op = unary->op == TK_INC ? TK_ADD_ASSIGN : TK_SUB_ASSIGN;
-    assign->l = unary->l;
-    assign->r = one;
-    assign->type = unary->type;
-    IrIns *result = compile_assign(c, assign);
+    Expr *add = new_expr(EXPR_BINARY);
+    add->op = unary->op == TK_INC ? '+' : '-';
+    add->l = unary->l;
+    add->r = one;
+    add->type = unary->type;
+    IrIns *right = compile_operation(c, add);
+
+    // Find the emitted IR instruction corresponding to the lvalue.
+    // 'right' is an arith (e.g., IR_ADD). 'right->l' is IR_LOAD
+    IrIns *lvalue = right->l;
+    assert(lvalue->op == IR_LOAD);
+
+    // Copy the IR_LOAD and re-emit it, so we can modify it into an IR_STORE
+    IrIns *load = new_ir(IR_LOAD);
+    *load = *lvalue;
+    load->next = NULL;
+    emit(c, load);
+    convert_load_to_store(c, load, right);
     if (is_prefix) {
-        return result;
+        return right;
     } else {
-        // 'result' is an IR_ADD instruction; we want the left operand
-        return result->l;
+        return lvalue;
     }
 }
 
@@ -491,22 +544,7 @@ static IrIns * compile_postfix(Compiler *c, Expr *operand) {
 static IrIns * compile_conv(Compiler *c, Expr *conv) {
     IrIns *operand = compile_expr(c, conv->l);
     operand = discharge_cond(c, operand);
-
-    IrOpcode opcode;
-    SignedType target = conv->type;
-    SignedType src = conv->l->type;
-    if (signed_bits(target) < signed_bits(src)) {
-        opcode = IR_TRUNC; // Target type is smaller
-    } else if (signed_bits(src) == 1 || !src.is_signed) {
-        opcode = IR_ZEXT; // Always zext an i1, or if the value is unsigned
-    } else {
-        opcode = IR_SEXT; // Value is signed and larger than i1
-    }
-    IrIns *ext_trunc = new_ir(opcode);
-    ext_trunc->l = operand;
-    ext_trunc->type = signed_to_type(target);
-    emit(c, ext_trunc);
-    return ext_trunc;
+    return emit_conv(c, operand, conv->type, conv->l->type);
 }
 
 static IrIns * compile_local(Compiler *c, Expr *expr) {

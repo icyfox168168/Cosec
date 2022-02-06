@@ -295,15 +295,28 @@ static Expr * parse_cmp(Tk op, Expr *left, Expr *right) {
 }
 
 static Expr * parse_assign(Tk op, Expr *left, Expr *right) {
+    ensure_lvalue(left);
+    SignedType lvalue_type = left->type;
     // Don't expand +=, etc. to the full a = a + 1; doing so would cause the
     // compiler to evaluate the lvalue TWICE, when it should only happen once
-    ensure_lvalue(left);
-    right = conv_to(right, left->type);
+    if (op != '=') {
+        // If this is an arithmetic assignment, promote according to the
+        // standard integer promotion rules
+        SignedType target = binary_int_promotion(left, right);
+        left = conv_to(left, target);
+        right = conv_to(right, target);
+    } else {
+        // Otherwise, lower 'right' to the lvalue's type
+        right = conv_to(right, lvalue_type);
+    }
     Expr *assign = new_expr(EXPR_BINARY);
     assign->op = op;
     assign->l = left;
     assign->r = right;
-    assign->type = right->type; // Assignment results in its right operand
+    // Assignment always results in its right operand being converted to
+    // 'left->type' (although this is handled in the compiler in the case of
+    // arithmetic assignments)
+    assign->type = lvalue_type;
     assign->tk = merge_tks(left->tk, right->tk);
     return assign;
 }
