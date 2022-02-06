@@ -3,6 +3,11 @@ project(Cosec C)
 
 set(CMAKE_C_STANDARD 99)
 
+# Set some debug and release flags
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
+set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O0 -g")
+set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3")
+
 add_executable(Cosec
         src/analysis/Analysis.h
         src/analysis/CFG.c src/analysis/CFG.h
@@ -20,7 +25,7 @@ add_executable(Cosec
         src/Parser.c src/Parser.h
         src/RegAlloc.c src/RegAlloc.h)
 
-include(CTest)
+# Require Python for testing
 include(FindPython3)
 enable_testing()
 

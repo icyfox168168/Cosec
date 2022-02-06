@@ -102,7 +102,6 @@ typedef enum {
     STMT_IF,
     STMT_WHILE,
     STMT_DO_WHILE,
-    STMT_FOR,
     STMT_BREAK,
     STMT_RET,
 } StmtType;
@@ -114,8 +113,7 @@ typedef struct stmt {
         Expr *expr;                                // STMT_EXPR, STMT_RET
         Local *local;                              // STMT_DECL
         IfChain *if_chain;                         // STMT_IF
-        struct { Expr *cond; struct stmt *body; }; // STMT_WHILE, STMT_DO_WHILE
-        struct { Expr *_c; struct stmt *_b; Local *ind; Expr *init, *inc; };
+        struct { Expr *cond; struct stmt *body; }; // While, do-while, for
     };
 } Stmt;
 

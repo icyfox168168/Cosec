@@ -566,58 +566,12 @@ static void compile_while(Compiler *c, Stmt *stmt) {
     loop.breaks = NULL;
     loop.outer = c->loop;
     c->loop = &loop;
-
     BB *body = emit_bb(c);
     patch_branch_chain(cond->true_chain, body);
     compile_block(c, stmt->body); // Body
     IrIns *end_br = new_ir(IR_BR);
     end_br->br = cond_bb;
     emit(c, end_br);
-    c->loop = loop.outer;
-
-    BB *after = emit_bb(c);
-    patch_branch_chain(cond->false_chain, after);
-    patch_branch_chain(loop.breaks, after);
-}
-
-static void compile_for(Compiler *c, Stmt *stmt) {
-    Stmt *fake_decl = new_stmt(STMT_DECL); // Initializer
-    fake_decl->local = stmt->ind;
-    compile_decl(c, fake_decl);
-    if (stmt->init) {
-        compile_expr(c, stmt->init);
-    }
-
-    IrIns *before_br = new_ir(IR_BR);
-    emit(c, before_br);
-    BB *cond_bb = emit_bb(c);
-    before_br->br = cond_bb;
-    IrIns *cond = compile_expr(c, stmt->cond); // Condition
-    cond = to_cond(c, cond);
-
-    BB *inc_bb = emit_bb(c);
-    compile_expr(c, stmt->inc);
-    c->fn->last = inc_bb->prev; // Un-attach the increment BB
-    c->fn->last->next = NULL;
-
-    Loop loop;
-    loop.breaks = NULL;
-    loop.outer = c->loop;
-    c->loop = &loop;
-
-    BB *body = emit_bb(c);
-    patch_branch_chain(cond->true_chain, body);
-    compile_block(c, stmt->body); // Body
-    IrIns *body_br = new_ir(IR_BR); // Branch at end of body to inc_bb
-    body_br->br = inc_bb;
-    emit(c, body_br);
-    c->fn->last->next = inc_bb; // Re-attach inc_bb here
-    inc_bb->prev = c->fn->last;
-    c->fn->last = inc_bb;
-    IrIns *inc_br = new_ir(IR_BR); // Branch at end of inc_bb to cond_bb
-    inc_br->br = cond_bb;
-    emit(c, inc_br);
-
     c->loop = loop.outer;
 
     BB *after = emit_bb(c);
@@ -633,11 +587,9 @@ static void compile_do_while(Compiler *c, Stmt *do_while_stmt) {
     loop.breaks = NULL;
     loop.outer = c->loop;
     c->loop = &loop;
-
     BB *body = emit_bb(c);
     before_br->br = body;
     compile_block(c, do_while_stmt->body); // Body
-
     c->loop = loop.outer;
 
     IrIns *cond = compile_expr(c, do_while_stmt->cond); // Condition
@@ -675,7 +627,6 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
         case STMT_IF:       compile_if(c, stmt); break;
         case STMT_WHILE:    compile_while(c, stmt); break;
         case STMT_DO_WHILE: compile_do_while(c, stmt); break;
-        case STMT_FOR:      compile_for(c, stmt); break;
         case STMT_BREAK:    compile_break(c); break;
         case STMT_RET:      compile_ret(c, stmt); break;
     }

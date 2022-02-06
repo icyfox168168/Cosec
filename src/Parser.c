@@ -718,30 +718,38 @@ static Stmt * parse_while(Parser *p) {
 }
 
 static Stmt * parse_for(Parser *p) {
-    Stmt *stmt = new_stmt(STMT_FOR);
+    Stmt *head;
+    Stmt **stmt = &head;
     expect_tk(&p->l, TK_FOR);
     next_tk(&p->l);
     expect_tk(&p->l, '(');
     next_tk(&p->l);
     Local *scope = p->locals;
-    Stmt *decl = parse_decl(p); // Declaration
-    stmt->ind = decl->local;
-    if (decl->next) {
-        assert(decl->next->kind == STMT_EXPR);
-        stmt->init = decl->next->expr;
-    } else {
-        stmt->init = NULL;
+    *stmt = parse_decl(p); // Declaration
+    while (*stmt) { // Find the end of the declaration
+        stmt = &(*stmt)->next;
     }
     Expr *cond = parse_expr(p); // Condition
-    stmt->cond = to_cond(cond);
+    cond = to_cond(cond);
     expect_tk(&p->l, ';');
     next_tk(&p->l);
-    stmt->inc = parse_expr(p); // Increment
+    Expr *inc = parse_expr(p); // Increment
+    Stmt *inc_stmt = new_stmt(STMT_EXPR);
+    inc_stmt->expr = inc;
     expect_tk(&p->l, ')');
     next_tk(&p->l);
-    stmt->body = parse_block(p); // Body
-    p->locals = scope; // Remove the declaration in the for loop header
-    return stmt;
+    Stmt *body = parse_block(p); // Body
+    Stmt **end = &body;
+    while (*end) { // Find the end of the body
+        end = &(*end)->next;
+    }
+    *end = inc_stmt; // Put the increment statement at the end of the body
+    p->locals = scope; // Remove the declaration in the loop header
+    Stmt *loop = new_stmt(STMT_WHILE);
+    loop->cond = cond;
+    loop->body = body;
+    *stmt = loop;
+    return head;
 }
 
 static Stmt * parse_do_while(Parser *p) {
