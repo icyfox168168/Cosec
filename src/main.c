@@ -49,8 +49,8 @@ static void print_help() {
 
 static void pipeline(char *file) {
     // AST
-    printf("---- AST\n");
     AstModule *ast = parse(file);
+    printf("---- AST\n");
     for (FnDef *fn = ast->fns; fn; fn = fn->next) {
         print_ast(fn);
         printf("\n");

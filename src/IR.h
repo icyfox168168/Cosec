@@ -56,9 +56,17 @@ typedef struct {
 
 Type signed_to_type(SignedType t);
 SignedType signed_none();
-SignedType signed_i1();
+SignedType unsigned_i1();
 SignedType signed_i32();
+SignedType unsigned_i64();
 int signed_bits(SignedType t);  // Returns the size of a type in bits
+
+int is_ptr(SignedType t);
+int is_void_ptr(SignedType t);
+int is_arith(SignedType t);
+int is_int(SignedType t);
+int is_fp(SignedType t);
+int are_equal(SignedType l, SignedType r);
 
 typedef struct local {
     struct local *next;
@@ -162,6 +170,30 @@ Local * new_local(char *name, SignedType type);
 
 // ---- Static Single Assignment (SSA) Form IR --------------------------------
 
+// Information about specific IR instructions:
+//
+// * IR_FARG: only appears at the START of an IR function's entry basic block;
+//   used to reference the 'n'th argument for the function (where argument 0
+//   is the left most, argument 1 is next, etc.)
+// * ALLOC: allocates stack space of a given size and returns a POINTER to the
+//   start of this space (similar to LLVM's alloca)
+// * STORE: writes its SECOND argument (with type <type>) to its FIRST (which
+//   must have type <type>*)
+// * LOAD: reads memory from a pointer <type>*, resulting in a value with type
+//   <type>
+// * LEA: performs pointer offset calculations. If LEA is set to return a value
+//   of type <type>, then the first argument must be a pointer with type
+//   <type>*, and the second argument a reference to the offset calculation.
+//   Similar to LLVM's 'getelementptr'
+//
+// TODO: a great optimisation would be to expand LEA to include a base, index,
+// scale, and displacement and then use the optimisation engine to try fold
+// as many compatible arithmetic instructions into LEA as possible. This would
+// get folded into the RHS of a memory load operand in the assembly.
+// E.g., ((int *) a)[b+3]:
+// Unoptimised: 0000: ADD b, 3; 0001: LEA a 0000 -> add b, 3; lea z, [a+b*4]
+// Becomes: 0000: LEA a b+3 -> lea z, [a+b*4+12]
+// Avoids the need for a selection DAG (which is how LLVM solves this problem)
 #define IR_OPCODES        \
     /* Constants */       \
     X(KINT, 1)            \
@@ -171,6 +203,7 @@ Local * new_local(char *name, SignedType type);
     X(ALLOC, 0)           \
     X(STORE, 2) /* Destination is FIRST argument, source is SECOND */ \
     X(LOAD, 1)            \
+    X(LEA, 2) /* Pointer offset calculations */ \
                           \
     /* Arithmetic */      \
     X(ADD, 2)             \

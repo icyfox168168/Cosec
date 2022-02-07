@@ -25,7 +25,7 @@ SignedType signed_none() {
     return t;
 }
 
-SignedType signed_i1() {
+SignedType unsigned_i1() {
     SignedType t;
     t.prim = T_i1;
     t.ptrs = 0;
@@ -41,8 +41,37 @@ SignedType signed_i32() {
     return t;
 }
 
-int signed_bits(SignedType t) {
-    return bits(signed_to_type(t));
+SignedType unsigned_i64() {
+    SignedType t;
+    t.prim = T_i64;
+    t.ptrs = 0;
+    t.is_signed = 0;
+    return t;
+}
+
+int is_ptr(SignedType t) {
+    return t.ptrs > 0;
+}
+
+int is_void_ptr(SignedType t) {
+    return t.prim == T_void && t.ptrs == 1;
+}
+
+int is_arith(SignedType t) {
+    return t.ptrs == 0 && t.prim >= T_i1 && t.prim <= T_f64;
+}
+
+int is_int(SignedType t) {
+    return t.ptrs == 0 && t.prim >= T_i1 && t.prim <= T_i64;
+}
+
+int is_fp(SignedType t) {
+    return t.ptrs == 0 && t.prim >= T_f32 && t.prim <= T_f64;
+}
+
+int are_equal(SignedType l, SignedType r) {
+    // Right now, for two types to be compatible, they need to be the same
+    return l.prim == r.prim && l.ptrs == r.ptrs && l.is_signed == r.is_signed;
 }
 
 int bits(Type t) {
@@ -60,6 +89,10 @@ int bits(Type t) {
         case T_f32:  return 32;
         case T_f64:  return 64;
     }
+}
+
+int signed_bits(SignedType t) {
+    return bits(signed_to_type(t));
 }
 
 int bytes(Type t) {

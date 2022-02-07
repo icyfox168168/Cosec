@@ -130,6 +130,23 @@ static int IS_RIGHT_ASSOC[NUM_TKS] = {
     [TK_RSHIFT_ASSIGN] = 1,
 };
 
+static Tk ASSIGNMENT_TO_ARITH_OP[NUM_TKS] = {
+    [TK_ADD_ASSIGN] = '+',
+    [TK_SUB_ASSIGN] = '-',
+    [TK_MUL_ASSIGN] = '*',
+    [TK_DIV_ASSIGN] = '/',
+    [TK_MOD_ASSIGN] = '%',
+    [TK_AND_ASSIGN] = '&',
+    [TK_OR_ASSIGN] = '|',
+    [TK_XOR_ASSIGN] = '^',
+    [TK_LSHIFT_ASSIGN] = TK_LSHIFT,
+    [TK_RSHIFT_ASSIGN] = TK_RSHIFT,
+};
+
+// Forward declarations
+static Expr * parse_subexpr(Parser *p, Prec min_prec);
+static Expr * parse_operation(Tk op, Expr *left, Expr *right);
+
 static void ensure_lvalue(Expr *lvalue) {
     if (lvalue->kind == EXPR_LOCAL) {
         return; // Assigning to a local
@@ -157,13 +174,46 @@ static void ensure_can_deref(Expr *operand) {
     }
 }
 
-// Returns the type that a binary arithmetic operation's operands should be
-// converted to (if necessary) for a binary operation
-//
-// See this Stack Overflow for a useful explanation of the (rather stupid) C
-// integer promotion rules:
-//   https://stackoverflow.com/questions/46073295/implicit-type-promotion-rules
-static SignedType binary_int_promotion(Expr *l, Expr *r) {
+static Expr * conv_to(Expr *expr, SignedType target) {
+    assert(target.prim != T_NONE);
+    if (are_equal(expr->type, target)) {
+        return expr; // No conversion necessary
+    }
+    if (expr->kind == EXPR_KINT) {
+        // Don't emit type conversions on constants
+        expr->type = target;
+        return expr;
+    }
+    Expr *conv = new_expr(EXPR_CONV);
+    conv->l = expr;
+    conv->type = target;
+    conv->tk = expr->tk;
+    return conv;
+}
+
+static int is_arith_op(Tk o) {
+    return o == '+' || o == '-' || o == '*' || o == '/' || o == '%';
+}
+
+static int is_bit_op(Tk o) {
+    return o == '&' || o == '|' || o == '^' || o == TK_LSHIFT || o == TK_RSHIFT;
+}
+
+static int is_rel_op(Tk o) {
+    return o == '<' || o == TK_LE || o == '>' || o == TK_GE;
+}
+
+static int is_eq_op(Tk o) {
+    return o == TK_EQ || o == TK_NEQ;
+}
+
+static int is_null_ptr(Expr *e) {
+    return e->kind == EXPR_KINT && e->kint == 0;
+}
+
+// Returns the type that a binary integer operation's operands should be
+// converted to (if necessary)
+static SignedType promote_binary_int(Expr *l, Expr *r) {
     // Implicit integer promotion rule as per 6.3.1.1 in C11 standard.
     // In practice (i.e., on my system where shorts are smaller than ints),
     // all "small" integer types (char, short) are converted to
@@ -178,72 +228,136 @@ static SignedType binary_int_promotion(Expr *l, Expr *r) {
     // 4. If signed type is larger than unsigned type -> convert unsigned
     //    operand to signed type
     // Note: these don't apply to prefix/postfix ++ and --
-    if (signed_bits(l->type) < 32 && signed_bits(r->type) < 32) {
+    //
+    // See this Stack Overflow for a useful explanation:
+    //   https://stackoverflow.com/questions/46073295/implicit-type-promotion-rules
+    SignedType lt = l->type, rt = r->type;
+    if (signed_bits(lt) < 32 && signed_bits(rt) < 32) {
         // 0. Implicit promotion to (signed) 'int' for "small" integer types
         return signed_i32();
-    } else if (signed_bits(l->type) == signed_bits(r->type) &&
-            l->type.is_signed == r->type.is_signed) {
+    } else if (signed_bits(lt) == signed_bits(rt) &&
+               lt.is_signed == rt.is_signed) {
         // 1. Types are equal
-        return l->type;
-    } else if (l->type.is_signed == r->type.is_signed) {
+        return lt;
+    } else if (lt.is_signed == rt.is_signed) {
         // 2. Both signed or unsigned -> convert to larger type
-        return signed_bits(l->type) > signed_bits(r->type) ? l->type : r->type;
+        return signed_bits(lt) > signed_bits(rt) ? lt : rt;
     } else {
         // 3. and 4. pick the larger type; if they're both the same size then
         // pick the unsigned type
-        SignedType signed_type = l->type.is_signed ? l->type : r->type;
-        SignedType unsigned_type = l->type.is_signed ? r->type : l->type;
-        return signed_bits(unsigned_type) >= signed_bits(signed_type) ?
-            unsigned_type : signed_type;
+        SignedType st = lt.is_signed ? lt : rt, ut = lt.is_signed ? rt : lt;
+        return signed_bits(ut) >= signed_bits(st) ? ut : st;
     }
 }
 
-static SignedType unary_int_promotion(Expr *operand) {
-    // Implicit integer promotion (see 'binary_int_promotion' above) for unary
-    // operations
-    if (signed_bits(operand->type) < 32) {
-        // 0. Implicit promotion to (signed) 'int' for "small" integer types
+// Returns the type that a binary arithmetic operation's operands should be
+// converted to (if necessary)
+static SignedType promote_binary_arith(Expr *l, Expr *r) {
+    SignedType lt = l->type, rt = r->type;
+    if (is_int(lt) && is_int(rt)) { // Both ints
+        return promote_binary_int(l, r);
+    } else if (is_fp(lt) && is_fp(rt)) { // Both floats
+        return signed_bits(lt) > signed_bits(rt) ? lt : rt; // Pick larger
+    } else { // One's a float and one's an int
+        return is_fp(lt) ? lt : rt; // Pick float type
+    }
+}
+
+// Takes a binary operation and its two operands and computes the type that the
+// result of the operation should have, and performs any necessary type
+// conversions on the operands.
+// Type checking is complex! The C standard is very specific about what needs
+// to happen
+static SignedType resolve_types(Tk o, Expr **l, Expr **r) {
+    SignedType result, lt = (*l)->type, rt = (*r)->type;
+    if (is_bit_op(o) && is_int(lt) && is_int(rt)) {
+        result = promote_binary_int(*l, *r);
+        *l = conv_to(*l, result);
+        *r = conv_to(*r, result);
+    } else if ((is_arith_op(o) || o == '?') && is_arith(lt) && is_arith(rt)) {
+        result = promote_binary_arith(*l, *r);
+        *l = conv_to(*l, result);
+        *r = conv_to(*r, result);
+    } else if ((is_rel_op(o) || is_eq_op(o)) && is_arith(lt) && is_arith(rt)) {
+        SignedType promotion = promote_binary_arith(*l, *r);
+        *l = conv_to(*l, promotion);
+        *r = conv_to(*r, promotion);
+        result = unsigned_i1(); // Result is an i1
+        result.is_signed = promotion.is_signed; // Preserve signed-ness
+    } else if ((o == '+' || o == '-') && is_ptr(lt) && is_arith(rt)) {
+        result = lt; // Result is a pointer
+        *r = conv_to(*r, unsigned_i64());
+    } else if (o == '+' && is_arith(rt) && is_ptr(lt)) {
+        result = rt; // Result is a pointer
+        *l = conv_to(*l, unsigned_i64());
+    } else if ((o == '-' || o == '?') &&
+               is_ptr(lt) && is_ptr(rt) && are_equal(lt, rt)) { // Both ptrs
+        result = lt; // Doesn't matter which one we pick
+    } else if ((is_rel_op(o) || is_eq_op(o)) &&
+               is_ptr(lt) && is_ptr(rt) && are_equal(lt, rt)) { // Both ptrs
+        result = unsigned_i1(); // Pointer comparisons are always unsigned
+    } else if (o == '?' && is_ptr(lt) && (is_void_ptr(rt) || is_null_ptr(*r))) {
+        result = lt; // Pick the non-void/non-null pointer
+        *r = conv_to(*r, result); // Convert to the non-void pointer
+    } else if (o == '?' && (is_void_ptr(lt) || is_null_ptr(*l)) && is_ptr(rt)) {
+        result = rt; // Pick the non-void/non-null pointer
+        *l = conv_to(*l, result); // Convert to the non-void pointer
+    } else if (is_eq_op(o) &&
+               is_ptr(lt) && (is_void_ptr(rt) || is_null_ptr(*r))) {
+        SignedType promotion = lt; // Pick the non-void/non-null pointer
+        *r = conv_to(*r, promotion); // Convert to the non-void pointer
+        result = unsigned_i1(); // Pointer comparisons always unsigned
+    } else if (is_eq_op(o) &&
+              (is_void_ptr(lt) || is_null_ptr(*l)) && is_ptr(rt)) {
+        SignedType promotion = rt; // Pick the non-void/non-null pointer
+        *l = conv_to(*l, promotion); // Convert to the non-void pointer
+        result = unsigned_i1(); // Pointer comparisons always unsigned
+    } else {
+        TkInfo operation = merge_tks((*l)->tk, (*r)->tk);
+        trigger_error_at(operation, "invalid arguments to binary expression");
+        // TODO: might be useful to print the C type associated
+    }
+    return result;
+}
+
+// Returns the type that a unary integer operation's operands should be
+// converted to (if necessary)
+static SignedType promote_unary_arith(Expr *operand) {
+    if (is_int(operand->type) && signed_bits(operand->type) < 32) {
+        // Implicit promotion to (signed) 'int' for "small" integer types
         return signed_i32();
     } else {
         return operand->type; // No conversion necessary
     }
 }
 
-static Expr * conv_to(Expr *expr, SignedType target) {
-    assert(target.prim != T_NONE);
-    if (signed_bits(expr->type) == signed_bits(target)) {
-        return expr; // No conversion necessary
+// Takes a unary operation and its operand and computes the type that the
+// result of the operation should have, and performs any necessary conversions
+static SignedType resolve_unary_type(Tk op, Expr **e) {
+    SignedType result, t = (*e)->type;
+    if ((is_arith_op(op) && is_arith(t)) || (is_bit_op(op) && is_int(t))) {
+        result = promote_unary_arith(*e);
+        *e = conv_to(*e, result);
+    } else {
+        trigger_error_at((*e)->tk, "invalid argument to unary expression");
+        // TODO: might be useful to print the C type associated
     }
-    if (expr->kind == EXPR_KINT && expr->type.prim == T_NONE) {
-        // Don't emit type conversions on integers if their type isn't fixed
-        // by another instruction yet
-        expr->type = target;
-        return expr;
-    }
-    Expr *conv = new_expr(EXPR_CONV);
-    conv->l = expr;
-    conv->type = target;
-    conv->tk = expr->tk;
-    return conv;
+    return result;
 }
-
-// Forward declarations
-static Expr * parse_subexpr(Parser *p, Prec min_prec);
-static Expr * parse_cmp(Tk op, Expr *left, Expr *right);
 
 static Expr * to_cond(Expr *expr) {
     Tk op = expr->op;
-    if ((expr->kind == EXPR_BINARY && (op == TK_EQ || op == TK_NEQ ||
-                op == '<' || op == TK_LE || op == '>' || op == TK_GE ||
-                op == TK_OR || op == TK_AND)) ||
-            (expr->kind == EXPR_UNARY && op == '!')) {
+    if ((expr->kind == EXPR_UNARY && op == '!') ||
+            (expr->kind == EXPR_BINARY && (is_rel_op(op) || is_eq_op(op) ||
+             op == TK_OR || op == TK_AND))) {
         return expr; // Already a condition
     }
-    // If 'expr' isn't a comparison or condition, then emit a '!= 0'
+    // If 'expr' isn't a comparison or condition, then emit '!= 0'; if expr is
+    // a pointer, then this constant is equivalent to a null pointer
     Expr *zero = new_expr(EXPR_KINT);
     zero->kint = 0;
     zero->tk = expr->tk;
-    return parse_cmp(TK_NEQ, expr, zero);
+    return parse_operation(TK_NEQ, expr, zero);
 }
 
 static Expr * parse_ternary(Parser *p, Expr *cond, Expr *left) {
@@ -252,70 +366,51 @@ static Expr * parse_ternary(Parser *p, Expr *cond, Expr *left) {
     Prec prec = BINARY_PREC['?'] - IS_RIGHT_ASSOC['?'];
     Expr *right = parse_subexpr(p, prec);
 
-    SignedType target = binary_int_promotion(left, right);
-    left = conv_to(left, target);
-    right = conv_to(right, target);
-
+    SignedType result = resolve_types('?', &left, &right);
     Expr *ternary = new_expr(EXPR_TERNARY);
     ternary->cond = to_cond(cond);
     ternary->l = left;
     ternary->r = right;
-    ternary->type = target;
+    ternary->type = result;
     ternary->tk = merge_tks(cond->tk, right->tk);
     return ternary;
 }
 
-static Expr * parse_arith(Tk op, Expr *left, Expr *right) {
-    SignedType target = binary_int_promotion(left, right);
-    left = conv_to(left, target);
-    right = conv_to(right, target);
-
+static Expr * parse_operation(Tk op, Expr *left, Expr *right) {
+    SignedType result = resolve_types(op, &left, &right);
     Expr *arith = new_expr(EXPR_BINARY);
     arith->op = op;
     arith->l = left;
     arith->r = right;
-    arith->type = target;
+    arith->type = result;
     arith->tk = merge_tks(left->tk, right->tk);
     return arith;
 }
 
-static Expr * parse_cmp(Tk op, Expr *left, Expr *right) {
-    SignedType target = binary_int_promotion(left, right);
-    left = conv_to(left, target);
-    right = conv_to(right, target);
-
-    Expr *cmp = new_expr(EXPR_BINARY);
-    cmp->op = op;
-    cmp->l = left;
-    cmp->r = right;
-    cmp->type = signed_i1(); // Comparisons always result in a boolean value
-    cmp->type.is_signed = target.is_signed; // Save signed-ness
-    cmp->tk = merge_tks(left->tk, right->tk);
-    return cmp;
+static Expr * parse_assign(Expr *left, Expr *right) {
+    ensure_lvalue(left);
+    right = conv_to(right, left->type); // Lower 'right' to 'left->type'
+    Expr *assign = new_expr(EXPR_BINARY);
+    assign->op = '=';
+    assign->l = left;
+    assign->r = right;
+    assign->type = left->type;
+    assign->tk = merge_tks(left->tk, right->tk);
+    return assign;
 }
 
-static Expr * parse_assign(Tk op, Expr *left, Expr *right) {
+static Expr * parse_arith_assign(Tk op, Expr *left, Expr *right) {
     ensure_lvalue(left);
     SignedType lvalue_type = left->type;
-    // Don't expand +=, etc. to the full a = a + 1; doing so would cause the
-    // compiler to evaluate the lvalue TWICE, when it should only happen once
-    if (op != '=') {
-        // If this is an arithmetic assignment, promote according to the
-        // standard integer promotion rules
-        SignedType target = binary_int_promotion(left, right);
-        left = conv_to(left, target);
-        right = conv_to(right, target);
-    } else {
-        // Otherwise, lower 'right' to the lvalue's type
-        right = conv_to(right, lvalue_type);
-    }
+    Tk arith_op = ASSIGNMENT_TO_ARITH_OP[op];
+    resolve_types(arith_op, &left, &right); // Emit CONVs for arguments
     Expr *assign = new_expr(EXPR_BINARY);
     assign->op = op;
     assign->l = left;
     assign->r = right;
     // Assignment always results in its right operand being converted to
-    // 'left->type' (although this is handled in the compiler in the case of
-    // arithmetic assignments)
+    // 'left->type' (although this is handled in the compiler here, not by an
+    // EXPR_CONV emitted by the parser)
     assign->type = lvalue_type;
     assign->tk = merge_tks(left->tk, right->tk);
     return assign;
@@ -324,12 +419,11 @@ static Expr * parse_assign(Tk op, Expr *left, Expr *right) {
 static Expr * parse_cond(Tk op, Expr *left, Expr *right) {
     left = to_cond(left);
     right = to_cond(right);
-
     Expr *cond = new_expr(EXPR_BINARY);
     cond->op = op;
-    cond->l = left; // No conv necessary -> guaranteed to be a condition
+    cond->l = left;
     cond->r = right;
-    cond->type = signed_i1(); // Conditions always result in a boolean value
+    cond->type = unsigned_i1();
     cond->tk = merge_tks(left->tk, right->tk);
     return cond;
 }
@@ -339,7 +433,7 @@ static Expr * parse_comma(Expr *left, Expr *right) {
     comma->op = ',';
     comma->l = left;
     comma->r = right;
-    comma->type = right->type; // Comma results in its RHS
+    comma->type = right->type; // Comma results in its right operand
     comma->tk = merge_tks(left->tk, right->tk);
     return comma;
 }
@@ -348,15 +442,15 @@ static Expr * parse_binary(Parser *p, Tk op, Expr *left, Expr *right) {
     switch (op) {
     case '+': case '-': case '*': case '/': case '%':
     case TK_LSHIFT: case TK_RSHIFT: case '&': case '|': case '^':
-        return parse_arith(op, left, right);
     case TK_EQ: case TK_NEQ: case '<': case TK_LE: case '>': case TK_GE:
-        return parse_cmp(op, left, right);
+        return parse_operation(op, left, right);
     case '=':
+        return parse_assign(left, right);
     case TK_ADD_ASSIGN: case TK_SUB_ASSIGN:
     case TK_MUL_ASSIGN: case TK_DIV_ASSIGN: case TK_MOD_ASSIGN:
     case TK_AND_ASSIGN: case TK_OR_ASSIGN:  case TK_XOR_ASSIGN:
     case TK_LSHIFT_ASSIGN: case TK_RSHIFT_ASSIGN:
-        return parse_assign(op, left, right);
+        return parse_arith_assign(op, left, right);
     case TK_AND: case TK_OR:
         return parse_cond(op, left, right);
     case '?': return parse_ternary(p, left, right);
@@ -370,7 +464,7 @@ static Expr * parse_kint(Parser *p) {
     int value = p->l.num;
     Expr *kint = new_expr(EXPR_KINT);
     kint->kint = value;
-    // kint->type gets filled in on-the-fly
+    kint->type = signed_i32();
     kint->tk = p->l.info;
     next_tk(&p->l);
     return kint;
@@ -416,8 +510,7 @@ static Expr * parse_postfix_inc_dec(Tk op, Expr *operand) {
     // Note we can't just expand postfix a++ or a-- to a = a + 1, since the
     // result of this assignment would be the ADDITION, not the value of 'a'
     // BEFORE the addition -- we have to pass on the postfix to the compiler.
-    // Don't convert everything to i32s for prefix/postfix ++ and --, since
-    // it'll just get SEXT'd then TRUNC'd anyway
+    // Standard integer promotions DON'T APPLY to ++ and --
     ensure_lvalue(operand);
     Expr *postfix = new_expr(EXPR_POSTFIX);
     postfix->op = op;
@@ -442,7 +535,7 @@ static Expr * parse_not(Expr *operand) {
     Expr *unary = new_expr(EXPR_UNARY);
     unary->op = '!';
     unary->l = operand; // No conv needed -> guaranteed to be a condition
-    unary->type = signed_i1();
+    unary->type = unsigned_i1();
     return unary;
 }
 
@@ -467,8 +560,7 @@ static Expr * parse_deref(Expr *operand) {
 }
 
 static Expr * parse_prefix_inc_dec(Tk op, Expr *operand) {
-    // Don't convert everything to i32s for prefix/postfix ++ and --, since
-    // it'll just get SEXT'd then TRUNC'd anyway
+    // Standard integer promotions DON'T APPLY to ++ and --
     ensure_lvalue(operand);
     Expr *prefix = new_expr(EXPR_UNARY);
     prefix->op = op;
@@ -478,15 +570,11 @@ static Expr * parse_prefix_inc_dec(Tk op, Expr *operand) {
 }
 
 static Expr * parse_unary_arith(Tk op, Expr *operand) {
-    // All arithmetic instructions are performed as either i32 or i64; they
-    // default to i32 (the natural 'int' size on my target), but will use i64
-    // if either operand is an i64
-    SignedType target = unary_int_promotion(operand);
-    operand = conv_to(operand, target);
+    SignedType result = resolve_unary_type(op, &operand);
     Expr *unary = new_expr(EXPR_UNARY);
     unary->op = op;
     unary->l = operand;
-    unary->type = target;
+    unary->type = result;
     return unary;
 }
 
@@ -502,12 +590,14 @@ static Expr * parse_unary(Parser *p) {
     Expr *operand = parse_subexpr(p, UNARY_PREC[op]);
     Expr *unary;
     switch (op) {
-        case '!':    unary = parse_not(operand); break;
-        case '&':    unary = parse_addr(operand); break;
-        case '*':    unary = parse_deref(operand); break;
-        case TK_INC:
-        case TK_DEC: unary = parse_prefix_inc_dec(op, operand); break;
-        default:     unary = parse_unary_arith(op, operand); break;
+    case '+': case '-': case '~':
+        unary = parse_unary_arith(op, operand); break;
+    case '!': unary = parse_not(operand); break;
+    case '&': unary = parse_addr(operand); break;
+    case '*': unary = parse_deref(operand); break;
+    case TK_INC: case TK_DEC:
+        unary = parse_prefix_inc_dec(op, operand); break;
+    default: UNREACHABLE();
     }
     unary->tk = merge_tks(operator_tk, operand->tk);
     return unary;
@@ -687,7 +777,6 @@ static Stmt * parse_decl(Parser *p) {
     Stmt **decl = &head;
     while (p->l.tk != ';') {
         Declarator declarator = parse_declarator(p, base_type);
-
         Expr *value = NULL;
         if (p->l.tk == '=') { // Optional assignment
             next_tk(&p->l); // Skip the '=' token
@@ -704,7 +793,7 @@ static Stmt * parse_decl(Parser *p) {
             local_expr->type = result->local->type;
             local_expr->tk = declarator.tk;
             Stmt *assign = new_stmt(STMT_EXPR);
-            assign->expr = parse_assign('=', local_expr, value);
+            assign->expr = parse_assign(local_expr, value);
             *decl = assign; // Chain the declaration and assignment
             decl = &(*decl)->next;
         }
