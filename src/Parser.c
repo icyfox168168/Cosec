@@ -318,8 +318,6 @@ static SignedType resolve_types(Tk o, Expr **l, Expr **r) {
         *l = conv_to(*l, unsigned_i64()); // Can only add i64 to pointers
     } else if (o == '-' && is_ptr(lt) && is_ptr(rt) && are_equal(lt, rt)) {
         result = unsigned_i64(); // Result is an INTEGER
-        *l = conv_to(*l, result); // Convert both operands to i64s
-        *r = conv_to(*r, result);
     } else if (o == '?' && is_ptr(lt) && is_ptr(rt) && are_equal(lt, rt)) {
         result = lt; // Doesn't matter which one we pick
     } else if ((is_rel_op(o) || is_eq_op(o)) &&

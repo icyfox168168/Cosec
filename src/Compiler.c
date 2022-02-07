@@ -383,27 +383,34 @@ static IrIns * compile_ptr_arith(Compiler *c, Expr *binary) {
 
 // For '<ptr> - <ptr>'
 static IrIns * compile_ptr_sub(Compiler *c, Expr *binary) {
-    // 'binary->l' is an EXPR_CONV, 'binary->l->l' is whatever generated the
-    // pointer
-    assert(binary->l->kind == EXPR_CONV);
-    SignedType ptr_type = binary->l->l->type;
+    SignedType deref_type = binary->l->type;
+    deref_type.ptrs--;
 
-    // Both operands will already be CONV to i64s
-    IrIns *left = compile_expr(c, binary->l); // Emits PTR2I
+    IrIns *left = compile_expr(c, binary->l);
     left = discharge(c, left);
-    IrIns *right = compile_expr(c, binary->r); // Emits PTR2I
+    IrIns *right = compile_expr(c, binary->r);
     right = discharge(c, right);
+
+    // Convert 'left' and 'right' to i64s by emitting PTR2I
+    left = emit_conv(c, left, binary->l->type, binary->type);
+    right = emit_conv(c, right, binary->r->type, binary->type);
 
     IrIns *sub = new_ir(IR_SUB);
     sub->l = left;
     sub->r = right;
     sub->type = signed_to_type(binary->type);
     emit(c, sub);
+    // Need to divide the sub by the size of the 'deref_type'; since all
+    // type sizes are powers of 2, we can accomplish this with a shift.
+    // Compute the shift size = log2(bytes(deref_type))
+    int log2 = 0;
+    int val = bytes(signed_to_type(deref_type)) - 1;
+    while (val) { val >>= 1; log2++; }
     IrIns *size = new_ir(IR_KINT);
-    size->kint = bytes(signed_to_type(ptr_type)); // Size of pointer type
+    size->kint = log2;
     size->type = sub->type;
     emit(c, size);
-    IrIns *div = new_ir(IR_UDIV);
+    IrIns *div = new_ir(IR_ASHR);
     div->l = sub;
     div->r = size;
     div->type = sub->type; // Results in i64

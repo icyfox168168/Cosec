@@ -240,7 +240,6 @@ Local * new_local(char *name, SignedType type);
                           \
     X(PTR2I, 1)   /* Convert a pointer to an integer */ \
     X(I2PTR, 1)   /* Convert an integer to a pointer */ \
-                          \
     X(PTR2PTR, 1) /* Convert a pointer to another pointer type -> nop */ \
                           \
     /* Control flow */    \

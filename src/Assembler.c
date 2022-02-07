@@ -196,7 +196,7 @@ static AsmOperand fold_load(Assembler *a, IrIns *ir_load) {
     return to_mem_operand(a, ir_load->l);
 }
 
-static AsmOperand inline_kint_or_load(Assembler *a, IrIns *kint_or_load) {
+static AsmOperand inline_imm_or_load(Assembler *a, IrIns *kint_or_load) {
     // TODO: one potentially useful IR optimisation is if we have commutative
     // arithmetic operations with one operand a LOAD and another not a LOAD,
     // then the load should go in the right hand side so that the assembly
@@ -274,7 +274,7 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
     mov->r = l;
     emit(a, mov);
 
-    AsmOperand r = inline_kint_or_load(a, ir_arith->r);
+    AsmOperand r = inline_imm_or_load(a, ir_arith->r);
     AsmOpcode op;
     switch (ir_arith->op) {
         case IR_ADD: op = X86_ADD; break;
@@ -377,7 +377,7 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
 
 static void asm_cmp(Assembler *a, IrIns *ir_cmp) {
     AsmOperand l = discharge(a, ir_cmp->l); // Left operand always a vreg
-    AsmOperand r = inline_kint_or_load(a, ir_cmp->r);
+    AsmOperand r = inline_imm_or_load(a, ir_cmp->r);
     AsmIns *cmp = new_asm(X86_CMP); // Comparison
     cmp->l = l;
     cmp->r = r;
@@ -386,7 +386,7 @@ static void asm_cmp(Assembler *a, IrIns *ir_cmp) {
 
 static void asm_ext(Assembler *a, IrIns *ir_ext) {
     AsmOpcode op = ir_ext->op == IR_ZEXT ? X86_MOVZX : X86_MOVSX;
-    AsmOperand src = inline_kint_or_load(a, ir_ext->l);
+    AsmOperand src = inline_imm_or_load(a, ir_ext->l);
     ir_ext->vreg = a->next_reg++; // New vreg for result
     AsmIns *mov = new_asm(op); // Move into a smaller reg
     mov->l.type = OP_REG;
@@ -397,7 +397,7 @@ static void asm_ext(Assembler *a, IrIns *ir_ext) {
 }
 
 static void asm_trunc(Assembler *a, IrIns *ir_trunc) {
-    AsmOperand src = inline_kint_or_load(a, ir_trunc->l);
+    AsmOperand src = inline_imm_or_load(a, ir_trunc->l);
     ir_trunc->vreg = a->next_reg++; // New vreg for result
     AsmIns *mov = new_asm(X86_MOV); // Move into a smaller reg
     mov->l.type = OP_REG;
@@ -406,6 +406,24 @@ static void asm_trunc(Assembler *a, IrIns *ir_trunc) {
     // same size as the SOURCE, then use the truncated register (i.e., ax) in
     // future instructions
     mov->l.size = REG_SIZE[bytes(ir_trunc->l->type)];
+    mov->r = src;
+    emit(a, mov);
+}
+
+// For IR_PTR2I, IR_I2PTR, IR_PTR2PTR -> we need to maintain SSA form over the
+// assembly output, so just emit a mov into a new vreg and let the coalescer
+// deal with it.
+// We can't just allocate the result of the conversion to the same vreg as its
+// source operand, because the source operand might still be used after the
+// conversion operand (in which case, the new vreg's lifetime will interfere
+// with the source vreg's)
+static void asm_conv(Assembler *a, IrIns *ir_conv) {
+    AsmOperand src = inline_imm_or_load(a, ir_conv->l);
+    ir_conv->vreg = a->next_reg++; // New vreg for result
+    AsmIns *mov = new_asm(X86_MOV);
+    mov->l.type = OP_REG;
+    mov->l.reg = ir_conv->vreg;
+    mov->l.size = REG_SIZE[bytes(ir_conv->type)];
     mov->r = src;
     emit(a, mov);
 }
@@ -449,7 +467,7 @@ static void asm_ret0(Assembler *a) {
 }
 
 static void asm_ret1(Assembler *a, IrIns *ir_ret) {
-    AsmOperand result = inline_kint_or_load(a, ir_ret->l);
+    AsmOperand result = inline_imm_or_load(a, ir_ret->l);
     // Make sure to zero the rest of eax by using movsx if the function returns
     // something smaller than an int
     int needs_sext = bits(ir_ret->l->type) < 32;
@@ -464,11 +482,16 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
 
 static void asm_ins(Assembler *a, IrIns *ir_ins) {
     switch (ir_ins->op) {
+        // Constants
     case IR_KINT:  break; // Don't do anything for constants
+
+        // Memory accesses
     case IR_FARG:  asm_farg(a, ir_ins); break;
     case IR_ALLOC: asm_alloc(a, ir_ins); break;
     case IR_LOAD:  asm_load(a, ir_ins); break;
     case IR_STORE: asm_store(a, ir_ins); break;
+
+        // Arithmetic
     case IR_ADD: case IR_SUB: case IR_MUL:
     case IR_AND: case IR_OR: case IR_XOR:
         asm_arith(a, ir_ins); break;
@@ -476,18 +499,23 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
         asm_div_mod(a, ir_ins); break;
     case IR_SHL: case IR_ASHR: case IR_LSHR:
         asm_shift(a, ir_ins); break;
+
+        // Comparisons
     case IR_EQ:  case IR_NEQ:
     case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
     case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
-        break; // Don't do anything for comparisons
-    case IR_TRUNC:
-        asm_trunc(a, ir_ins); break;
-    case IR_SEXT: case IR_ZEXT:
-        asm_ext(a, ir_ins); break;
-    case IR_BR:     asm_br(a, ir_ins); break;
-    case IR_CONDBR: asm_cond_br(a, ir_ins); break;
-    case IR_RET0:   asm_ret0(a); break;
-    case IR_RET1:   asm_ret1(a, ir_ins); break;
+        break; // Don't do anything
+
+        // Conversions
+    case IR_TRUNC: asm_trunc(a, ir_ins); break;
+    case IR_SEXT: case IR_ZEXT: asm_ext(a, ir_ins); break;
+    case IR_PTR2I: case IR_I2PTR: case IR_PTR2PTR: asm_conv(a, ir_ins); break;
+
+        // Control flow
+    case IR_BR:      asm_br(a, ir_ins); break;
+    case IR_CONDBR:  asm_cond_br(a, ir_ins); break;
+    case IR_RET0:    asm_ret0(a); break;
+    case IR_RET1:    asm_ret1(a, ir_ins); break;
     default: printf("unsupported IR instruction to assembler\n"); exit(1);
     }
 }
