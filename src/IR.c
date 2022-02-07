@@ -17,6 +17,13 @@ Type type_none() {
     return t;
 }
 
+Type type_i1() {
+    Type t;
+    t.prim = T_i1;
+    t.ptrs = 0;
+    return t;
+}
+
 SignedType signed_none() {
     SignedType t;
     t.prim = T_NONE;

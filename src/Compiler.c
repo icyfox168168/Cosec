@@ -220,17 +220,17 @@ static IrIns * compile_expr(Compiler *c, Expr *expr); // Forward declaration
 // true or false branch chain to patch; or (2) removing the CONDBR instruction
 // and referring to the underlying comparison instruction if there's only one
 // branch (no need for a phi)
-static IrIns * discharge_cond(Compiler *c, IrIns *cond) {
-    if (cond->op != IR_CONDBR) {
+static IrIns * discharge(Compiler *c, IrIns *cond) {
+    if (cond->op != IR_CONDBR) { // Currently, only conditions need discharging
         return cond; // Not a condition; doesn't need discharging
     }
 
     IrIns *k_true = new_ir(IR_KINT); // True and false constants
     k_true->kint = 1;
-    k_true->type.prim = T_i1;
+    k_true->type = type_i1();
     IrIns *k_false = new_ir(IR_KINT);
     k_false->kint = 0;
-    k_false->type.prim = T_i1;
+    k_false->type = type_i1();
 
     PhiChain *phi_head = NULL; // Construct the phi chain
     PhiChain **phi = &phi_head;
@@ -288,7 +288,7 @@ static IrIns * to_cond(Compiler *c, IrIns *expr) {
     if (expr->op == IR_CONDBR) {
         return expr; // Already a condition, don't do anything
     }
-    expr = discharge_cond(c, expr);
+    expr = discharge(c, expr);
     assert(expr->op >= IR_EQ && expr->op <= IR_UGE); // Should be a comparison
     IrIns *br = new_ir(IR_CONDBR); // Emit a branch on the condition
     br->cond = expr;
@@ -307,14 +307,14 @@ static IrIns * compile_ternary(Compiler *c, Expr *ternary) {
     patch_branch_chain(cond->true_chain, true_bb);
 
     IrIns *true_val = compile_expr(c, ternary->l);
-    true_val = discharge_cond(c, true_val);
+    true_val = discharge(c, true_val);
     IrIns *true_br = new_ir(IR_BR);
     emit(c, true_br);
     BB *false_bb = emit_bb(c); // New BB for the false value
     patch_branch_chain(cond->false_chain, false_bb);
 
     IrIns *false_val = compile_expr(c, ternary->r);
-    false_val = discharge_cond(c, false_val);
+    false_val = discharge(c, false_val);
     IrIns *false_br = new_ir(IR_BR);
     emit(c, false_br);
 
@@ -335,12 +335,16 @@ static IrIns * compile_ternary(Compiler *c, Expr *ternary) {
 
 static IrIns * compile_operation(Compiler *c, Expr *binary) {
     IrIns *left = compile_expr(c, binary->l);
-    left = discharge_cond(c, left);
+    left = discharge(c, left);
     IrIns *right = compile_expr(c, binary->r);
-    right = discharge_cond(c, right);
-    IrOpcode opcode = binary->type.is_signed ? SIGNED_BINOP[binary->op] :
-                      UNSIGNED_BINOP[binary->op];
-    IrIns *operation = new_ir(opcode);
+    right = discharge(c, right);
+    IrOpcode op;
+    if (binary->type.is_signed) {
+        op = SIGNED_BINOP[binary->op];
+    } else {
+        op = UNSIGNED_BINOP[binary->op];
+    }
+    IrIns *operation = new_ir(op);
     operation->l = left;
     operation->r = right;
     operation->type = signed_to_type(binary->type);
@@ -348,11 +352,63 @@ static IrIns * compile_operation(Compiler *c, Expr *binary) {
     return operation;
 }
 
-static void convert_load_to_store(Compiler *c, IrIns *load, IrIns *to_store) {
-    load->op = IR_STORE;
-    // IR_STORE destination is the same as the IR_LOAD (don't change store->l)
-    load->r = to_store;
-    load->type = type_none(); // Clear the type set by IR_LOAD
+// For '<ptr> + <integer>' or '<ptr> - <integer>'
+static IrIns * compile_ptr_arith(Compiler *c, Expr *binary) {
+    // Exactly one of 'binary->l' or 'binary->r' is a pointer
+    IrIns *left = compile_expr(c, binary->l);
+    left = discharge(c, left);
+    IrIns *right = compile_expr(c, binary->r);
+    right = discharge(c, right);
+
+    IrIns *ptr = is_ptr(binary->l->type) ? left : right;
+    IrIns *to_add = is_ptr(binary->l->type) ? right : left;
+    if (binary->op == '-') { // Negate the offset if needed
+        IrIns *zero = new_ir(IR_KINT);
+        zero->kint = 0;
+        zero->type = to_add->type;
+        IrIns *sub = new_ir(IR_SUB);
+        sub->l = zero;
+        sub->r = to_add;
+        sub->type = to_add->type;
+        to_add = sub;
+    }
+
+    IrIns *lea = new_ir(IR_LEA);
+    lea->l = ptr;
+    lea->r = to_add;
+    lea->type = ptr->type; // Results in a new pointer
+    emit(c, lea);
+    return lea;
+}
+
+// For '<ptr> - <ptr>'
+static IrIns * compile_ptr_sub(Compiler *c, Expr *binary) {
+    // 'binary->l' is an EXPR_CONV, 'binary->l->l' is whatever generated the
+    // pointer
+    assert(binary->l->kind == EXPR_CONV);
+    SignedType ptr_type = binary->l->l->type;
+
+    // Both operands will already be CONV to i64s
+    IrIns *left = compile_expr(c, binary->l); // Emits PTR2I
+    left = discharge(c, left);
+    IrIns *right = compile_expr(c, binary->r); // Emits PTR2I
+    right = discharge(c, right);
+
+    IrIns *sub = new_ir(IR_SUB);
+    sub->l = left;
+    sub->r = right;
+    sub->type = signed_to_type(binary->type);
+    emit(c, sub);
+    IrIns *size = new_ir(IR_KINT);
+    size->kint = bytes(signed_to_type(ptr_type)); // Size of pointer type
+    size->type = sub->type;
+    emit(c, size);
+    IrIns *div = new_ir(IR_UDIV);
+    div->l = sub;
+    div->r = size;
+    div->type = sub->type; // Results in i64
+    emit(c, div);
+    return div;
 }
 
 static IrIns * compile_arith_assign(Compiler *c, Expr *assign) {
@@ -382,21 +438,27 @@ static IrIns * compile_arith_assign(Compiler *c, Expr *assign) {
         right = emit_conv(c, right, assign->type, lvalue_expr->type);
     }
 
-    // Copy the IR_LOAD and re-emit it, so we can modify it into an IR_STORE
+    // Copy the IR_LOAD, re-emit it, modify it into an IR_STORE
     IrIns *load = new_ir(IR_LOAD);
     *load = *lvalue;
     load->next = NULL;
     emit(c, load);
-    convert_load_to_store(c, load, right);
+    load->op = IR_STORE;
+    // IR_STORE destination is the same as the IR_LOAD (don't change store->l)
+    load->r = right;
+    load->type = type_none(); // Clear the type set by IR_LOAD
     return right; // Assignment evaluates to its right operand
 }
 
 static IrIns * compile_assign(Compiler *c, Expr *assign) {
     IrIns *right = compile_expr(c, assign->r);
-    right = discharge_cond(c, right);
+    right = discharge(c, right);
     IrIns *load = compile_expr(c, assign->l);
     assert(load->op == IR_LOAD);
-    convert_load_to_store(c, load, right);
+    load->op = IR_STORE; // Modify IR_LOAD into an IR_STORE
+    // IR_STORE destination is the same as the IR_LOAD (don't change store->l)
+    load->r = right;
+    load->type = type_none(); // Clear the type set by IR_LOAD
     return right; // Assignment evaluates to its right operand
 }
 
@@ -434,7 +496,15 @@ static IrIns * compile_comma(Compiler *c, Expr *comma) {
 
 static IrIns * compile_binary(Compiler *c, Expr *binary) {
     switch (binary->op) {
-    case '+': case '-': case '*': case '/': case '%':
+    case '-':
+        if (is_ptr(binary->l->type) && is_ptr(binary->r->type)) {
+            return compile_ptr_sub(c, binary); // <ptr> - <ptr>
+        } // Fall through...
+    case '+':
+        if (is_ptr(binary->l->type) || is_ptr(binary->r->type)) {
+            return compile_ptr_arith(c, binary); // <ptr> + <integer>
+        } // Fall through...
+    case '*': case '/': case '%':
     case TK_LSHIFT: case TK_RSHIFT: case '&': case '|': case '^':
     case '<': case TK_LE: case '>': case TK_GE: case TK_EQ: case TK_NEQ:
         return compile_operation(c, binary);
@@ -464,7 +534,8 @@ static IrIns * compile_neg(Compiler *c, Expr *unary) {
     return compile_operation(c, sub);
 }
 
-static IrIns * compile_promotion(Compiler *c, Expr *unary) {
+static IrIns * compile_plus(Compiler *c, Expr *unary) {
+    // The only function of the unary '+' operand is type promotion
     return compile_expr(c, unary->l); // Does the type promotion for us
 }
 
@@ -529,12 +600,15 @@ static IrIns * compile_inc_dec(Compiler *c, Expr *unary, int is_prefix) {
     IrIns *lvalue = right->l;
     assert(lvalue->op == IR_LOAD);
 
-    // Copy the IR_LOAD and re-emit it, so we can modify it into an IR_STORE
+    // Copy the IR_LOAD, re-emit it, modify it into an IR_STORE
     IrIns *load = new_ir(IR_LOAD);
     *load = *lvalue;
     load->next = NULL;
     emit(c, load);
-    convert_load_to_store(c, load, right);
+    load->op = IR_STORE; // Modify IR_LOAD into an IR_STORE
+    // IR_STORE destination is the same as the IR_LOAD (don't change store->l)
+    load->r = right;
+    load->type = type_none(); // Clear the type set by IR_LOAD
     if (is_prefix) {
         return right;
     } else {
@@ -545,7 +619,7 @@ static IrIns * compile_inc_dec(Compiler *c, Expr *unary, int is_prefix) {
 static IrIns * compile_unary(Compiler *c, Expr *unary) {
     switch (unary->op) {
         case '-': return compile_neg(c, unary);
-        case '+': return compile_promotion(c, unary);
+        case '+': return compile_plus(c, unary);
         case '~': return compile_bit_not(c, unary);
         case '!': return compile_not(c, unary);
         case '&': return compile_addr(c, unary);
@@ -557,15 +631,14 @@ static IrIns * compile_unary(Compiler *c, Expr *unary) {
 
 static IrIns * compile_postfix(Compiler *c, Expr *operand) {
     switch (operand->op) {
-    case TK_INC: case TK_DEC:
-        return compile_inc_dec(c, operand, 0);
-    default: UNREACHABLE();
+        case TK_INC: case TK_DEC: return compile_inc_dec(c, operand, 0);
+        default: UNREACHABLE();
     }
 }
 
 static IrIns * compile_conv(Compiler *c, Expr *conv) {
     IrIns *operand = compile_expr(c, conv->l);
-    operand = discharge_cond(c, operand);
+    operand = discharge(c, operand);
     return emit_conv(c, operand, conv->l->type, conv->type);
 }
 
@@ -768,7 +841,7 @@ static void compile_ret(Compiler *c, Stmt *ret_stmt) {
     IrIns *value = NULL;
     if (ret_stmt->expr) { // If we're returning something
         value = compile_expr(c, ret_stmt->expr);
-        value = discharge_cond(c, value);
+        value = discharge(c, value);
     }
     IrIns *ret = new_ir(value ? IR_RET1 : IR_RET0);
     ret->l = value;

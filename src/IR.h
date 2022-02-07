@@ -40,6 +40,7 @@ typedef struct {
 } Type;
 
 Type type_none();
+Type type_i1();
 int bits(Type t);  // Returns the size of a type in bits
 int bytes(Type t); // Returns the size of a type in bytes
 
@@ -184,19 +185,10 @@ Local * new_local(char *name, SignedType type);
 //   must have type <type>*)
 // * LOAD: reads memory from a pointer <type>*, resulting in a value with type
 //   <type>
-// * LEA: performs pointer offset calculations. If LEA is set to return a value
+// * LEA: performs pointer offset calculation. If LEA is set to return a value
 //   of type <type>, then the first argument must be a pointer with type
-//   <type>*, and the second argument a reference to the offset calculation.
-//   Similar to LLVM's 'getelementptr'
-//
-// TODO: a great optimisation would be to expand LEA to include a base, index,
-// scale, and displacement and then use the optimisation engine to try fold
-// as many compatible arithmetic instructions into LEA as possible. This would
-// get folded into the RHS of a memory load operand in the assembly.
-// E.g., ((int *) a)[b+3]:
-// Unoptimised: 0000: ADD b, 3; 0001: LEA a 0000 -> add b, 3; lea z, [a+b*4]
-// Becomes: 0000: LEA a b+3 -> lea z, [a+b*4+12]
-// Avoids the need for a selection DAG (which is how LLVM solves this problem)
+//   <type>*, and the second argument value to add to the pointer (similar to
+//   LLVM's 'getelementptr')
 #define IR_OPCODES        \
     /* Constants */       \
     X(KINT, 1)            \

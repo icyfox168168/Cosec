@@ -175,9 +175,9 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
         return result;
     }
     switch (ins->op) {
-    case IR_KINT:  return discharge_imm(a, ins);   // Immediate
-    case IR_LOAD:  return discharge_load(a, ins);  // Memory load
-    case IR_ALLOC: return discharge_alloc(a, ins); // Pointer load
+    case IR_KINT:   return discharge_imm(a, ins);   // Immediate
+    case IR_LOAD:   return discharge_load(a, ins);  // Memory load
+    case IR_ALLOC:  return discharge_alloc(a, ins); // Pointer load
     case IR_EQ: case IR_NEQ:
     case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
     case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
@@ -257,7 +257,7 @@ static void asm_load(Assembler *a, IrIns *ir_load) {
         return;
     }
     // If the load has multiple uses, then it needs to happen just once, so
-    // discharge_cond it here
+    // discharge it here
     discharge_load(a, ir_load);
 }
 
@@ -464,10 +464,10 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
 
 static void asm_ins(Assembler *a, IrIns *ir_ins) {
     switch (ir_ins->op) {
-    case IR_KINT: break; // Don't do anything for constants
-    case IR_FARG: asm_farg(a, ir_ins); break;
+    case IR_KINT:  break; // Don't do anything for constants
+    case IR_FARG:  asm_farg(a, ir_ins); break;
     case IR_ALLOC: asm_alloc(a, ir_ins); break;
-    case IR_LOAD: asm_load(a, ir_ins); break;
+    case IR_LOAD:  asm_load(a, ir_ins); break;
     case IR_STORE: asm_store(a, ir_ins); break;
     case IR_ADD: case IR_SUB: case IR_MUL:
     case IR_AND: case IR_OR: case IR_XOR:

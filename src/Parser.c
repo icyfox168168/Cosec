@@ -186,7 +186,8 @@ static int check_conv(Expr *src, SignedType tt) {
     }
     return (is_arith(tt) && is_arith(st)) ||
            (is_ptr(tt) && is_ptr(st)) ||
-           (is_ptr(tt) && is_int(st));
+           (is_ptr(tt) && is_int(st)) ||
+           (is_int(tt) && is_ptr(st));
 }
 
 static Expr * conv_const(Expr *expr, SignedType target) {
@@ -311,12 +312,15 @@ static SignedType resolve_types(Tk o, Expr **l, Expr **r) {
         result.is_signed = promotion.is_signed; // Preserve signed-ness
     } else if ((o == '+' || o == '-') && is_ptr(lt) && is_arith(rt)) {
         result = lt; // Result is a pointer
-        *r = conv_to(*r, unsigned_i64());
+        *r = conv_to(*r, unsigned_i64()); // Can only add i64 to pointers
     } else if (o == '+' && is_arith(rt) && is_ptr(lt)) {
         result = rt; // Result is a pointer
-        *l = conv_to(*l, unsigned_i64());
-    } else if ((o == '-' || o == '?') &&
-               is_ptr(lt) && is_ptr(rt) && are_equal(lt, rt)) { // Both ptrs
+        *l = conv_to(*l, unsigned_i64()); // Can only add i64 to pointers
+    } else if (o == '-' && is_ptr(lt) && is_ptr(rt) && are_equal(lt, rt)) {
+        result = unsigned_i64(); // Result is an INTEGER
+        *l = conv_to(*l, result); // Convert both operands to i64s
+        *r = conv_to(*r, result);
+    } else if (o == '?' && is_ptr(lt) && is_ptr(rt) && are_equal(lt, rt)) {
         result = lt; // Doesn't matter which one we pick
     } else if ((is_rel_op(o) || is_eq_op(o)) &&
                is_ptr(lt) && is_ptr(rt) && are_equal(lt, rt)) { // Both ptrs
@@ -807,33 +811,37 @@ static Declarator parse_declarator(Parser *p, SignedType base_type) {
     return d;
 }
 
-static Stmt * parse_decl(Parser *p) {
+static Stmt * parse_decl(Parser *p, SignedType base_type, int allowed_defn) {
+    Declarator declarator = parse_declarator(p, base_type);
+    Expr *value = NULL;
+    if (allowed_defn && p->l.tk == '=') { // Optional assignment
+        next_tk(&p->l); // Skip the '=' token
+        value = parse_subexpr(p, PREC_COMMA); // Can't have commas
+    }
+
+    Stmt *result = new_stmt(STMT_DECL);
+    result->local = def_local(p, declarator.name, declarator.type);
+    if (value) {
+        Expr *local_expr = new_expr(EXPR_LOCAL);
+        local_expr->local = result->local;
+        local_expr->type = result->local->type;
+        local_expr->tk = declarator.tk;
+        Stmt *assign = new_stmt(STMT_EXPR);
+        assign->expr = parse_assign(local_expr, value);
+        result->next = assign;
+    }
+    return result;
+}
+
+static Stmt * parse_decl_list(Parser *p) {
     SignedType base_type = parse_type_spec(p); // Base type specifiers
     Stmt *head;
     Stmt **decl = &head;
     while (p->l.tk != ';') {
-        Declarator declarator = parse_declarator(p, base_type);
-        Expr *value = NULL;
-        if (p->l.tk == '=') { // Optional assignment
-            next_tk(&p->l); // Skip the '=' token
-            value = parse_subexpr(p, PREC_COMMA); // Can't have commas
-        }
-
-        Stmt *result = new_stmt(STMT_DECL);
-        result->local = def_local(p, declarator.name, declarator.type);
-        *decl = result;
-        decl = &(*decl)->next;
-        if (value) {
-            Expr *local_expr = new_expr(EXPR_LOCAL);
-            local_expr->local = result->local;
-            local_expr->type = result->local->type;
-            local_expr->tk = declarator.tk;
-            Stmt *assign = new_stmt(STMT_EXPR);
-            assign->expr = parse_assign(local_expr, value);
-            *decl = assign; // Chain the declaration and assignment
+        *decl = parse_decl(p, base_type, 1);
+        while (*decl) { // Find the end of the chain
             decl = &(*decl)->next;
         }
-
         if (p->l.tk == ',') {
             next_tk(&p->l); // Parse another declaration
         } else {
@@ -914,7 +922,7 @@ static Stmt * parse_for(Parser *p) {
     Local *scope = p->locals;
 
     if (has_decl(p)) { // Initializer
-        *stmt = parse_decl(p); // Declaration initializer
+        *stmt = parse_decl_list(p); // Declaration initializer
     } else if (p->l.tk != ';') {
         *stmt = parse_expr_stmt(p); // Expression initializer
     } else {
@@ -1012,7 +1020,7 @@ static Stmt * parse_block(Parser *p) {
     Local *scope = p->locals; // New locals scope
     while (p->l.tk && p->l.tk != '}') {
         if (has_decl(p)) { // Declarations can only occur in BLOCKS
-            *stmt = parse_decl(p);
+            *stmt = parse_decl_list(p);
         } else {
             *stmt = parse_stmt(p);
         }
@@ -1045,11 +1053,11 @@ static Stmt * parse_stmt(Parser *p) {
 // ---- Module ----------------------------------------------------------------
 
 static FnArg * parse_fn_decl_arg(Parser *p) {
-    SignedType type = parse_type_spec(p); // Type
-    expect_tk(&p->l, TK_IDENT); // Name
+    SignedType base_type = parse_type_spec(p); // Type
     FnArg *arg = new_fn_arg();
-    arg->local = def_local(p, p->l.info, type);
-    next_tk(&p->l);
+    Stmt *decl = parse_decl(p, base_type, 0);
+    arg->local = decl->local;
+    assert(!decl->next); // Sanity check -> only one statement
     return arg;
 }
 
