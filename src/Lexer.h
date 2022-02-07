@@ -8,7 +8,8 @@
 #define TOKENS                             \
     /* Values */                           \
     X(IDENT, "identifier")                 \
-    X(NUM, "number")                       \
+    X(KINT, "integer")                     \
+    X(KFLOAT, "number")                    \
                                            \
     /* Symbols */                          \
     Y(INC, '+', '+', "++")                 \
@@ -84,7 +85,8 @@ typedef struct {
 
     Tk tk; // Most recently lexed token
     char *ident; int len; // For TK_IDENT
-    int num;              // For TK_NUM
+    int kint;             // For TK_KINT
+    double kfloat;        // For TK_KFLOAT
 } Lexer;
 
 Lexer new_lexer(char *file);

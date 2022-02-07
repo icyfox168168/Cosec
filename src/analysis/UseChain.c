@@ -19,6 +19,7 @@ static int uses_left(IrIns *ins) {
     IrOpcode op = ins->op;
     return IR_OPCODE_NARGS[op] >= 1 &&
         op != IR_KINT &&
+        op != IR_KFLOAT &&
         op != IR_FARG &&
         op != IR_ALLOC &&
         op != IR_PHI &&

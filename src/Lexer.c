@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
+#include <errno.h>
 
 #include "Lexer.h"
 #include "Error.h"
@@ -117,17 +118,39 @@ static void lex_ident(Lexer *l) {
     l->len = len;
 }
 
-static void lex_int(Lexer *l) {
+static void lex_float(Lexer *l) {
     char *end;
-    int num = (int) strtol(l->c, &end, 0); // Read the number
+    errno = 0;
+    double num = strtod(l->c, &end); // Try reading a float
     l->c = end;
-    if (isalnum(*l->c)) { // Check the character after the number is valid
+    if (errno != 0 || end == l->info.start || isalnum(*l->c)) {
         TkInfo info = info_at(l);
         info.len = 1;
         trigger_error_at(info, "invalid digit '%c' in number", *l->c);
     }
-    l->tk = TK_NUM;
-    l->num = num;
+    l->c = end;
+    l->tk = TK_KFLOAT;
+    l->kfloat = num;
+}
+
+static void lex_number(Lexer *l) {
+    char *end;
+    errno = 0;
+    int num = (int) strtol(l->c, &end, 0); // Try reading an integer
+    l->c = end;
+    if (errno != 0 || end == l->info.start || isalnum(*l->c)) {
+        TkInfo info = info_at(l);
+        info.len = 1;
+        trigger_error_at(info, "invalid digit '%c' in number", *l->c);
+    }
+    if (*end == '.') { // If the int ends in a '.', then it was a float
+        l->c = l->info.start; // Re-start
+        lex_float(l);
+        return;
+    }
+    l->c = end;
+    l->tk = TK_KINT;
+    l->kint = num;
 }
 
 static void lex_symbol(Lexer *l) {
@@ -162,7 +185,7 @@ void next_tk(Lexer *l) {
     if (isalpha(*l->c) || *l->c == '_') { // Identifier
         lex_ident(l);
     } else if (isnumber(*l->c)) { // Number
-        lex_int(l);
+        lex_number(l);
     } else { // Symbol
         lex_symbol(l);
     }
@@ -184,7 +207,7 @@ static char *TK_NAMES[NUM_TKS] = {
 void print_tk(Tk tk) {
     if (tk <= TK_FIRST) {
         printf("'%c'", (char) tk);
-    } else if (tk >= TK_IDENT && tk <= TK_NUM) {
+    } else if (tk >= TK_IDENT && tk <= TK_KFLOAT) {
         printf("%s", TK_NAMES[tk]); // Don't surround in quotes
     } else {
         printf("'%s'", TK_NAMES[tk]);

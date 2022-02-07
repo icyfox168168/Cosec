@@ -174,20 +174,49 @@ static void ensure_can_deref(Expr *operand) {
     }
 }
 
-static Expr * conv_to(Expr *expr, SignedType target) {
-    assert(target.prim != T_NONE);
-    if (are_equal(expr->type, target)) {
-        return expr; // No conversion necessary
+static int is_null_ptr(Expr *e) {
+    return e->kind == EXPR_KINT && e->kint == 0;
+}
+
+// Returns 1 if the conversion from the source to target type is valid
+static int check_conv(Expr *src, SignedType tt) {
+    SignedType st = src->type;
+    if (is_ptr(tt) && is_ptr(st) && !is_null_ptr(src)) {
+        trigger_warning_at(src->tk, "incompatible pointer types");
     }
-    if (expr->kind == EXPR_KINT) {
-        // Don't emit type conversions on constants
-        expr->type = target;
-        return expr;
+    return (is_arith(tt) && is_arith(st)) ||
+           (is_ptr(tt) && is_ptr(st)) ||
+           (is_ptr(tt) && is_int(st));
+}
+
+static Expr * conv_const(Expr *expr, SignedType target) {
+    if (is_fp(target) && expr->kind == EXPR_KINT) {
+        expr->kind = EXPR_KFLOAT;
+        expr->kfloat = (double) expr->kint;
+    } else if (is_int(target) && expr->kind == EXPR_KFLOAT) {
+        expr->kind = EXPR_KFLOAT;
+        expr->kint = (int) expr->kfloat;
+    }
+    expr->type = target;
+    return expr;
+}
+
+static Expr * conv_to(Expr *src, SignedType target) {
+    assert(target.prim != T_NONE);
+    if (are_equal(src->type, target)) {
+        return src; // No conversion necessary
+    }
+    if (src->kind == EXPR_KINT || src->kind == EXPR_KFLOAT) {
+        return conv_const(src, target); // Don't emit CONV on constants
+    }
+    if (!check_conv(src, target)) {
+        trigger_error_at(src->tk, "invalid type conversion");
+        // TODO: print the types we're converting between
     }
     Expr *conv = new_expr(EXPR_CONV);
-    conv->l = expr;
+    conv->l = src;
     conv->type = target;
-    conv->tk = expr->tk;
+    conv->tk = src->tk;
     return conv;
 }
 
@@ -205,10 +234,6 @@ static int is_rel_op(Tk o) {
 
 static int is_eq_op(Tk o) {
     return o == TK_EQ || o == TK_NEQ;
-}
-
-static int is_null_ptr(Expr *e) {
-    return e->kind == EXPR_KINT && e->kint == 0;
 }
 
 // Returns the type that a binary integer operation's operands should be
@@ -314,7 +339,7 @@ static SignedType resolve_types(Tk o, Expr **l, Expr **r) {
         result = unsigned_i1(); // Pointer comparisons always unsigned
     } else {
         TkInfo operation = merge_tks((*l)->tk, (*r)->tk);
-        trigger_error_at(operation, "invalid arguments to binary expression");
+        trigger_error_at(operation, "invalid argument to operation");
         // TODO: might be useful to print the C type associated
     }
     return result;
@@ -339,7 +364,7 @@ static SignedType resolve_unary_type(Tk op, Expr **e) {
         result = promote_unary_arith(*e);
         *e = conv_to(*e, result);
     } else {
-        trigger_error_at((*e)->tk, "invalid argument to unary expression");
+        trigger_error_at((*e)->tk, "invalid argument to operation");
         // TODO: might be useful to print the C type associated
     }
     return result;
@@ -356,6 +381,7 @@ static Expr * to_cond(Expr *expr) {
     // a pointer, then this constant is equivalent to a null pointer
     Expr *zero = new_expr(EXPR_KINT);
     zero->kint = 0;
+    zero->type = expr->type;
     zero->tk = expr->tk;
     return parse_operation(TK_NEQ, expr, zero);
 }
@@ -460,14 +486,23 @@ static Expr * parse_binary(Parser *p, Tk op, Expr *left, Expr *right) {
 }
 
 static Expr * parse_kint(Parser *p) {
-    expect_tk(&p->l, TK_NUM);
-    int value = p->l.num;
-    Expr *kint = new_expr(EXPR_KINT);
-    kint->kint = value;
-    kint->type = signed_i32();
-    kint->tk = p->l.info;
+    expect_tk(&p->l, TK_KINT);
+    Expr *k = new_expr(EXPR_KINT);
+    k->kint = p->l.kint;
+    k->type = signed_i32();
+    k->tk = p->l.info;
     next_tk(&p->l);
-    return kint;
+    return k;
+}
+
+static Expr * parse_kfloat(Parser *p) {
+    expect_tk(&p->l, TK_KFLOAT);
+    Expr *k = new_expr(EXPR_KFLOAT);
+    k->kfloat = p->l.kfloat;
+    k->type = signed_f32();
+    k->tk = p->l.info;
+    next_tk(&p->l);
+    return k;
 }
 
 static Expr * parse_local(Parser *p) {
@@ -499,10 +534,11 @@ static Expr * parse_braced_subexpr(Parser *p) {
 
 static Expr * parse_operand(Parser *p) {
     switch (p->l.tk) {
-        case TK_NUM:   return parse_kint(p);
-        case TK_IDENT: return parse_local(p);
-        case '(':      return parse_braced_subexpr(p);
-        default:       trigger_error_at(p->l.info, "expected expression");
+        case TK_KINT:   return parse_kint(p);
+        case TK_KFLOAT: return parse_kfloat(p);
+        case TK_IDENT:  return parse_local(p);
+        case '(':       return parse_braced_subexpr(p);
+        default:        trigger_error_at(p->l.info, "expected expression");
     }
 }
 

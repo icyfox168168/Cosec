@@ -41,6 +41,14 @@ SignedType signed_i32() {
     return t;
 }
 
+SignedType signed_f32() {
+    SignedType t;
+    t.prim = T_f32;
+    t.ptrs = 0;
+    t.is_signed = 1;
+    return t;
+}
+
 SignedType unsigned_i64() {
     SignedType t;
     t.prim = T_i64;

@@ -8,6 +8,7 @@
 
 void trigger_error(char *fmt, ...) __attribute__((noreturn));
 void trigger_error_at(TkInfo at, char *fmt, ...) __attribute__((noreturn));
+void trigger_warning_at(TkInfo at, char *fmt, ...);
 void expect_tk(Lexer *l, Tk expected);
 
 #endif

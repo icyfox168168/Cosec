@@ -174,21 +174,43 @@ static void merge_branch_chains(BrChain **head, BrChain *to_append) {
     *head = to_append;
 }
 
-static IrIns * emit_conv(Compiler *c, IrIns *operand, SignedType target_type,
-                         SignedType src_type) {
-    IrOpcode opcode;
-    if (signed_bits(target_type) < signed_bits(src_type)) {
-        opcode = IR_TRUNC; // Target type is smaller
-    } else if (signed_bits(src_type) == 1 || !src_type.is_signed) {
-        opcode = IR_ZEXT; // Always zext an i1, or if the value is unsigned
+// Emits an IR conversion instruction that converts 'operand' from its type
+// 'src' to the target type 'target'
+static IrIns * emit_conv(Compiler *c, IrIns *operand, SignedType src,
+                         SignedType target) {
+    IrOpcode op;
+    if (is_int(src) && is_int(target)) {
+        if (signed_bits(target) < signed_bits(src)) {
+            op = IR_TRUNC; // Target type is smaller
+        } else if (signed_bits(src) == 1 || !src.is_signed) {
+            op = IR_ZEXT; // Always zext an i1, or if the value is unsigned
+        } else {
+            op = IR_SEXT; // Value is signed and larger than i1
+        }
+    } else if (is_fp(src) && is_fp(target)) {
+        if (signed_bits(target) < signed_bits(src)) {
+            op = IR_FPTRUNC; // Target type is smaller
+        } else {
+            op = IR_FPEXT; // Target type is larger
+        }
+    } else if (is_int(src) && is_fp(target)) {
+        op = IR_I2FP;
+    } else if (is_fp(src) && is_int(target)) {
+        op = IR_FP2I;
+    } else if (is_int(src) && is_ptr(target)) {
+        op = IR_I2PTR;
+    } else if (is_ptr(src) && is_int(target)) {
+        op = IR_PTR2I;
+    } else if (is_ptr(src) && is_ptr(target)) {
+        op = IR_PTR2PTR;
     } else {
-        opcode = IR_SEXT; // Value is signed and larger than i1
+        assert(0); // Parser should protect against this
     }
-    IrIns *ext_trunc = new_ir(opcode);
-    ext_trunc->l = operand;
-    ext_trunc->type = signed_to_type(target_type);
-    emit(c, ext_trunc);
-    return ext_trunc;
+    IrIns *conv = new_ir(op);
+    conv->l = operand;
+    conv->type = signed_to_type(target);
+    emit(c, conv);
+    return conv;
 }
 
 static IrIns * compile_expr(Compiler *c, Expr *expr); // Forward declaration
@@ -357,7 +379,7 @@ static IrIns * compile_arith_assign(Compiler *c, Expr *assign) {
     // We may need to insert a truncation (which the parser hasn't done for us)
     // e.g., in the case 'char a = 3; char *b = &a; *b += 1'
     if (signed_bits(lvalue_expr->type) != signed_bits(assign->type)) {
-        right = emit_conv(c, right, lvalue_expr->type, assign->type);
+        right = emit_conv(c, right, assign->type, lvalue_expr->type);
     }
 
     // Copy the IR_LOAD and re-emit it, so we can modify it into an IR_STORE
@@ -544,7 +566,7 @@ static IrIns * compile_postfix(Compiler *c, Expr *operand) {
 static IrIns * compile_conv(Compiler *c, Expr *conv) {
     IrIns *operand = compile_expr(c, conv->l);
     operand = discharge_cond(c, operand);
-    return emit_conv(c, operand, conv->type, conv->l->type);
+    return emit_conv(c, operand, conv->l->type, conv->type);
 }
 
 static IrIns * compile_local(Compiler *c, Expr *expr) {
@@ -564,9 +586,18 @@ static IrIns * compile_kint(Compiler *c, Expr *expr) {
     return k;
 }
 
+static IrIns * compile_kfloat(Compiler *c, Expr *expr) {
+    IrIns *k = new_ir(IR_KFLOAT);
+    k->kfloat = expr->kfloat;
+    k->type = signed_to_type(expr->type);
+    emit(c, k);
+    return k;
+}
+
 static IrIns * compile_expr(Compiler *c, Expr *expr) {
     switch (expr->kind) {
         case EXPR_KINT:    return compile_kint(c, expr);
+        case EXPR_KFLOAT:  return compile_kfloat(c, expr);
         case EXPR_LOCAL:   return compile_local(c, expr);
         case EXPR_CONV:    return compile_conv(c, expr);
         case EXPR_POSTFIX: return compile_postfix(c, expr);

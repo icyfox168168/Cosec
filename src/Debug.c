@@ -30,7 +30,11 @@ static void print_expr(Expr *expr) {
     switch (expr->kind) {
     case EXPR_KINT:
         print_type(signed_to_type(expr->type));
-        printf(" %d", expr->kint);
+        printf(" %+d", expr->kint);
+        break;
+    case EXPR_KFLOAT:
+        print_type(signed_to_type(expr->type));
+        printf(" %+g", expr->kfloat);
         break;
     case EXPR_LOCAL:
         print_local(expr->local);
@@ -199,6 +203,7 @@ static void print_ins(IrIns *ins) {
     switch (ins->op) { // Handle special case instructions (e.g., constants)
     case IR_FARG:   printf("%d", ins->arg_num); break;
     case IR_KINT:   printf("%+d", ins->kint); break;
+    case IR_KFLOAT: printf("%+g", ins->kfloat); break;
     case IR_ALLOC:  { Type t = ins->type; t.ptrs--; print_type(t); } break;
     case IR_BR:     printf("%s", ins->br ? ins->br->label : "NULL"); break;
     case IR_CONDBR:

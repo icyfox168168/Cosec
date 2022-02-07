@@ -20,8 +20,8 @@
 #define IR_PRIMS \
     X(NONE)      \
     X(void)      \
-    X(i1) /* Boolean value */ \
-    X(i8) /* Integers */ \
+    X(i1)  /* Boolean value */ \
+    X(i8)  /* Integers */ \
     X(i16)       \
     X(i32)       \
     X(i64)       \
@@ -58,6 +58,7 @@ Type signed_to_type(SignedType t);
 SignedType signed_none();
 SignedType unsigned_i1();
 SignedType signed_i32();
+SignedType signed_f32();
 SignedType unsigned_i64();
 int signed_bits(SignedType t);  // Returns the size of a type in bits
 
@@ -83,6 +84,7 @@ typedef struct {
 
 typedef enum {
     EXPR_KINT,    // Constant integer
+    EXPR_KFLOAT,  // Constant floating point
     EXPR_LOCAL,   // Local variable
     EXPR_CONV,    // Type conversion
     EXPR_POSTFIX, // Postfix operation
@@ -96,6 +98,7 @@ typedef struct expr {
     SignedType type; // Type for the result of the expression
     union {
         int kint;                                          // EXPR_KINT
+        double kfloat;                                     // EXPR_KFLOAT
         Local *local;                                      // EXPR_LOCAL
         struct { Tk op; struct expr *l; };                 // Unary, postfix
         struct { Tk _op1; struct expr *_l1, *r; };         // EXPR_BINARY
@@ -197,6 +200,7 @@ Local * new_local(char *name, SignedType type);
 #define IR_OPCODES        \
     /* Constants */       \
     X(KINT, 1)            \
+    X(KFLOAT, 1)          \
                           \
     /* Memory accesses */ \
     X(FARG, 1)            \
@@ -233,9 +237,19 @@ Local * new_local(char *name, SignedType type);
     X(UGE, 2)             \
                           \
     /* Conversions */     \
-    X(TRUNC, 1) /* Truncate an int to a smaller type */ \
-    X(SEXT, 1) /* Sign extend, for signed ints */ \
-    X(ZEXT, 1) /* Zero extend, for unsigned ints */ \
+    X(TRUNC, 1)   /* Truncate an int to a smaller type */ \
+    X(SEXT, 1)    /* Sign extend, for signed ints */ \
+    X(ZEXT, 1)    /* Zero extend, for unsigned ints */ \
+                          \
+    X(FPEXT, 1)   /* Extend a floating point */ \
+    X(FPTRUNC, 1) /* Truncate a floating point */ \
+    X(FP2I, 1)    /* Convert a floating point to an integer */ \
+    X(I2FP, 1)    /* Convert an integer to a floating point */ \
+                          \
+    X(PTR2I, 1)   /* Convert a pointer to an integer */ \
+    X(I2PTR, 1)   /* Convert an integer to a pointer */ \
+                          \
+    X(PTR2PTR, 1) /* Convert a pointer to another pointer type -> nop */ \
                           \
     /* Control flow */    \
     X(PHI, 0)    /* SSA phi instruction */ \
@@ -284,9 +298,10 @@ typedef struct ir_ins {
     IrOpcode op;
     Type type; // Everything except control flow records its return type
     union {
-        PhiChain *phi;                         // IR_PHI
+        PhiChain *phi;                    // IR_PHI
         int arg_num;                      // IR_FARG
         int kint;                         // IR_KINT
+        double kfloat;                    // IR_KFLOAT
         struct { struct ir_ins *l, *r; }; // Binary operations
         struct bb *br;                    // IR_BR
         struct {                          // IR_CONDBR
