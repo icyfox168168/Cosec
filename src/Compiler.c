@@ -64,8 +64,15 @@ static void emit(Compiler *c, IrIns *ins) {
         // Load from <type>* into <type>
         assert(ins->type.prim == ins->l->type.prim);
         assert(ins->type.ptrs == ins->l->type.ptrs - 1);
+    } else if (ins->op == IR_LEA) {
+        // Calculate an i64 offset to <type>*
+        assert(ins->l->type.ptrs >= 1);
+        assert(ins->r->type.prim == T_i64);
+        assert(ins->r->type.ptrs == 0);
+        assert(ins->type.prim == ins->l->type.prim); // Returns <type>*
+        assert(ins->type.ptrs == ins->l->type.ptrs);
     } else if (IR_OPCODE_NARGS[ins->op] == 2) {
-        // Otherwise, all types should be the SAME
+        // Otherwise, both types should be the SAME
         assert(ins->l->type.prim == ins->r->type.prim);
         assert(ins->l->type.ptrs == ins->r->type.ptrs);
     }

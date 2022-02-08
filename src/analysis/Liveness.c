@@ -150,19 +150,14 @@ static int live_ranges_for_bb(Fn *fn, LiveRange *ranges, BB *bb) {
     // Iterate over all instructions in reverse order
     for (AsmIns *ins = bb->asm_last; ins; ins = ins->prev) {
         mark_uses_as_live(live, ins);
-
-        // Add live regs to the 'live ranges' structure
-        for (int reg = 0; reg < fn->num_regs; reg++) {
+        for (int reg = 0; reg < fn->num_regs; reg++) { // Add live regs
             LiveRange *range = &ranges[reg];
             if (live[reg]) {
                 add_program_point(range, ins->idx);
             }
         }
         mark_defs_as_dead(live, ins);
-
-        // Physical registers are only live for the single instruction in which
-        // they're used
-        mark_all_pregs_as_dead(live);
+        mark_all_pregs_as_dead(live); // pregs are only live for ONE instruction
     }
 
     // Everything left over is now live-in for the BB
@@ -192,8 +187,7 @@ static void live_ranges(Fn *fn, LiveRange *ranges) {
         worklist[num_worklist++] = bb;
     }
 
-    // Iterate until the worklist is empty
-    while (num_worklist > 0) {
+    while (num_worklist > 0) { // Iterate until the worklist is empty
         BB *bb = worklist[--num_worklist]; // Pull the last BB off the worklist
         int changed = live_ranges_for_bb(fn, ranges, bb);
         if (changed) { // Add predecessors to worklist if live-in changed

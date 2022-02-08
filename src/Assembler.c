@@ -186,33 +186,47 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
     }
 }
 
-// If a load has already been emitted, then returns the vreg it was loaded
-// into. Otherwise, returns a memory AsmOperand that can be used for the load
-static AsmOperand fold_load(Assembler *a, IrIns *ir_load) {
-    if (ir_load->vreg >= 0) {
-        return discharge(a, ir_load); // Already in a vreg
+static AsmOperand inline_mem(Assembler *a, IrIns *ir_load) {
+    if (ir_load->op == IR_LOAD) { // Inline a load
+        // IR_LOADs are emitted as they happen by 'asm_ins' if they have more
+        // than one usage; they're only inlined if they have ONE use
+        if (ir_load->vreg >= 0) { // Load has already been emitted
+            return discharge(a, ir_load); // Already in a vreg
+        }
+        return to_mem_operand(a, ir_load->l); // Has only ONE use -> inline
+    } else { // Everything else, put in a vreg
+        return discharge(a, ir_load);
     }
-    // Otherwise, only has ONE use, so inline the load
-    return to_mem_operand(a, ir_load->l);
 }
 
-static AsmOperand inline_imm_or_load(Assembler *a, IrIns *kint_or_load) {
+static AsmOperand inline_imm(Assembler *a, IrIns *ir_kint) {
+    if (ir_kint->op == IR_KINT) { // Constant
+        AsmOperand result;
+        result.type = OP_IMM;
+        result.imm = ir_kint->kint;
+        return result;
+    } else {
+        return discharge(a, ir_kint);
+    }
+}
+
+// If operand is IR_KINT, then returns OP_IMM AsmOperand; if operand is an
+// IR_LOAD, then returns an OP_MEM AsmOperand; otherwise discharges the operand
+// to a vreg
+static AsmOperand inline_imm_mem(Assembler *a, IrIns *ir_kint_or_load) {
     // TODO: one potentially useful IR optimisation is if we have commutative
     // arithmetic operations with one operand a LOAD and another not a LOAD,
     // then the load should go in the right hand side so that the assembly
     // can inline the memory operation (note we do the same for constants
     // i.e. put them on the RHS, because that way they get inlined)
     // An example being: long long int a = 3; int b = 4; a = a + b;
-    AsmOperand result;
-    if (kint_or_load->op == IR_KINT) { // Inline a constant integer
-        result.type = OP_IMM;
-        result.imm = kint_or_load->kint;
-    } else if (kint_or_load->op == IR_LOAD) { // Inline a load
-        result = fold_load(a, kint_or_load);
+    if (ir_kint_or_load->op == IR_KINT) { // Inline a constant integer
+        return inline_imm(a, ir_kint_or_load);
+    } else if (ir_kint_or_load->op == IR_LOAD) { // Inline a load
+        return inline_mem(a, ir_kint_or_load);
     } else { // Otherwise, put it in a vreg
-        result = discharge(a, kint_or_load);
+        return discharge(a, ir_kint_or_load);
     }
-    return result;
 }
 
 static void asm_farg(Assembler *a, IrIns *ir_farg) {
@@ -236,13 +250,8 @@ static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
 }
 
 static void asm_store(Assembler *a, IrIns *ir_store) {
-    AsmOperand r; // Right operand either an immediate or vreg (not memory)
-    if (ir_store->r->op == IR_KINT) { // Constant
-        r.type = OP_IMM;
-        r.imm = ir_store->r->kint;
-    } else {
-        r = discharge(a, ir_store->r); // vreg
-    }
+    // The right operand has to be either an immediate or vreg (NOT memory)
+    AsmOperand r = inline_imm(a, ir_store->r);
     AsmIns *mov = new_asm(X86_MOV); // Store into memory
     mov->l = to_mem_operand(a, ir_store->l);
     mov->r = r;
@@ -253,18 +262,47 @@ static void asm_load(Assembler *a, IrIns *ir_load) {
     if (ir_load->use_chain && !ir_load->use_chain->next) { // Has a SINGLE use
         // IR_LOADs with a SINGLE use can be folded into the operation that
         // uses them; e.g., 'mov %1, [rbp]; add %2, %1' becomes 'add %2, [rbp]'
-        // This is done on the fly by 'fold_load'
+        // This is done on the fly by 'inline_mem'
         return;
     }
-    // If the load has multiple uses, then it needs to happen just once, so
-    // discharge it here
+    // If the load has multiple uses, then it needs to happen just once at the
+    // current program point, so discharge it here
     discharge_load(a, ir_load);
+}
+
+static void asm_lea(Assembler *a, IrIns *ir_lea) {
+    AsmOperand l = discharge(a, ir_lea->l); // Pointer into a vreg
+    AsmOperand offset = inline_imm(a, ir_lea->r); // Right can be imm or vreg
+    ir_lea->vreg = a->next_reg++; // Allocate a new vreg for the result
+
+    AsmOperand r;
+    r.type = OP_MEM;
+    r.base_reg = l.reg;
+    r.base_size = l.size; // Should be 8 bytes (size of a pointer)
+    r.access_size = 0; // Doesn't apply for lea
+    if (offset.type == OP_REG) {
+        r.index_reg = offset.reg;
+        r.index_size = offset.size; // Should be 8 bytes
+        r.disp = 0;
+    } else {
+        r.index_reg = 0;
+        r.index_size = REG_NONE; // No index reg
+        r.disp = offset.imm;
+    }
+
+    AsmIns *mov = new_asm(X86_LEA);
+    mov->l.type = OP_REG;
+    mov->l.reg = ir_lea->vreg;
+    mov->l.size = l.size;
+    mov->r = r;
+    emit(a, mov);
 }
 
 // Emits an arithmetic operation while lowering from 3-address code to 2-address
 // code, i.e., 'a = b + c' becomes 'mov a, b; add a, c'
 static void asm_arith(Assembler *a, IrIns *ir_arith) {
     AsmOperand l = discharge(a, ir_arith->l); // Left operand always a vreg
+    AsmOperand r = inline_imm_mem(a, ir_arith->r);
     ir_arith->vreg = a->next_reg++; // Allocate a new vreg for the result
 
     AsmIns *mov = new_asm(X86_MOV); // Emit a mov for the new vreg
@@ -274,7 +312,6 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
     mov->r = l;
     emit(a, mov);
 
-    AsmOperand r = inline_imm_or_load(a, ir_arith->r);
     AsmOpcode op;
     switch (ir_arith->op) {
         case IR_ADD: op = X86_ADD; break;
@@ -293,12 +330,7 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
 
 static void asm_div_mod(Assembler *a, IrIns *ir_div) {
     AsmOperand dividend = discharge(a, ir_div->l); // Left always a vreg
-    AsmOperand divisor;
-    if (ir_div->r->op == IR_LOAD) {
-        divisor = fold_load(a, ir_div->r);
-    } else { // Including immediate (can't divide by immediate)
-        divisor = discharge(a, ir_div->r);
-    }
+    AsmOperand divisor = inline_mem(a, ir_div->r);
 
     // TODO: doesn't work for i64s
     AsmIns *mov1 = new_asm(X86_MOV); // Mov dividend into eax
@@ -338,29 +370,25 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
     AsmOperand l = discharge(a, ir_shift->l); // Left operand always a vreg
     ir_shift->vreg = a->next_reg++; // Allocate a new vreg for the result
 
+    AsmOperand r = inline_imm(a, ir_shift->r); // Right operand either an immediate or cl
+    if (r.type == OP_REG) { // If in vreg, shift count has to be in cl
+        AsmIns *mov2 = new_asm(X86_MOV); // Move shift count into rcx
+        mov2->l.type = OP_REG;
+        mov2->l.reg = REG_RCX;
+        mov2->l.size = r.size;
+        mov2->r = r;
+        emit(a, mov2);
+        r.type = OP_REG;
+        r.reg = REG_RCX; // Use cl
+        r.size = REG_L;
+    }
+
     AsmIns *mov1 = new_asm(X86_MOV); // Emit a mov for the new vreg
     mov1->l.type = OP_REG;
     mov1->l.reg = ir_shift->vreg;
     mov1->l.size = l.size;
     mov1->r = l;
     emit(a, mov1);
-
-    AsmOperand r; // Right operand either an immediate or cl
-    if (ir_shift->r->op == IR_KINT) { // Can shift by an immediate
-        r.type = OP_IMM;
-        r.imm = ir_shift->r->kint;
-    } else { // Otherwise, shift count has to be in cl
-        AsmOperand discharged = discharge(a, ir_shift->r);
-        AsmIns *mov2 = new_asm(X86_MOV); // Move shift count into rcx
-        mov2->l.type = OP_REG;
-        mov2->l.reg = REG_RCX;
-        mov2->l.size = discharged.size;
-        mov2->r = discharged;
-        emit(a, mov2);
-        r.type = OP_REG;
-        r.reg = REG_RCX; // Use cl
-        r.size = REG_L;
-    }
 
     AsmOpcode op;
     switch (ir_shift->op) {
@@ -377,7 +405,7 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
 
 static void asm_cmp(Assembler *a, IrIns *ir_cmp) {
     AsmOperand l = discharge(a, ir_cmp->l); // Left operand always a vreg
-    AsmOperand r = inline_imm_or_load(a, ir_cmp->r);
+    AsmOperand r = inline_imm_mem(a, ir_cmp->r);
     AsmIns *cmp = new_asm(X86_CMP); // Comparison
     cmp->l = l;
     cmp->r = r;
@@ -386,7 +414,7 @@ static void asm_cmp(Assembler *a, IrIns *ir_cmp) {
 
 static void asm_ext(Assembler *a, IrIns *ir_ext) {
     AsmOpcode op = ir_ext->op == IR_ZEXT ? X86_MOVZX : X86_MOVSX;
-    AsmOperand src = inline_imm_or_load(a, ir_ext->l);
+    AsmOperand src = inline_imm_mem(a, ir_ext->l);
     ir_ext->vreg = a->next_reg++; // New vreg for result
     AsmIns *mov = new_asm(op); // Move into a smaller reg
     mov->l.type = OP_REG;
@@ -397,7 +425,7 @@ static void asm_ext(Assembler *a, IrIns *ir_ext) {
 }
 
 static void asm_trunc(Assembler *a, IrIns *ir_trunc) {
-    AsmOperand src = inline_imm_or_load(a, ir_trunc->l);
+    AsmOperand src = inline_imm_mem(a, ir_trunc->l);
     ir_trunc->vreg = a->next_reg++; // New vreg for result
     AsmIns *mov = new_asm(X86_MOV); // Move into a smaller reg
     mov->l.type = OP_REG;
@@ -418,7 +446,7 @@ static void asm_trunc(Assembler *a, IrIns *ir_trunc) {
 // conversion operand (in which case, the new vreg's lifetime will interfere
 // with the source vreg's)
 static void asm_conv(Assembler *a, IrIns *ir_conv) {
-    AsmOperand src = inline_imm_or_load(a, ir_conv->l);
+    AsmOperand src = inline_imm_mem(a, ir_conv->l);
     ir_conv->vreg = a->next_reg++; // New vreg for result
     AsmIns *mov = new_asm(X86_MOV);
     mov->l.type = OP_REG;
@@ -467,7 +495,7 @@ static void asm_ret0(Assembler *a) {
 }
 
 static void asm_ret1(Assembler *a, IrIns *ir_ret) {
-    AsmOperand result = inline_imm_or_load(a, ir_ret->l);
+    AsmOperand result = inline_imm_mem(a, ir_ret->l);
     // Make sure to zero the rest of eax by using movsx if the function returns
     // something smaller than an int
     int needs_sext = bits(ir_ret->l->type) < 32;
@@ -488,8 +516,9 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
         // Memory accesses
     case IR_FARG:  asm_farg(a, ir_ins); break;
     case IR_ALLOC: asm_alloc(a, ir_ins); break;
-    case IR_LOAD:  asm_load(a, ir_ins); break;
     case IR_STORE: asm_store(a, ir_ins); break;
+    case IR_LOAD:  asm_load(a, ir_ins); break;
+    case IR_LEA:   asm_lea(a, ir_ins); break;
 
         // Arithmetic
     case IR_ADD: case IR_SUB: case IR_MUL:

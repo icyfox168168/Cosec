@@ -98,12 +98,12 @@ typedef struct expr {
     ExprType kind;
     SignedType type; // Type for the result of the expression
     union {
-        int kint;                                          // EXPR_KINT
-        double kfloat;                                     // EXPR_KFLOAT
-        Local *local;                                      // EXPR_LOCAL
-        struct { Tk op; struct expr *l; };                 // Unary, postfix
-        struct { Tk _op1; struct expr *_l1, *r; };         // EXPR_BINARY
-        struct { Tk _op2; struct expr *_l2, *_r, *cond; }; // EXPR_TERNARY
+        int kint;                                         // EXPR_KINT
+        double kfloat;                                    // EXPR_KFLOAT
+        Local *local;                                     // EXPR_LOCAL
+        struct { Tk op; struct expr *l; };                // Unary, postfix
+        struct { Tk _o1; struct expr *_l1, *r; };         // EXPR_BINARY
+        struct { Tk _o2; struct expr *_l2, *_r, *cond; }; // EXPR_TERNARY
         // Nothing for EXPR_CONV
     };
     TkInfo tk;
