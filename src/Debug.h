@@ -2,7 +2,6 @@
 #ifndef COSEC_DEBUG_H
 #define COSEC_DEBUG_H
 
-#include "IR.h"
 #include "Compiler.h"
 
 // DEBUG -- some useful functions for printing the output of the parser and

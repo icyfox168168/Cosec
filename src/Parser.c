@@ -13,12 +13,22 @@ typedef struct {
     Local *locals;
 } Parser;
 
-static Parser new_parser(char *file) {
-    Parser p;
-    p.l = new_lexer(file);
-    next_tk(&p.l);
-    p.locals = NULL;
-    return p;
+static Stmt * new_stmt(StmtType kind) {
+    Stmt *stmt = malloc(sizeof(Stmt));
+    stmt->next = NULL;
+    stmt->kind = kind;
+    stmt->expr = NULL;
+    return stmt;
+}
+
+Expr * new_expr(ExprType kind) {
+    Expr *expr = malloc(sizeof(Expr));
+    expr->kind = kind;
+    expr->type = type_none();
+    expr->op = 0;
+    expr->l = NULL;
+    expr->r = NULL;
+    return expr;
 }
 
 static Local * find_local(Parser *p, char *name, int len) {
@@ -37,8 +47,11 @@ static Local * def_local(Parser *p, TkInfo name, Type type) {
     char *name_str = malloc((name.len + 1) * sizeof(char));
     strncpy(name_str, name.start, name.len);
     name_str[name.len] = '\0';
-    Local *local = new_local(name_str, type);
+    Local *local = malloc(sizeof(Local));
     local->next = p->locals; // Prepend to the linked list
+    local->name = name_str;
+    local->type = type;
+    local->alloc = NULL;
     p->locals = local;
     return local;
 }
@@ -875,7 +888,8 @@ static Stmt * parse_if(Parser *p) {
         expect_tk(&p->l, ')');
         next_tk(&p->l);
         Stmt *body = parse_stmt(p); // Body
-        IfChain *this_if = new_if_chain();
+        IfChain *this_if = malloc(sizeof(IfChain));
+        this_if->next = NULL;
         this_if->cond = cond;
         this_if->body = body;
         *if_chain = this_if;
@@ -889,7 +903,9 @@ static Stmt * parse_if(Parser *p) {
         }
     }
     if (has_else) {
-        IfChain *this_else = new_if_chain();
+        IfChain *this_else = malloc(sizeof(IfChain));
+        this_else->next = NULL;
+        this_else->cond = NULL;
         this_else->body = parse_stmt(p);
         *if_chain = this_else;
     }
@@ -1052,10 +1068,11 @@ static Stmt * parse_stmt(Parser *p) {
 
 static FnArg * parse_fn_decl_arg(Parser *p) {
     Type base_type = parse_type_spec(p); // Type
-    FnArg *arg = new_fn_arg();
+    FnArg *arg = malloc(sizeof(FnArg));
+    arg->next = NULL;
     Stmt *decl = parse_decl(p, base_type, 0);
     arg->local = decl->local;
-    assert(!decl->next); // Sanity check -> only one statement
+    assert(!decl->next); // Sanity check -> only one statement from 'parse_decl'
     return arg;
 }
 
@@ -1080,10 +1097,11 @@ static FnArg * parse_fn_decl_args(Parser *p) {
 }
 
 static FnDef * parse_fn_def(Parser *p) {
-    FnDef *def = new_fn_def();
+    FnDef *def = malloc(sizeof(FnDef));
+    def->next = NULL;
     p->fn = def;
 
-    def->decl = new_fn_decl();
+    def->decl = malloc(sizeof(FnDecl));
     def->decl->return_type = parse_type_spec(p); // Return type
 
     expect_tk(&p->l, TK_IDENT); // Name
@@ -1100,7 +1118,8 @@ static FnDef * parse_fn_def(Parser *p) {
 }
 
 static AstModule * parse_module(Parser *p) {
-    AstModule *module = new_ast_module();
+    AstModule *module = malloc(sizeof(AstModule));
+    module->fns = NULL;
     FnDef **def = &module->fns;
     while (p->l.tk) { // Until we reach the end of the file
         *def = parse_fn_def(p);
@@ -1110,7 +1129,10 @@ static AstModule * parse_module(Parser *p) {
 }
 
 AstModule * parse(char *file) {
-    Parser p = new_parser(file);
+    Parser p;
+    p.l = new_lexer(file);
+    next_tk(&p.l);
+    p.locals = NULL;
     AstModule *module = parse_module(&p);
     return module;
 }

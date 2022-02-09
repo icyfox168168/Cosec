@@ -2,7 +2,6 @@
 #ifndef COSEC_USECHAIN_H
 #define COSEC_USECHAIN_H
 
-#include "../IR.h"
 #include "../Compiler.h"
 
 // USE CHAIN ANALYSIS -- runs on IR instructions. For each instruction, finds

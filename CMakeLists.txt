@@ -18,11 +18,10 @@ add_executable(Cosec
         src/Debug.c src/Debug.h
         src/Emitter.c src/Emitter.h
         src/Error.c src/Error.h
-        src/IR.h src/IR.c
         src/Lexer.c src/Lexer.h
         src/main.c
         src/Parser.c src/Parser.h
-        src/RegAlloc.c src/RegAlloc.h)
+        src/RegAlloc.c src/RegAlloc.h src/Type.c src/Type.h)
 
 # Require Python for testing
 include(FindPython3)

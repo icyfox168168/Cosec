@@ -17,31 +17,29 @@ typedef struct loop {
 } Loop;
 
 typedef struct {
-    FnDef *ast_fn; // Current AST function we're compiling FROM
     Fn *fn;        // Current IR function we're compiling TO
     Loop *loop;    // Innermost loop that we're parsing (for breaks)
 } Compiler;
 
-static Compiler new_compiler() {
-    Compiler c;
-    c.loop = NULL;
-    return c;
+Fn * new_fn() {
+    Fn *fn = malloc(sizeof(Fn));
+    fn->next = NULL;
+    fn->entry = NULL;
+    fn->last = NULL;
+    fn->num_regs = 0;
+    return fn;
 }
 
-static Loop new_loop() {
-    Loop loop;
-    loop.breaks = NULL;
-    loop.continues = NULL;
-    loop.outer = NULL;
-    return loop;
-};
-
-static PhiChain * new_phi(BB *bb, IrIns *def) {
-    PhiChain *phi = malloc(sizeof(PhiChain));
-    phi->next = NULL;
-    phi->bb = bb;
-    phi->def = def;
-    return phi;
+BB * new_bb() {
+    BB *bb = malloc(sizeof(BB));
+    bb->next = NULL;
+    bb->prev = NULL;
+    bb->label = NULL;
+    bb->ir_head = NULL;
+    bb->ir_last = NULL;
+    bb->asm_head = NULL;
+    bb->asm_last = NULL;
+    return bb;
 }
 
 static BB * emit_bb(Compiler *c) {
@@ -54,8 +52,19 @@ static BB * emit_bb(Compiler *c) {
     return bb;
 }
 
-static void emit(Compiler *c, IrIns *ins) {
-    // Sanity type checking
+static IrIns * new_ir(IrOpcode op) {
+    IrIns *ins = malloc(sizeof(IrIns));
+    ins->bb = NULL;
+    ins->op = op;
+    ins->next = NULL;
+    ins->prev = NULL;
+    ins->type.prim = T_NONE;
+    ins->type.ptrs = 0;
+    ins->vreg = -1; // Important for the assembler
+    return ins;
+}
+
+static void sanity_check(IrIns *ins) {
     if (ins->op == IR_STORE) {
         // Store <type> into <type>*
         assert(ins->l->type.prim == ins->r->type.prim);
@@ -76,7 +85,52 @@ static void emit(Compiler *c, IrIns *ins) {
         assert(ins->l->type.prim == ins->r->type.prim);
         assert(ins->l->type.ptrs == ins->r->type.ptrs);
     }
-    return emit_ir(c->fn->last, ins);
+}
+
+static void emit_ir(BB *bb, IrIns *ins) {
+    sanity_check(ins);
+    ins->bb = bb;
+    ins->prev = bb->ir_last;
+    if (bb->ir_last) {
+        bb->ir_last->next = ins;
+    } else {
+        bb->ir_head = ins; // Head of the basic block
+    }
+    bb->ir_last = ins;
+}
+
+static void emit(Compiler *c, IrIns *ins) {
+    emit_ir(c->fn->last, ins);
+}
+
+static void delete_ir(IrIns *ins) {
+    if (ins->prev) {
+        ins->prev->next = ins->next;
+    } else { // Head of the linked list
+        ins->bb->ir_head = ins->next;
+    }
+    if (ins->next) {
+        ins->next->prev = ins->prev;
+    }
+    if (ins->bb->ir_last == ins) {
+        ins->bb->ir_last = ins->prev;
+    }
+}
+
+static Loop new_loop() {
+    Loop loop;
+    loop.breaks = NULL;
+    loop.continues = NULL;
+    loop.outer = NULL;
+    return loop;
+};
+
+static PhiChain * new_phi(BB *bb, IrIns *def) {
+    PhiChain *phi = malloc(sizeof(PhiChain));
+    phi->next = NULL;
+    phi->bb = bb;
+    phi->def = def;
+    return phi;
 }
 
 
@@ -961,7 +1015,9 @@ static Fn * compile_fn_def(Compiler *c, FnDef *ast_fn) {
 }
 
 static Module * compile_module(Compiler *c, AstModule *ast) {
-    Module *module = new_module();
+    Module *module = malloc(sizeof(Module));
+    module->fns = NULL;
+    module->main = NULL;
     Fn **fn = &module->fns;
     for (FnDef *ast_fn = ast->fns; ast_fn; ast_fn = ast_fn->next) {
         *fn = compile_fn_def(c, ast_fn);
@@ -971,7 +1027,9 @@ static Module * compile_module(Compiler *c, AstModule *ast) {
 }
 
 Module * compile(AstModule *ast) {
-    Compiler c = new_compiler();
+    Compiler c;
+    c.fn = NULL;
+    c.loop = NULL;
     Module *module = compile_module(&c, ast);
     return module;
 }

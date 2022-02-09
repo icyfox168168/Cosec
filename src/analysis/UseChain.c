@@ -1,4 +1,5 @@
 
+#include "Analysis.h"
 #include "UseChain.h"
 
 static void add_use(IrIns *ins, IrIns *use) {

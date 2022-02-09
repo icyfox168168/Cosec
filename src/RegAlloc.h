@@ -2,7 +2,6 @@
 #ifndef COSEC_REGALLOC_H
 #define COSEC_REGALLOC_H
 
-#include "IR.h"
 #include "Assembler.h"
 #include "analysis/Liveness.h"
 
