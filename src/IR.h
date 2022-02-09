@@ -36,49 +36,37 @@ typedef enum {
 
 typedef struct {
     Prim prim;
-    int ptrs; // Number of levels of pointer indirection
+    int ptrs;      // Number of levels of pointer indirection
+    int is_signed; // For the AST; NOT used by the SSA IR!
 } Type;
 
 Type type_none();
 Type type_i1();
+Type type_signed_i32();
+Type type_unsigned_i64();
+Type type_f32();
 int bits(Type t);  // Returns the size of a type in bits
 int bytes(Type t); // Returns the size of a type in bytes
+
+int is_ptr(Type t);
+int is_void_ptr(Type t);
+int is_arith(Type t);
+int is_int(Type t);
+int is_fp(Type t);
+int are_equal(Type l, Type r);
 
 
 // ---- Abstract Syntax Tree --------------------------------------------------
 
-// Keep track of signed values throughout the AST, but ditch them in the IR
-// in favour of signed instructions
-typedef struct {
-    Prim prim;
-    int ptrs;
-    int is_signed;
-} SignedType;
-
-Type signed_to_type(SignedType t);
-SignedType signed_none();
-SignedType unsigned_i1();
-SignedType signed_i32();
-SignedType signed_f32();
-SignedType unsigned_i64();
-int signed_bits(SignedType t);  // Returns the size of a type in bits
-
-int is_ptr(SignedType t);
-int is_void_ptr(SignedType t);
-int is_arith(SignedType t);
-int is_int(SignedType t);
-int is_fp(SignedType t);
-int are_equal(SignedType l, SignedType r);
-
 typedef struct local {
     struct local *next;
-    SignedType type;
+    Type type;
     char *name;
     struct ir_ins *alloc; // The IR_ALLOC instruction for this local
 } Local;
 
 typedef struct {
-    SignedType type;
+    Type type;
     TkInfo name;
     TkInfo tk;
 } Declarator;
@@ -96,7 +84,7 @@ typedef enum {
 
 typedef struct expr {
     ExprType kind;
-    SignedType type; // Type for the result of the expression
+    Type type; // Type for the result of the expression
     union {
         int kint;                                         // EXPR_KINT
         double kfloat;                                    // EXPR_KFLOAT
@@ -147,7 +135,7 @@ typedef struct fn_arg {
 } FnArg;
 
 typedef struct {
-    SignedType return_type;
+    Type return_type;
     Local *local;
     FnArg *args; // Linked list of function arguments
 } FnDecl;
@@ -169,7 +157,7 @@ FnArg * new_fn_arg();
 Stmt * new_stmt(StmtType kind);
 IfChain * new_if_chain();
 Expr * new_expr(ExprType kind);
-Local * new_local(char *name, SignedType type);
+Local * new_local(char *name, Type type);
 
 
 // ---- Static Single Assignment (SSA) Form IR --------------------------------
@@ -233,17 +221,17 @@ Local * new_local(char *name, SignedType type);
     X(SEXT, 1)    /* Sign extend, for signed ints */ \
     X(ZEXT, 1)    /* Zero extend, for unsigned ints */ \
                           \
-    X(FPEXT, 1)   /* Extend a floating point */ \
-    X(FPTRUNC, 1) /* Truncate a floating point */ \
-    X(FP2I, 1)    /* Convert a floating point to an integer */ \
-    X(I2FP, 1)    /* Convert an integer to a floating point */ \
+    X(FPEXT, 1)   /* Extend a floating point TODO */ \
+    X(FPTRUNC, 1) /* Truncate a floating point TODO */ \
+    X(FP2I, 1)    /* Convert a floating point to an integer TODO */ \
+    X(I2FP, 1)    /* Convert an integer to a floating point TODO */ \
                           \
     X(PTR2I, 1)   /* Convert a pointer to an integer */ \
     X(I2PTR, 1)   /* Convert an integer to a pointer */ \
     X(PTR2PTR, 1) /* Convert a pointer to another pointer type -> nop */ \
                           \
     /* Control flow */    \
-    X(PHI, 0)    /* SSA phi instruction */ \
+    X(PHI, 0)    /* SSA phi instruction TODO */ \
     X(BR, 1)     /* Unconditional branch */ \
     X(CONDBR, 3) /* Conditional branch (condition, true BB, false BB) */ \
     X(RET1, 1)   /* Return a value */ \
@@ -285,15 +273,15 @@ typedef struct phi_chain {
 typedef struct ir_ins {
     struct ir_ins *next, *prev;
     struct bb *bb;
-
+    int idx; // For debug printing
     IrOpcode op;
-    Type type; // Everything except control flow records its return type
+    Type type; // Type of the RESULT of the instruction
     union {
         PhiChain *phi;                    // IR_PHI
         int arg_num;                      // IR_FARG
         int kint;                         // IR_KINT
         double kfloat;                    // IR_KFLOAT
-        struct { struct ir_ins *l, *r; }; // Binary operations
+        struct { struct ir_ins *l, *r; }; // Unary and binary operations
         struct bb *br;                    // IR_BR
         struct {                          // IR_CONDBR
             struct ir_ins *cond;
@@ -308,11 +296,8 @@ typedef struct ir_ins {
     UseChain *use_chain;
 
     // Assembler information
-    int vreg;       // Virtual register assigned to the instruction's result
+    int vreg;       // Virtual register that stores the instruction's result
     int stack_slot; // For IR_ALLOC: location on the stack relative to rbp
-
-    // Debug information
-    int idx;
 } IrIns;
 
 

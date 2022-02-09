@@ -22,31 +22,31 @@ static void print_type(Type t) {
 // ---- Abstract Syntax Tree --------------------------------------------------
 
 static void print_local(Local *local) {
-    print_type(signed_to_type(local->type));
+    print_type(local->type);
     printf(" %s", local->name);
 }
 
 static void print_expr(Expr *expr) {
     switch (expr->kind) {
     case EXPR_KINT:
-        print_type(signed_to_type(expr->type));
+        print_type(expr->type);
         printf(" %+d", expr->kint);
         break;
     case EXPR_KFLOAT:
-        print_type(signed_to_type(expr->type));
+        print_type(expr->type);
         printf(" %+g", expr->kfloat);
         break;
     case EXPR_LOCAL:
         print_local(expr->local);
         break;
     case EXPR_CONV:
-        print_type(signed_to_type(expr->type));
+        print_type(expr->type);
         printf(" ( conv ");
         print_expr(expr->l);
         printf(" )");
         break;
     case EXPR_POSTFIX:
-        print_type(signed_to_type(expr->type));
+        print_type(expr->type);
         printf(" ( ");
         print_expr(expr->l);
         printf(" ");
@@ -54,7 +54,7 @@ static void print_expr(Expr *expr) {
         printf(" )");
         break;
     case EXPR_UNARY:
-        print_type(signed_to_type(expr->type));
+        print_type(expr->type);
         printf(" ( ");
         print_tk(expr->op);
         printf(" ");
@@ -62,7 +62,7 @@ static void print_expr(Expr *expr) {
         printf(" )");
         break;
     case EXPR_BINARY:
-        print_type(signed_to_type(expr->type));
+        print_type(expr->type);
         printf(" ( ");
         print_tk(expr->op);
         printf(" ");
@@ -72,7 +72,7 @@ static void print_expr(Expr *expr) {
         printf(" )");
         break;
     case EXPR_TERNARY:
-        print_type(signed_to_type(expr->type));
+        print_type(expr->type);
         printf(" ( ? ");
         print_expr(expr->cond);
         printf(" ");
@@ -165,7 +165,7 @@ void print_ast(FnDef *fn) {
     if (!fn) {
         return;
     }
-    print_type(signed_to_type(fn->decl->return_type));
+    print_type(fn->decl->return_type);
     printf(" %s ( ", fn->decl->local->name);
     for (FnArg *arg = fn->decl->args; arg; arg = arg->next) {
         print_local(arg->local);

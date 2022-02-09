@@ -183,19 +183,18 @@ static void merge_branch_chains(BrChain **head, BrChain *to_append) {
 
 // Emits an IR conversion instruction that converts 'operand' from its type
 // 'src' to the target type 'target'
-static IrIns * emit_conv(Compiler *c, IrIns *operand, SignedType src,
-                         SignedType target) {
+static IrIns * emit_conv(Compiler *c, IrIns *operand, Type src, Type target) {
     IrOpcode op;
     if (is_int(src) && is_int(target)) {
-        if (signed_bits(target) < signed_bits(src)) {
+        if (bits(target) < bits(src)) {
             op = IR_TRUNC; // Target type is smaller
-        } else if (signed_bits(src) == 1 || !src.is_signed) {
+        } else if (bits(src) == 1 || !src.is_signed) {
             op = IR_ZEXT; // Always zext an i1, or if the value is unsigned
         } else {
             op = IR_SEXT; // Value is signed and larger than i1
         }
     } else if (is_fp(src) && is_fp(target)) {
-        if (signed_bits(target) < signed_bits(src)) {
+        if (bits(target) < bits(src)) {
             op = IR_FPTRUNC; // Target type is smaller
         } else {
             op = IR_FPEXT; // Target type is larger
@@ -215,7 +214,7 @@ static IrIns * emit_conv(Compiler *c, IrIns *operand, SignedType src,
     }
     IrIns *conv = new_ir(op);
     conv->l = operand;
-    conv->type = signed_to_type(target);
+    conv->type = target;
     emit(c, conv);
     return conv;
 }
@@ -335,7 +334,7 @@ static IrIns * compile_ternary(Compiler *c, Expr *ternary) {
     IrIns *phi_ins = new_ir(IR_PHI);
     phi_ins->phi = new_phi(true_bb, true_val);
     phi_ins->phi->next = new_phi(false_bb, false_val);
-    phi_ins->type = signed_to_type(ternary->type);
+    phi_ins->type = ternary->type;
     emit(c, phi_ins);
     return phi_ins;
 }
@@ -354,7 +353,7 @@ static IrIns * compile_operation(Compiler *c, Expr *binary) {
     IrIns *operation = new_ir(op);
     operation->l = left;
     operation->r = right;
-    operation->type = signed_to_type(binary->type);
+    operation->type = binary->type;
     emit(c, operation);
     return operation;
 }
@@ -390,7 +389,7 @@ static IrIns * compile_ptr_arith(Compiler *c, Expr *binary) {
 
 // For '<ptr> - <ptr>'
 static IrIns * compile_ptr_sub(Compiler *c, Expr *binary) {
-    SignedType deref_type = binary->l->type;
+    Type deref_type = binary->l->type;
     deref_type.ptrs--;
 
     IrIns *left = compile_expr(c, binary->l);
@@ -405,13 +404,13 @@ static IrIns * compile_ptr_sub(Compiler *c, Expr *binary) {
     IrIns *sub = new_ir(IR_SUB);
     sub->l = left;
     sub->r = right;
-    sub->type = signed_to_type(binary->type);
+    sub->type = binary->type;
     emit(c, sub);
     // Need to divide the sub by the size of the 'deref_type'; since all
     // type sizes are powers of 2, we can accomplish this with a shift.
     // Compute the shift size = log2(bytes(deref_type))
     int log2 = 0;
-    int val = bytes(signed_to_type(deref_type)) - 1;
+    int val = bytes(deref_type) - 1;
     while (val) { val >>= 1; log2++; }
     IrIns *size = new_ir(IR_KINT);
     size->kint = log2;
@@ -448,7 +447,7 @@ static IrIns * compile_arith_assign(Compiler *c, Expr *assign) {
 
     // We may need to insert a truncation (which the parser hasn't done for us)
     // e.g., in the case 'char a = 3; char *b = &a; *b += 1'
-    if (signed_bits(lvalue_expr->type) != signed_bits(assign->type)) {
+    if (bits(lvalue_expr->type) != bits(assign->type)) {
         right = emit_conv(c, right, assign->type, lvalue_expr->type);
     }
 
@@ -587,7 +586,7 @@ static IrIns * compile_deref(Compiler *c, Expr *unary) {
     IrIns *result = compile_expr(c, unary->l);
     IrIns *load = new_ir(IR_LOAD);
     load->l = result;
-    load->type = signed_to_type(unary->type);
+    load->type = unary->type;
     emit(c, load);
     return load;
 }
@@ -660,7 +659,7 @@ static IrIns * compile_local(Compiler *c, Expr *expr) {
     assert(expr->local->alloc); // Check the local has been allocated
     IrIns *load = new_ir(IR_LOAD);
     load->l = expr->local->alloc;
-    load->type = signed_to_type(expr->type);
+    load->type = expr->type;
     emit(c, load);
     return load;
 }
@@ -668,7 +667,7 @@ static IrIns * compile_local(Compiler *c, Expr *expr) {
 static IrIns * compile_kint(Compiler *c, Expr *expr) {
     IrIns *k = new_ir(IR_KINT);
     k->kint = expr->kint;
-    k->type = signed_to_type(expr->type);
+    k->type = expr->type;
     emit(c, k);
     return k;
 }
@@ -676,7 +675,7 @@ static IrIns * compile_kint(Compiler *c, Expr *expr) {
 static IrIns * compile_kfloat(Compiler *c, Expr *expr) {
     IrIns *k = new_ir(IR_KFLOAT);
     k->kfloat = expr->kfloat;
-    k->type = signed_to_type(expr->type);
+    k->type = expr->type;
     emit(c, k);
     return k;
 }
@@ -702,7 +701,7 @@ static void compile_block(Compiler *c, Stmt *stmt);
 
 static void compile_decl(Compiler *c, Stmt *decl) {
     IrIns *alloc = new_ir(IR_ALLOC); // Create some stack space
-    alloc->type = signed_to_type(decl->local->type);
+    alloc->type = decl->local->type;
     alloc->type.ptrs += 1; // The result of IR_ALLOC is a POINTER to the value
     emit(c, alloc);
     decl->local->alloc = alloc;
@@ -891,13 +890,13 @@ static void compile_fn_args(Compiler *c, FnArg *args) {
     for (FnArg *arg = args; arg; arg = arg->next) { // Emit IR_FARGs
         IrIns *farg = new_ir(IR_FARG);
         farg->arg_num = arg_num++;
-        farg->type = signed_to_type(arg->local->type);
+        farg->type = arg->local->type;
         emit(c, farg);
         arg->ir_farg = farg;
     }
     for (FnArg *arg = args; arg; arg = arg->next) { // Emit IR_ALLOCs
         IrIns *alloc = new_ir(IR_ALLOC);
-        alloc->type = signed_to_type(arg->local->type);
+        alloc->type = arg->local->type;
         alloc->type.ptrs += 1; // IR_ALLOC returns a POINTER
         emit(c, alloc);
         arg->local->alloc = alloc;

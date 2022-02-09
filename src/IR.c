@@ -3,88 +3,67 @@
 
 #include "IR.h"
 
-Type signed_to_type(SignedType t) {
-    Type r;
-    r.prim = t.prim;
-    r.ptrs = t.ptrs;
-    return r;
+Type type_i1() {
+    Type t;
+    t.prim = T_i1;
+    t.ptrs = 0;
+    t.is_signed = 0;
+    return t;
 }
 
 Type type_none() {
     Type t;
     t.prim = T_NONE;
     t.ptrs = 0;
-    return t;
-}
-
-Type type_i1() {
-    Type t;
-    t.prim = T_i1;
-    t.ptrs = 0;
-    return t;
-}
-
-SignedType signed_none() {
-    SignedType t;
-    t.prim = T_NONE;
-    t.ptrs = 0;
-    t.is_signed = 1;
-    return t;
-}
-
-SignedType unsigned_i1() {
-    SignedType t;
-    t.prim = T_i1;
-    t.ptrs = 0;
     t.is_signed = 0;
     return t;
 }
 
-SignedType signed_i32() {
-    SignedType t;
+Type type_signed_i32() {
+    Type t;
     t.prim = T_i32;
     t.ptrs = 0;
     t.is_signed = 1;
     return t;
 }
 
-SignedType signed_f32() {
-    SignedType t;
+Type type_f32() {
+    Type t;
     t.prim = T_f32;
     t.ptrs = 0;
     t.is_signed = 1;
     return t;
 }
 
-SignedType unsigned_i64() {
-    SignedType t;
+Type type_unsigned_i64() {
+    Type t;
     t.prim = T_i64;
     t.ptrs = 0;
     t.is_signed = 0;
     return t;
 }
 
-int is_ptr(SignedType t) {
+int is_ptr(Type t) {
     return t.ptrs > 0;
 }
 
-int is_void_ptr(SignedType t) {
+int is_void_ptr(Type t) {
     return t.prim == T_void && t.ptrs == 1;
 }
 
-int is_arith(SignedType t) {
+int is_arith(Type t) {
     return t.ptrs == 0 && t.prim >= T_i1 && t.prim <= T_f64;
 }
 
-int is_int(SignedType t) {
+int is_int(Type t) {
     return t.ptrs == 0 && t.prim >= T_i1 && t.prim <= T_i64;
 }
 
-int is_fp(SignedType t) {
+int is_fp(Type t) {
     return t.ptrs == 0 && t.prim >= T_f32 && t.prim <= T_f64;
 }
 
-int are_equal(SignedType l, SignedType r) {
+int are_equal(Type l, Type r) {
     // Right now, for two types to be compatible, they need to be the same
     return l.prim == r.prim && l.ptrs == r.ptrs && l.is_signed == r.is_signed;
 }
@@ -104,10 +83,6 @@ int bits(Type t) {
         case T_f32:  return 32;
         case T_f64:  return 64;
     }
-}
-
-int signed_bits(SignedType t) {
-    return bits(signed_to_type(t));
 }
 
 int bytes(Type t) {
@@ -134,7 +109,7 @@ FnDef * new_fn_def() {
 
 FnDecl * new_fn_decl() {
     FnDecl *decl = malloc(sizeof(FnDecl));
-    decl->return_type = signed_none();
+    decl->return_type = type_none();
     decl->local = NULL;
     decl->args = NULL;
     return decl;
@@ -166,14 +141,14 @@ IfChain * new_if_chain() {
 Expr * new_expr(ExprType kind) {
     Expr *expr = malloc(sizeof(Expr));
     expr->kind = kind;
-    expr->type = signed_none();
+    expr->type = type_none();
     expr->op = 0;
     expr->l = NULL;
     expr->r = NULL;
     return expr;
 }
 
-Local * new_local(char *name, SignedType type) {
+Local * new_local(char *name, Type type) {
     Local *local = malloc(sizeof(Local));
     local->next = NULL;
     local->name = name;
