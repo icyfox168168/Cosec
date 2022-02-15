@@ -73,13 +73,12 @@ static void sanity_check(IrIns *ins) {
         // Load from <type>* into <type>
         assert(ins->type.prim == ins->l->type.prim);
         assert(ins->type.ptrs == ins->l->type.ptrs - 1);
-    } else if (ins->op == IR_LEA) {
-        // Calculate an i64 offset to <type>*
+    } else if ((ins->op == IR_ADD || ins->op == IR_SUB) &&
+               is_ptr(ins->l->type) && is_int(ins->r->type)) {
+        // Add <type>* + i64
         assert(ins->l->type.ptrs >= 1);
         assert(ins->r->type.prim == T_i64);
         assert(ins->r->type.ptrs == 0);
-        assert(ins->type.prim == ins->l->type.prim); // Returns <type>*
-        assert(ins->type.ptrs == ins->l->type.ptrs);
     } else if (IR_OPCODE_NARGS[ins->op] == 2) {
         // Otherwise, both types should be the SAME
         assert(ins->l->type.prim == ins->r->type.prim);
@@ -433,12 +432,23 @@ static IrIns * compile_ptr_arith(Compiler *c, Expr *binary) {
         to_add = sub;
     }
 
-    IrIns *lea = new_ir(IR_LEA);
-    lea->l = ptr;
-    lea->r = to_add;
-    lea->type = ptr->type; // Results in a new pointer
-    emit(c, lea);
-    return lea;
+    IrIns *amount = new_ir(IR_KINT);
+    Type deref = ptr->type;
+    deref.ptrs--;
+    amount->kint = bytes(deref);
+    amount->type = to_add->type;
+    emit(c, amount);
+    IrIns *mul = new_ir(IR_MUL);
+    mul->l = to_add;
+    mul->r = amount;
+    mul->type = to_add->type;
+    emit(c, mul);
+    IrIns *add = new_ir(IR_ADD);
+    add->l = ptr;
+    add->r = mul;
+    add->type = ptr->type; // Results in a new pointer
+    emit(c, add);
+    return add;
 }
 
 // For '<ptr> - <ptr>'
@@ -529,6 +539,15 @@ static IrIns * compile_assign(Compiler *c, Expr *assign) {
     return right; // Assignment evaluates to its right operand
 }
 
+static IrIns * compile_array_access(Compiler *c, Expr *access) {
+    IrIns *ptr = compile_ptr_arith(c, access);
+    IrIns *load = new_ir(IR_LOAD); // Dereference the pointer
+    load->l = ptr;
+    load->type = access->type;
+    emit(c, load);
+    return load;
+}
+
 static IrIns * compile_and(Compiler *c, Expr *binary) {
     IrIns *left = compile_expr(c, binary->l);
     left = to_cond(c, left);
@@ -582,6 +601,7 @@ static IrIns * compile_binary(Compiler *c, Expr *binary) {
     case TK_AND_ASSIGN: case TK_OR_ASSIGN:  case TK_XOR_ASSIGN:
     case TK_LSHIFT_ASSIGN: case TK_RSHIFT_ASSIGN:
         return compile_arith_assign(c, binary);
+    case '[':    return compile_array_access(c, binary);
     case TK_AND: return compile_and(c, binary);
     case TK_OR:  return compile_or(c, binary);
     case ',':    return compile_comma(c, binary);

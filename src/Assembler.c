@@ -116,7 +116,7 @@ static void asm_cmp(Assembler *a, IrIns *ir_cmp);
 static AsmOperand to_mem_operand(Assembler *a, IrIns *ir_ptr) {
     AsmOperand result;
     if (ir_ptr->op == IR_ALLOC) { // Load from stack
-        result.type = OP_MEM;  // From memory
+        result.type = OP_MEM;      // From memory
         result.base_reg = REG_RBP; // Offset relative to rbp
         result.base_size = REG_Q;
         result.index_reg = 0;
@@ -125,8 +125,8 @@ static AsmOperand to_mem_operand(Assembler *a, IrIns *ir_ptr) {
         result.disp = -ir_ptr->stack_slot;
     } else { // Load from a vreg
         AsmOperand l = discharge(a, ir_ptr);
-        result.type = OP_MEM; // From memory
-        result.base_reg = l.reg;  // Indexed by a vreg
+        result.type = OP_MEM;      // From memory
+        result.base_reg = l.reg;   // Indexed by a vreg
         result.base_size = l.size; // Should be REG_Q
         assert(l.size == REG_Q);
         result.index_reg = 0;
@@ -205,9 +205,9 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
         return result;
     }
     switch (ins->op) {
-    case IR_KINT:   return discharge_imm(a, ins);   // Immediate
-    case IR_LOAD:   return discharge_load(a, ins);  // Memory load
-    case IR_ALLOC:  return discharge_alloc(a, ins); // Pointer load
+    case IR_KINT:  return discharge_imm(a, ins);   // Immediate
+    case IR_LOAD:  return discharge_load(a, ins);  // Memory load
+    case IR_ALLOC: return discharge_alloc(a, ins); // Pointer load
     case IR_EQ: case IR_NEQ:
     case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
     case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
@@ -300,33 +300,33 @@ static void asm_load(Assembler *a, IrIns *ir_load) {
     discharge_load(a, ir_load);
 }
 
-static void asm_lea(Assembler *a, IrIns *ir_lea) {
-    AsmOperand l = discharge(a, ir_lea->l); // Pointer into a vreg
-    AsmOperand offset = inline_imm(a, ir_lea->r); // Right can be imm or vreg
-    ir_lea->vreg = a->next_reg++; // Allocate a new vreg for the result
-
-    AsmOperand r;
-    r.type = OP_MEM;
-    r.base_reg = l.reg;
-    r.base_size = l.size; // Should be 8 bytes (size of a pointer)
-    r.access_size = 0; // Doesn't apply for lea
-    if (offset.type == OP_REG) {
-        r.index_reg = offset.reg;
-        r.index_size = offset.size; // Should be 8 bytes
-        r.disp = 0;
-    } else {
-        r.index_reg = 0;
-        r.index_size = REG_NONE; // No index reg
-        r.disp = offset.imm;
-    }
-
-    AsmIns *mov = new_asm(X86_LEA);
-    mov->l.type = OP_REG;
-    mov->l.reg = ir_lea->vreg;
-    mov->l.size = l.size;
-    mov->r = r;
-    emit(a, mov);
-}
+//static void asm_lea(Assembler *a, IrIns *ir_lea) {
+//    AsmOperand l = discharge(a, ir_lea->l); // Pointer into a vreg
+//    AsmOperand offset = inline_imm(a, ir_lea->r); // Right can be imm or vreg
+//    ir_lea->vreg = a->next_reg++; // Allocate a new vreg for the result
+//
+//    AsmOperand r;
+//    r.type = OP_MEM;
+//    r.base_reg = l.reg;
+//    r.base_size = l.size; // Should be 8 bytes (size of a pointer)
+//    r.access_size = 0; // Doesn't apply for lea
+//    if (offset.type == OP_REG) {
+//        r.index_reg = offset.reg;
+//        r.index_size = offset.size; // Should be 8 bytes
+//        r.disp = 0;
+//    } else {
+//        r.index_reg = 0;
+//        r.index_size = REG_NONE; // No index reg
+//        r.disp = offset.imm;
+//    }
+//
+//    AsmIns *mov = new_asm(X86_LEA);
+//    mov->l.type = OP_REG;
+//    mov->l.reg = ir_lea->vreg;
+//    mov->l.size = l.size;
+//    mov->r = r;
+//    emit(a, mov);
+//}
 
 // Emits an arithmetic operation while lowering from 3-address code to 2-address
 // code, i.e., 'a = b + c' becomes 'mov a, b; add a, c'
@@ -400,7 +400,7 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
     AsmOperand l = discharge(a, ir_shift->l); // Left operand always a vreg
     ir_shift->vreg = a->next_reg++; // Allocate a new vreg for the result
 
-    AsmOperand r = inline_imm(a, ir_shift->r); // Right operand either an immediate or cl
+    AsmOperand r = inline_imm(a, ir_shift->r); // Right either immediate or vreg
     if (r.type == OP_REG) { // If in vreg, shift count has to be in cl
         AsmIns *mov2 = new_asm(X86_MOV); // Move shift count into rcx
         mov2->l.type = OP_REG;
@@ -548,7 +548,6 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
     case IR_ALLOC: asm_alloc(a, ir_ins); break;
     case IR_STORE: asm_store(a, ir_ins); break;
     case IR_LOAD:  asm_load(a, ir_ins); break;
-    case IR_LEA:   asm_lea(a, ir_ins); break;
 
         // Arithmetic
     case IR_ADD: case IR_SUB: case IR_MUL:

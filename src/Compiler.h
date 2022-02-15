@@ -38,7 +38,6 @@
     X(ALLOC, 0)           \
     X(STORE, 2) /* Destination is FIRST argument, source is SECOND */ \
     X(LOAD, 1)            \
-    X(LEA, 2) /* Pointer offset calculations */ \
                           \
     /* Arithmetic */      \
     X(ADD, 2)             \

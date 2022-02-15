@@ -82,6 +82,7 @@ test(ptrs3 expressions/pointers/3.c)
 test(ptrs4 expressions/pointers/4.c)
 test(ptrs5 expressions/pointers/5.c)
 test(ptrs6 expressions/pointers/6.c)
+test(ptrs7 expressions/pointers/7.c)
 
 test(return1 return/1.c)
 test(return2 return/2.c)

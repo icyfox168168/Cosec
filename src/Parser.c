@@ -92,6 +92,7 @@ static Prec UNARY_PREC[NUM_TKS] = {
 static Prec POSTFIX_PREC[NUM_TKS] = {
     [TK_INC] = PREC_POSTFIX, // Increment
     [TK_DEC] = PREC_POSTFIX, // Decrement
+    ['['] = PREC_POSTFIX,    // Array access
 };
 
 static Prec BINARY_PREC[NUM_TKS] = {
@@ -323,10 +324,10 @@ static Type resolve_types(Tk o, Expr **l, Expr **r) {
         *r = conv_to(*r, promotion);
         result = type_i1(); // Result is an i1
         result.is_signed = promotion.is_signed; // Preserve signed-ness
-    } else if ((o == '+' || o == '-') && is_ptr(lt) && is_arith(rt)) {
+    } else if ((o == '+' || o == '-') && is_ptr(lt) && is_int(rt)) {
         result = lt; // Result is a pointer
         *r = conv_to(*r, type_unsigned_i64()); // Can only add i64 to pointers
-    } else if (o == '+' && is_arith(rt) && is_ptr(lt)) {
+    } else if (o == '+' && is_int(rt) && is_ptr(lt)) {
         result = rt; // Result is a pointer
         *l = conv_to(*l, type_unsigned_i64()); // Can only add i64 to pointers
     } else if (o == '-' && is_ptr(lt) && is_ptr(rt) && are_equal(lt, rt)) {
@@ -352,6 +353,10 @@ static Type resolve_types(Tk o, Expr **l, Expr **r) {
         Type promotion = rt; // Pick the non-void/non-null pointer
         *l = conv_to(*l, promotion); // Convert to the non-void pointer
         result = type_i1(); // Pointer comparisons always unsigned
+    } else if (o == '[' && is_ptr(lt) && is_int(rt)) {
+        result = lt;
+        result.ptrs--; // Results in dereference to pointer
+        *r = conv_to(*r, type_unsigned_i64()); // Can only add i64 to pointers
     } else {
         TkInfo operation = merge_tks((*l)->tk, (*r)->tk);
         trigger_error_at(operation, "invalid argument to operation");
@@ -570,13 +575,41 @@ static Expr * parse_postfix_inc_dec(Tk op, Expr *operand) {
     return postfix;
 }
 
+static Expr * parse_array_access(Parser *p, Expr *array) {
+    TkInfo start = p->l.info;
+    expect_tk(&p->l, '[');
+    next_tk(&p->l);
+    Expr *index = parse_subexpr(p, PREC_NONE);
+    expect_tk(&p->l, ']');
+    index->tk = merge_tks(start, p->l.info);
+    next_tk(&p->l);
+
+    Type result = resolve_types('[', &array, &index);
+    Expr *array_access = new_expr(EXPR_BINARY);
+    array_access->op = '[';
+    array_access->l = array;
+    array_access->r = index;
+    array_access->type = result;
+    array_access->tk = merge_tks(array->tk, index->tk);
+    return array_access;
+}
+
 static Expr * parse_postfix(Parser *p, Expr *operand) {
     Tk op = p->l.tk;
     if (POSTFIX_PREC[op]) { // ++ and -- are the only postfix operators for now
-        Expr *operation = parse_postfix_inc_dec(op, operand);
-        operation->tk = merge_tks(operand->tk, p->l.info);
-        next_tk(&p->l); // Skip the operator
-        return operation;
+        Expr *postfix;
+        switch (op) {
+        case TK_INC: case TK_DEC:
+            postfix = parse_postfix_inc_dec(op, operand);
+            postfix->tk = merge_tks(operand->tk, p->l.info);
+            next_tk(&p->l); // Skip the operator
+            break;
+        case '[':
+            postfix = parse_array_access(p, operand);
+            break;
+        default: UNREACHABLE();
+        }
+        return postfix;
     }
     return operand; // No postfix operation
 }

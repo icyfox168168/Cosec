@@ -40,11 +40,11 @@ typedef enum {
 
 typedef enum {
     REG_NONE, // Don't use the reg
-    REG_L, // Lowest 8 bits (e.g., al)
-    REG_H, // Highest 8 bits of the lowest 16 bits (e.g., ah)
-    REG_W, // Lowest 16 bits (e.g., ax)
-    REG_D, // Lowest 32 bits (e.g., eax)
-    REG_Q, // All 64 bits (e.g., rax)
+    REG_L,    // Lowest 8 bits (e.g., al)
+    REG_H,    // Highest 8 bits of the lowest 16 bits (e.g., ah)
+    REG_W,    // Lowest 16 bits (e.g., ax)
+    REG_D,    // Lowest 32 bits (e.g., eax)
+    REG_Q,    // All 64 bits (e.g., rax)
 } RegSize;
 
 static char *REG_NAMES[][6] = {
