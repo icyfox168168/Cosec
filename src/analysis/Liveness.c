@@ -12,19 +12,22 @@ static void number_ins(Fn *fn) {
         for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
             ins->idx = idx++;
         }
+        // Add an extra program point to mark the END of a BB (for vregs that
+        // are live-out for the BB)
+        idx++;
     }
 }
 
 // Extend an existing live range interval to include the given program point
-// (if a suitable interval exists), or create a new interval. Returns 1 if the
-// live range was updated, or 0 otherwise (i.e. the point is already contained
-// in some existing interval).
+// (if a suitable interval exists), or create a new interval.
 //
-// Points are always added in reverse order (since we only loop over
-// instructions in reverse), there's no jumping around. So, this method is
-// guaranteed to produce the minimum number of intervals required to represent
-// the live range.
-static void add_program_point(LiveRange *range, int point) {
+// The algorithm is guaranteed to produce:
+// * The minimum number of intervals required to represent the live range; since
+//   we add program points in a linear manner always in reverse order
+// * The intervals are always sorted in order of index; since we add program
+//   points in reverse order, and prepend new intervals to the start of the
+//   linked list
+static void add_idx_to_live_range(LiveRange *range, int point) {
     // Try to find an interval we can extend
     for (Interval *i = *range; i; i = i->next) {
         if (point >= i->start && point <= i->end) {
@@ -147,13 +150,20 @@ static int live_ranges_for_bb(Fn *fn, LiveRange *ranges, BB *bb) {
         }
     }
 
+    // Mark everything that's live out as live for the program point BEYOND
+    // the last instruction in the BB
+    for (int reg = 0; reg < fn->num_regs; reg++) {
+        if (live[reg]) {
+            add_idx_to_live_range(&ranges[reg], bb->asm_last->idx + 1);
+        }
+    }
+
     // Iterate over all instructions in reverse order
     for (AsmIns *ins = bb->asm_last; ins; ins = ins->prev) {
         mark_uses_as_live(live, ins);
         for (int reg = 0; reg < fn->num_regs; reg++) { // Add live regs
-            LiveRange *range = &ranges[reg];
             if (live[reg]) {
-                add_program_point(range, ins->idx);
+                add_idx_to_live_range(&ranges[reg], ins->idx);
             }
         }
         mark_defs_as_dead(live, ins);
@@ -215,16 +225,9 @@ LiveRange * analyse_live_ranges(Fn *fn) {
 }
 
 static int intervals_intersect(Interval i1, Interval i2) {
-    return !(i1.end < i2.start || i1.start > i2.end);
-}
-
-static Interval interval_intersection(Interval i1, Interval i2) {
-    // start = max(i1.start, i2.start), end = min(i1.end, i2.end)
-    Interval intersection;
-    intersection.start = i1.start > i2.start ? i1.start : i2.start;
-    intersection.end = i1.end < i2.end ? i1.end : i2.end;
-    intersection.next = NULL;
-    return intersection;
+    // Subtract 1 from 'end' since all intervals are EXCLUSIVE of 'end', i.e.,
+    // [start, end)
+    return !((i1.end - 1) < i2.start || i1.start > (i2.end - 1));
 }
 
 int ranges_intersect(LiveRange r1, LiveRange r2) {
@@ -236,27 +239,6 @@ int ranges_intersect(LiveRange r1, LiveRange r2) {
         }
     }
     return 0;
-}
-
-LiveRange range_intersection(LiveRange r1, LiveRange r2) {
-    // All interval intersections should be unique, since the intervals in each
-    // of r1 and r2 are unique; so don't bother trying to combine any of the
-    // intersection intervals (they won't overlap)
-    // The resulting intersection live range is also guaranteed to have its
-    // intervals ordered, since all the intervals in r1 and r2 are ordered
-    LiveRange head = NULL;
-    LiveRange *next = &head;
-    for (Interval *i1 = r1; i1; i1 = i1->next) {
-        for (Interval *i2 = r2; i2; i2 = i2->next) {
-            if (intervals_intersect(*i1, *i2)) {
-                Interval *i = malloc(sizeof(Interval));
-                *i = interval_intersection(*i1, *i2);
-                *next = i;
-                next = &i->next;
-            }
-        }
-    }
-    return head;
 }
 
 void print_live_range(LiveRange range) {

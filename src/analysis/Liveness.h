@@ -11,9 +11,9 @@
 // * CFG analysis (for successor and predecessor blocks)
 
 // All assembly instructions are numbered across basic blocks so that live
-// ranges can be referred to by a union of intervals [start, end]
+// ranges can be referred to by a union of intervals [start, end)
 typedef struct interval {
-    int start, end; // INCLUSIVE of instructions at 'start' and 'end'
+    int start, end; // INCLUSIVE of 'start'; EXCLUSIVE of 'end'
     struct interval *next;
 } Interval;
 
@@ -27,8 +27,6 @@ typedef Interval * LiveRange;
 LiveRange * analyse_live_ranges(Fn *fn);
 
 int ranges_intersect(LiveRange r1, LiveRange r2);
-LiveRange range_intersection(LiveRange r1, LiveRange r2);
-
 void print_live_range(LiveRange range);
 void print_live_ranges(LiveRange *ranges, int num_regs);
 

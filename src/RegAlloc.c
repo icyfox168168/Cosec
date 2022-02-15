@@ -118,7 +118,7 @@ static void copy_edges(RegGraph *g, int src, int dst) {
 // The interference graph tells us whether two regs interfere with each other
 static RegGraph build_interference_graph(LiveRange *ranges, int num_regs) {
     // Intersect all physical and virtual registers with each other to build
-    // the intersection g (represented as a matrix). Only iterate over the
+    // the intersection graph (represented as a matrix). Only iterate over the
     // upper half of the leading diagonal in the matrix (for efficiency)
     RegGraph g = new_reg_graph(num_regs);
     for (int reg1 = 0; reg1 < num_regs; reg1++) {
@@ -148,8 +148,7 @@ static RegGraph build_interference_graph(LiveRange *ranges, int num_regs) {
 }
 
 // The coalescing graph tells us whether two regs are candidates for coalescing;
-// that is, related by a mov and their live ranges don't interfere other than
-// for that mov
+// that is, related by a mov and their live ranges don't otherwise interfere.
 // It's possible to coalesce across movzx and movsx too!
 static RegGraph build_coalescing_graph(Fn *fn, LiveRange *ranges) {
     // Iterate over all instructions to find move-related regs
@@ -161,17 +160,13 @@ static RegGraph build_coalescing_graph(Fn *fn, LiveRange *ranges) {
             if ((mov->op >= X86_MOV && mov->op <= X86_MOVZX) &&
                     mov->l.type == OP_REG && mov->r.type == OP_REG &&
                     !(mov->l.reg < LAST_PREG && mov->r.type < LAST_PREG)) {
-                // This mov is a coalescing candidate if the live ranges of
-                // reg1 and reg2 ONLY intersect at the mov
-                LiveRange range1 = ranges[mov->l.reg];
-                LiveRange range2 = ranges[mov->r.reg];
-                LiveRange intersect = range_intersection(range1, range2);
-                if (intersect && !intersect->next &&    // Only one interval
-                        intersect->start == mov->idx && // Interval IS the mov
-                        intersect->end == mov->idx) {
-                    mark_node_exists(&g, mov->l.reg);
-                    mark_node_exists(&g, mov->r.reg);
-                    add_edge(&g, mov->l.reg, mov->r.reg);
+                // This mov is a coalescing candidate if the live ranges of reg1
+                // and reg2 DON'T intersect
+                int reg1 = mov->l.reg, reg2 = mov->r.reg;
+                if (!ranges_intersect(ranges[reg1], ranges[reg2])) {
+                    mark_node_exists(&g, reg1);
+                    mark_node_exists(&g, reg2);
+                    add_edge(&g, reg1, reg2);
                 }
             }
         }
