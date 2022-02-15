@@ -651,9 +651,9 @@ static IrIns * compile_not(Compiler *c, Expr *unary) {
 static IrIns * compile_addr(Compiler *c, Expr *unary) {
     IrIns *result = compile_expr(c, unary->l);
     assert(result->op == IR_LOAD); // Ensure 'assign->l' is an lvalue
-    IrIns *alloc = result->l; // IR_ALLOC returns the pointer we're after
-    delete_ir(result);
-    return alloc;
+    IrIns *ptr = result->l; // Left operand contains the pointer we're after
+    delete_ir(result); // Delete the IR_LOAD
+    return ptr;
 }
 
 static IrIns * compile_deref(Compiler *c, Expr *unary) {

@@ -14,9 +14,9 @@
 // it a read for a great conceptual overview.
 //
 // Additional resources I found helpful:
-// * Another set of slides on the graph colouring algorithm:
+// * A set of slides on the graph colouring algorithm:
 //     http://web.cecs.pdx.edu/~mperkows/temp/register-allocation.pdf
-// * Another article on the graph colouring algorithm:
+// * An article on the graph colouring algorithm:
 //     https://www.lighterra.com/papers/graphcoloring/
 // * A set of slides on liveness analysis:
 //     https://proglang.informatik.uni-freiburg.de/teaching/compilerbau/2016ws/10-liveness.pdf
@@ -211,7 +211,7 @@ static int briggs_criteria(RegGraph *ig, int reg1, int reg2) {
     memset(seen, 0, sizeof(int) * ig->num_regs);
     for (int neighbour = 0; neighbour < ig->num_regs; neighbour++) {
         if ((edge_exists(ig, reg1, neighbour) || // Neighbour of reg1?
-                edge_exists(ig, reg2, neighbour)) && // of reg2?
+                edge_exists(ig, reg2, neighbour)) && // or of reg2?
                 !seen[neighbour]) { // Unique?
             seen[neighbour] = 1;
             if (num_edges(ig, neighbour) >= LAST_PREG) { // Significant?
@@ -440,7 +440,7 @@ static void replace_ins_vregs(AsmIns *ins, Reg *reg_map, int *coalesce_map) {
     }
 }
 
-// Change all OP_VREG operands in the assembly to their allocated registers
+// Change all vregs in the assembly to their allocated register
 static void replace_vregs(Fn *fn, Reg *reg_map, int *coalesce_map) {
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {

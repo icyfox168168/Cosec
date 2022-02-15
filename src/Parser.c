@@ -179,6 +179,9 @@ static void ensure_can_take_addr(Expr *operand) {
     if (operand->kind == EXPR_UNARY && operand->op == '*') {
         return; // Address of dereference
     }
+    if (operand->kind == EXPR_BINARY && operand->op == '[') {
+        return; // Address of array access
+    }
     trigger_error_at(operand->tk, "cannot take address of operand");
 }
 
