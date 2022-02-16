@@ -44,6 +44,7 @@ test(arith9 expressions/arithmetic/9.c)
 test(arith10 expressions/arithmetic/10.c)
 test(arith11 expressions/arithmetic/11.c)
 test(arith12 expressions/arithmetic/12.c)
+test(arith13 expressions/arithmetic/13.c)
 
 test(assign1 expressions/assignment/1.c)
 test(assign2 expressions/assignment/2.c)

@@ -73,7 +73,9 @@ static RegSize REG_SIZE[] = {
     X(ADD, "add", 2)         \
     X(SUB, "sub", 2)         \
     X(MUL, "imul", 2)        \
-    X(CDQ, "cdq", 0) /* Sign extend eax into edx, specifically for idiv */ \
+    X(CWD, "cwd", 0) /* Sign extend ax into dx, for idiv */ \
+    X(CDQ, "cdq", 0) /* Sign extend eax into edx, for idiv */ \
+    X(CQO, "cqo", 0) /* Sign extend rax into rdx, for idiv */ \
     X(IDIV, "idiv", 1)       \
     X(DIV, "div", 1)         \
     X(AND, "and", 2)         \

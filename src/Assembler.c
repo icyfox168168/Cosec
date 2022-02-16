@@ -294,34 +294,6 @@ static void asm_load(Assembler *a, IrIns *ir_load) {
     discharge_load(a, ir_load);
 }
 
-//static void asm_lea(Assembler *a, IrIns *ir_lea) {
-//    AsmOperand l = discharge(a, ir_lea->l); // Pointer into a vreg
-//    AsmOperand offset = inline_imm(a, ir_lea->r); // Right can be imm or vreg
-//    ir_lea->vreg = a->next_reg++; // Allocate a new vreg for the result
-//
-//    AsmOperand r;
-//    r.type = OP_MEM;
-//    r.base_reg = l.reg;
-//    r.base_size = l.size; // Should be 8 bytes (size of a pointer)
-//    r.access_size = 0; // Doesn't apply for lea
-//    if (offset.type == OP_REG) {
-//        r.index_reg = offset.reg;
-//        r.index_size = offset.size; // Should be 8 bytes
-//        r.disp = 0;
-//    } else {
-//        r.index_reg = 0;
-//        r.index_size = REG_NONE; // No index reg
-//        r.disp = offset.imm;
-//    }
-//
-//    AsmIns *mov = new_asm(X86_LEA);
-//    mov->l.type = OP_REG;
-//    mov->l.reg = ir_lea->vreg;
-//    mov->l.size = l.size;
-//    mov->r = r;
-//    emit(a, mov);
-//}
-
 // Emits an arithmetic operation while lowering from 3-address code to 2-address
 // code, i.e., 'a = b + c' becomes 'mov a, b; add a, c'
 static void asm_arith(Assembler *a, IrIns *ir_arith) {
@@ -356,14 +328,21 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
     AsmOperand dividend = discharge(a, ir_div->l); // Left always a vreg
     AsmOperand divisor = inline_mem(a, ir_div->r);
 
-    // TODO: doesn't work for i64s
+    // TODO: CDQ etc. define ?dx; need to make register allocator aware
     AsmIns *mov1 = new_asm(X86_MOV); // Mov dividend into eax
     mov1->l.type = OP_REG;
     mov1->l.reg = REG_RAX;
     mov1->l.size = REG_D;
     mov1->r = dividend;
     emit(a, mov1);
-    emit(a, new_asm(X86_CDQ)); // Sign extend eax into edx
+
+    AsmOpcode ext_op; // Sign extend ?ax into ?dx depending on the size
+    switch (bytes(ir_div->type)) {
+        case 4:  ext_op = X86_CDQ; break;
+        case 8:  ext_op = X86_CQO; break;
+        default: ext_op = X86_CWD; break;
+    }
+    emit(a, new_asm(ext_op));
 
     AsmOpcode op;
     switch (ir_div->op) {
@@ -376,7 +355,7 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
     emit(a, div);
 
     ir_div->vreg = a->next_reg++; // Allocate a new vreg for the result
-    AsmIns *mov2 = new_asm( X86_MOV); // Move the result into a new vreg
+    AsmIns *mov2 = new_asm(X86_MOV); // Move the result into a new vreg
     mov2->l.type = OP_REG;
     mov2->l.reg = ir_div->vreg;
     mov2->l.size = REG_SIZE[bytes(ir_div->type)];
