@@ -165,7 +165,6 @@ static AsmOperand discharge_load(Assembler *a, IrIns *ir_load) {
 }
 
 static AsmOperand discharge_alloc(Assembler *a, IrIns *ir_alloc) {
-    // TODO: pointers must be 8 byte aligned as per C standard!
     ir_alloc->vreg = a->next_reg++;
     AsmIns *lea = new_asm(X86_LEA);
     lea->l.type = OP_REG;
@@ -267,9 +266,16 @@ static void asm_farg(Assembler *a, IrIns *ir_farg) {
 }
 
 static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
+    // Align the stack to the size of the type we're storing
     Type t = ir_alloc->type;
-    t.ptrs -= 1; // IR_ALLOC returns a POINTER to what we want stack space for
-    a->stack_size += bytes(t); // Create some space on the stack
+    t.ptrs--; // IR_ALLOC returns a POINTER to what we want stack space for
+    int alignment = bytes(t);
+    if (a->stack_size % alignment != 0) { // Stack not already aligned
+        a->stack_size += alignment - (a->stack_size % alignment);
+    }
+
+    // Create some space on the stack for the type
+    a->stack_size += bytes(t);
     ir_alloc->stack_slot = a->stack_size;
 }
 
@@ -573,17 +579,17 @@ static void asm_fn_preamble(Assembler *a) {
     emit(a, mov);
 }
 
-static void asm_fn(Assembler *a, Fn *fn) {
-    a->bb = fn->entry;
-    a->stack_size = 0; // Reset for this function
-    a->next_reg = LAST_PREG; // Save the first LAST_PREG for physical registers
-
-    asm_fn_preamble(a); // Add the function preamble to the entry BB
+static void asm_fn(Fn *fn) {
+    Assembler a;
+    a.bb = fn->entry;
+    a.stack_size = 0;
+    a.next_reg = LAST_PREG; // Save the first LAST_PREG for physical registers
+    asm_fn_preamble(&a); // Add the function preamble to the entry BB
     for (BB *bb = fn->entry; bb; bb = bb->next) { // Assemble each BB
-        a->bb = bb;
-        asm_bb(a, bb);
+        a.bb = bb;
+        asm_bb(&a, bb);
     }
-    fn->num_regs = a->next_reg;
+    fn->num_regs = a.next_reg;
 }
 
 // The 'main' function isn't the first thing that gets executed when the kernel
@@ -604,68 +610,67 @@ static void asm_fn(Assembler *a, Fn *fn) {
 //     mov rdi, rax         ; Exit syscall
 //     mov rax, 0x2000001
 //     syscall
-static Fn * asm_start(Assembler *a, Fn *main) {
+static Fn * asm_start(Fn *main) {
     Fn *start = new_fn();
     start->name = "_start";
     BB *entry = new_bb();
     start->entry = entry;
 
-    a->bb = entry;
+    Assembler a;
+    a.bb = entry;
+
     AsmIns *i;
     i = new_asm(X86_XOR); // Zero rbp
     i->l.type = OP_REG; i->l.reg = REG_RBP; i->l.size = REG_D;
     i->r.type = OP_REG; i->r.reg = REG_RBP; i->r.size = REG_D;
-    emit(a, i);
+    emit(&a, i);
     i = new_asm(X86_MOV); // Take argc off the stack
     i->l.type = OP_REG; i->l.reg = REG_RDI; i->l.size = REG_D;
     i->r.type = OP_MEM; i->r.base_reg = REG_RSP; i->r.base_size = REG_Q;
     i->r.index_reg = 0; i->r.index_size = REG_NONE; i->r.scale = 1;
     i->r.disp = 0; i->r.access_size = 4;
-    emit(a, i);
+    emit(&a, i);
     i = new_asm(X86_LEA); // Take argv off the stack
     i->l.type = OP_REG; i->l.reg = REG_RSI; i->l.size = REG_Q;
     i->r.type = OP_MEM; i->r.base_reg = REG_RSP; i->r.base_size = REG_Q;
     i->r.index_reg = 0; i->r.index_size = REG_NONE; i->r.scale = 1;
     i->r.disp = 8; i->r.access_size = 8;
-    emit(a, i);
+    emit(&a, i);
     i = new_asm(X86_LEA); // Take envp off the stack
     i->l.type = OP_REG; i->l.reg = REG_RDX; i->l.size = REG_Q;
     i->r.type = OP_MEM; i->r.base_reg = REG_RSP; i->r.base_size = REG_Q;
     i->r.index_reg = 0; i->r.index_size = REG_NONE; i->r.scale = 1;
     i->r.disp = 16; i->r.access_size = 8;
-    emit(a, i);
+    emit(&a, i);
     i = new_asm(X86_XOR); // Zero eax (convention per ABI)
     i->l.type = OP_REG; i->l.reg = REG_RAX; i->l.size = REG_D;
     i->r.type = OP_REG; i->r.reg = REG_RAX; i->r.size = REG_D;
-    emit(a, i);
+    emit(&a, i);
     i = new_asm(X86_CALL); // Call main
     i->l.type = OP_FN; i->l.fn = main;
-    emit(a, i);
+    emit(&a, i);
     i = new_asm(X86_MOV); // syscall to exit
     i->l.type = OP_REG; i->l.reg = REG_RDI; i->l.size = REG_Q;
     i->r.type = OP_REG; i->r.reg = REG_RAX; i->l.size = REG_Q;
-    emit(a, i);
+    emit(&a, i);
     i = new_asm(X86_MOV);
     i->l.type = OP_REG; i->l.reg = REG_RAX; i->l.size = REG_Q;
     i->r.type = OP_IMM; i->r.imm = 0x2000001;
-    emit(a, i);
-    emit(a, new_asm(X86_SYSCALL));
+    emit(&a, i);
+    emit(&a, new_asm(X86_SYSCALL));
     return start;
 }
 
 void assemble(Module *module) {
-    Assembler a;
-    a.bb = NULL;
-
     for (Fn *fn = module->fns; fn; fn = fn->next) {
         if (strcmp(fn->name, "main") == 0) {
             module->main = fn; // Set the main function
         }
-        asm_fn(&a, fn);
+        asm_fn(fn);
     }
     // Insert a 'start' stub if this module has a main function
     if (module->main) {
-        Fn *start = asm_start(&a, module->main);
+        Fn *start = asm_start(module->main);
         start->next = module->fns;
         module->fns = start;
     }
