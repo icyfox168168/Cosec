@@ -11,19 +11,19 @@
 //
 // For more information, see this LLVM enhancement request:
 //   https://bugs.llvm.org/show_bug.cgi?id=950
-#define IR_PRIMS \
-    X(NONE)      \
-    X(void)      \
-    X(i1)  /* Boolean value */ \
-    X(i8)  /* Integers */ \
-    X(i16)       \
-    X(i32)       \
-    X(i64)       \
-    X(f32) /* Float */ \
-    X(f64) /* Double */
+#define IR_PRIMS                      \
+    X(NONE, NULL)                     \
+    X(void, "void")                   \
+    X(i1, "int")  /* Boolean value */ \
+    X(i8, "char")  /* Integers */     \
+    X(i16, "short")                   \
+    X(i32, "int")                     \
+    X(i64, "long long")               \
+    X(f32, "float") /* Float */       \
+    X(f64, "double") /* Double */
 
 typedef enum {
-#define X(name) T_ ## name,
+#define X(name, _) T_ ## name,
     IR_PRIMS
 #undef X
 } Prim;
@@ -48,5 +48,7 @@ int is_arith(Type t);
 int is_int(Type t);
 int is_fp(Type t);
 int are_equal(Type l, Type r);
+
+char * print_type(Type t);
 
 #endif

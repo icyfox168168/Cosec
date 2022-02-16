@@ -244,12 +244,6 @@ static AsmOperand inline_imm(Assembler *a, IrIns *ir_kint) {
 // IR_LOAD, then returns an OP_MEM AsmOperand; otherwise discharges the operand
 // to a vreg
 static AsmOperand inline_imm_mem(Assembler *a, IrIns *ir_kint_or_load) {
-    // TODO: one potentially useful IR optimisation is if we have commutative
-    // arithmetic operations with one operand a LOAD and another not a LOAD,
-    // then the load should go in the right hand side so that the assembly
-    // can inline the memory operation (note we do the same for constants
-    // i.e. put them on the RHS, because that way they get inlined)
-    // An example being: long long int a = 3; int b = 4; a = a + b;
     if (ir_kint_or_load->op == IR_KINT) { // Inline a constant integer
         return inline_imm(a, ir_kint_or_load);
     } else if (ir_kint_or_load->op == IR_LOAD) { // Inline a load

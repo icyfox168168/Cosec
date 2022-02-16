@@ -4,12 +4,12 @@
 #include "Debug.h"
 
 static char *PRIM_NAMES[] = {
-#define X(name) #name,
-        IR_PRIMS
+#define X(name, _) #name,
+    IR_PRIMS
 #undef X
 };
 
-static void print_type(Type t) {
+static void print_debug_type(Type t) {
     if (t.prim == T_NONE) {
         return;
     }
@@ -22,31 +22,31 @@ static void print_type(Type t) {
 // ---- Abstract Syntax Tree --------------------------------------------------
 
 static void print_local(Local *local) {
-    print_type(local->type);
+    print_debug_type(local->type);
     printf(" %s", local->name);
 }
 
 static void print_expr(Expr *expr) {
     switch (expr->kind) {
     case EXPR_KINT:
-        print_type(expr->type);
+        print_debug_type(expr->type);
         printf(" %+d", expr->kint);
         break;
     case EXPR_KFLOAT:
-        print_type(expr->type);
+        print_debug_type(expr->type);
         printf(" %+g", expr->kfloat);
         break;
     case EXPR_LOCAL:
         print_local(expr->local);
         break;
     case EXPR_CONV:
-        print_type(expr->type);
+        print_debug_type(expr->type);
         printf(" ( conv ");
         print_expr(expr->l);
         printf(" )");
         break;
     case EXPR_POSTFIX:
-        print_type(expr->type);
+        print_debug_type(expr->type);
         printf(" ( ");
         print_expr(expr->l);
         printf(" ");
@@ -54,7 +54,7 @@ static void print_expr(Expr *expr) {
         printf(" )");
         break;
     case EXPR_UNARY:
-        print_type(expr->type);
+        print_debug_type(expr->type);
         printf(" ( ");
         print_tk(expr->op);
         printf(" ");
@@ -62,7 +62,7 @@ static void print_expr(Expr *expr) {
         printf(" )");
         break;
     case EXPR_BINARY:
-        print_type(expr->type);
+        print_debug_type(expr->type);
         printf(" ( ");
         print_tk(expr->op);
         printf(" ");
@@ -72,7 +72,7 @@ static void print_expr(Expr *expr) {
         printf(" )");
         break;
     case EXPR_TERNARY:
-        print_type(expr->type);
+        print_debug_type(expr->type);
         printf(" ( ? ");
         print_expr(expr->cond);
         printf(" ");
@@ -165,7 +165,7 @@ void print_ast(FnDef *fn) {
     if (!fn) {
         return;
     }
-    print_type(fn->decl->return_type);
+    print_debug_type(fn->decl->return_type);
     printf(" %s ( ", fn->decl->local->name);
     for (FnArg *arg = fn->decl->args; arg; arg = arg->next) {
         print_local(arg->local);
@@ -198,13 +198,13 @@ static void print_phi(IrIns *phi) {
 static void print_ins(IrIns *ins) {
     printf("\t"); // Indent all instructions by a tab
     printf("%.4d\t", ins->idx); // Instruction's index in the function
-    print_type(ins->type); // Return type (void if control flow)
+    print_debug_type(ins->type); // Return type (void if control flow)
     printf("\t%s\t", IR_OPCODE_NAMES[ins->op]); // Opcode name
     switch (ins->op) { // Handle special case instructions (e.g., constants)
     case IR_FARG:   printf("%d", ins->arg_num); break;
     case IR_KINT:   printf("%+d", ins->kint); break;
     case IR_KFLOAT: printf("%+g", ins->kfloat); break;
-    case IR_ALLOC:  { Type t = ins->type; t.ptrs--; print_type(t); } break;
+    case IR_ALLOC:  { Type t = ins->type; t.ptrs--; print_debug_type(t); } break;
     case IR_BR:     printf("%s", ins->br ? ins->br->label : "NULL"); break;
     case IR_CONDBR:
         printf("%.4d\t", ins->cond->idx); // Condition

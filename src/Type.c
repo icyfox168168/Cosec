@@ -1,5 +1,15 @@
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "Type.h"
+
+static char *PRIM_NAMES[] = {
+#define X(type, name) [T_ ## type] = (name),
+    IR_PRIMS
+#undef X
+};
 
 Type type_i1() {
     Type t;
@@ -86,4 +96,20 @@ int bits(Type t) {
 int bytes(Type t) {
     // Can't just divide 'bits(t)' by 8, since this wouldn't work for i1
     return (t.prim == T_i1 && t.ptrs == 0) ? 1 : bits(t) / 8;
+}
+
+char * print_type(Type t) {
+    char *prim = PRIM_NAMES[t.prim];
+    size_t len = strlen(prim) + t.ptrs + 1;
+    char *str = malloc(sizeof(char) * len + 1);
+    strcpy(str, prim);
+    size_t pos = strlen(prim);
+    if (t.ptrs >= 1) {
+        str[pos++] = ' ';
+    }
+    for (int i = 0; i < t.ptrs; i++) {
+        str[pos++] = '*';
+    }
+    str[pos] = '\0';
+    return str;
 }

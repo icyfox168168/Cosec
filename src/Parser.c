@@ -195,16 +195,17 @@ static int is_null_ptr(Expr *e) {
     return e->kind == EXPR_KINT && e->kint == 0;
 }
 
-// Returns 1 if the conversion from the source to target type is valid
-static int check_conv(Expr *src, Type tt) {
+static void check_conv(Expr *src, Type tt) {
     Type st = src->type;
     if (is_ptr(tt) && is_ptr(st) && !is_null_ptr(src)) {
-        trigger_warning_at(src->tk, "incompatible pointer types");
+        trigger_warning_at(src->tk, "incompatible pointer types '%s' and '%s'",
+                           print_type(st), print_type(tt));
     }
-    return (is_arith(tt) && is_arith(st)) ||
-           (is_ptr(tt) && is_ptr(st)) ||
-           (is_ptr(tt) && is_int(st)) ||
-           (is_int(tt) && is_ptr(st));
+    if (!((is_arith(tt) && is_arith(st)) || (is_ptr(tt) && is_ptr(st)) ||
+            (is_ptr(tt) && is_int(st)) || (is_int(tt) && is_ptr(st)))) {
+        trigger_error_at(src->tk, "invalid conversion from '%s' to '%s'",
+                         print_type(st), print_type(tt));
+    }
 }
 
 static Expr * conv_const(Expr *expr, Type target) {
@@ -227,10 +228,7 @@ static Expr * conv_to(Expr *src, Type target) {
     if (src->kind == EXPR_KINT || src->kind == EXPR_KFLOAT) {
         return conv_const(src, target); // Don't emit CONV on constants
     }
-    if (!check_conv(src, target)) {
-        trigger_error_at(src->tk, "invalid type conversion");
-        // TODO: print the types we're converting between
-    }
+    check_conv(src, target);
     Expr *conv = new_expr(EXPR_CONV);
     conv->l = src;
     conv->type = target;
@@ -311,7 +309,7 @@ static Type promote_binary_arith(Expr *l, Expr *r) {
 // conversions on the operands.
 // Type checking is complex! The C standard is very specific about what needs
 // to happen
-static Type resolve_types(Tk o, Expr **l, Expr **r) {
+static Type resolve_binary_types(Tk o, Expr **l, Expr **r) {
     Type result, lt = (*l)->type, rt = (*r)->type;
     if (is_bit_op(o) && is_int(lt) && is_int(rt)) {
         result = promote_binary_int(*l, *r);
@@ -361,9 +359,14 @@ static Type resolve_types(Tk o, Expr **l, Expr **r) {
         result.ptrs--; // Results in dereference to pointer
         *r = conv_to(*r, type_unsigned_i64()); // Can only add i64 to pointers
     } else {
-        TkInfo operation = merge_tks((*l)->tk, (*r)->tk);
-        trigger_error_at(operation, "invalid argument to operation");
-        // TODO: might be useful to print the C type associated
+        if (o == '[') { // Print a different error for array access
+            trigger_error_at((*r)->tk, "invalid argument '%s' to operation",
+                             print_type(rt));
+        } else {
+            trigger_error_at(merge_tks((*l)->tk, (*r)->tk),
+                             "invalid arguments '%s' and '%s' to operation",
+                             print_type(lt), print_type(rt));
+        }
     }
     return result;
 }
@@ -387,8 +390,8 @@ static Type resolve_unary_type(Tk op, Expr **e) {
         result = promote_unary_arith(*e);
         *e = conv_to(*e, result);
     } else {
-        trigger_error_at((*e)->tk, "invalid argument to operation");
-        // TODO: might be useful to print the C type associated
+        trigger_error_at((*e)->tk, "invalid argument '%s' to operation",
+                         print_type(t));
     }
     return result;
 }
@@ -415,7 +418,7 @@ static Expr * parse_ternary(Parser *p, Expr *cond, Expr *left) {
     Prec prec = BINARY_PREC['?'] - IS_RIGHT_ASSOC['?'];
     Expr *right = parse_subexpr(p, prec);
 
-    Type result = resolve_types('?', &left, &right);
+    Type result = resolve_binary_types('?', &left, &right);
     Expr *ternary = new_expr(EXPR_TERNARY);
     ternary->cond = to_cond(cond);
     ternary->l = left;
@@ -426,7 +429,7 @@ static Expr * parse_ternary(Parser *p, Expr *cond, Expr *left) {
 }
 
 static Expr * parse_operation(Tk op, Expr *left, Expr *right) {
-    Type result = resolve_types(op, &left, &right);
+    Type result = resolve_binary_types(op, &left, &right);
     Expr *arith = new_expr(EXPR_BINARY);
     arith->op = op;
     arith->l = left;
@@ -452,7 +455,7 @@ static Expr * parse_arith_assign(Tk op, Expr *left, Expr *right) {
     ensure_lvalue(left);
     Type lvalue_type = left->type;
     Tk arith_op = ASSIGNMENT_TO_ARITH_OP[op];
-    resolve_types(arith_op, &left, &right); // Emit CONVs for arguments
+    resolve_binary_types(arith_op, &left, &right); // Emit CONVs for arguments
     Expr *assign = new_expr(EXPR_BINARY);
     assign->op = op;
     assign->l = left;
@@ -587,7 +590,7 @@ static Expr * parse_array_access(Parser *p, Expr *array) {
     index->tk = merge_tks(start, p->l.info);
     next_tk(&p->l);
 
-    Type result = resolve_types('[', &array, &index);
+    Type result = resolve_binary_types('[', &array, &index);
     Expr *array_access = new_expr(EXPR_BINARY);
     array_access->op = '[';
     array_access->l = array;
@@ -846,9 +849,6 @@ static Declarator parse_declarator(Parser *p, Type base_type) {
 
     expect_tk(&p->l, TK_IDENT); // Name
     TkInfo name = p->l.info;
-    if (find_local(p, name.start, name.len)) { // Check not already defined
-        trigger_error_at(name, "redefinition of '%.*s'", name.len, name.start);
-    }
     next_tk(&p->l);
 
     Declarator d;
