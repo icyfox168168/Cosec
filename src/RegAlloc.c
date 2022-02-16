@@ -31,20 +31,20 @@
 #define G(g, reg1, reg2) ((reg1) * (g)->num_regs + (reg2))
 
 // Use the same graph structure for the interference and the coalescing graphs.
-// The first LAST_PREG registers in 'matrix' (and in 'num_edges') are nodes for
+// The first LAST_GPR registers in 'matrix' (and in 'num_edges') are nodes for
 // the physical registers; the remaining 'num_regs' nodes are for virtual
 // registers (same as for the 'LiveRange *ranges' array)
 typedef struct {
-    int num_regs;   // Size of matrix (LAST_PREG + number of vregs)
+    int num_regs;   // Size of matrix (LAST_GPR + number of vregs)
     int *matrix;    // Square bit matrix of edges
     int *num_edges; // Number of edges for each node in the graph
 } RegGraph;
 
 static void print_reg(int reg) {
-    if (reg < LAST_PREG) {
-        printf("%s", REG_NAMES[reg][REG_Q]); // preg
+    if (reg < LAST_GPR) {
+        printf("%s", GPR_NAMES[reg][REG_Q]); // preg
     } else {
-        printf("%%%d", reg - LAST_PREG); // vreg
+        printf("%%%d", reg - LAST_GPR); // vreg
     }
 }
 
@@ -132,7 +132,7 @@ static RegGraph build_interference_graph(LiveRange *ranges, int num_regs) {
             if (!range2) {
                 continue; // reg2 isn't used
             }
-            if (reg1 < LAST_PREG && reg2 < LAST_PREG) {
+            if (reg1 < LAST_GPR && reg2 < LAST_GPR) {
                 continue; // Don't care about physical register interference
             }
             if (ranges_intersect(range1, range2)) {
@@ -158,8 +158,8 @@ static RegGraph build_coalescing_graph(Fn *fn, LiveRange *ranges) {
             // Check if the instruction is a mov that relates two regs; also
             // make sure the two regs aren't both pregs - one must be a vreg
             if ((mov->op >= X86_MOV && mov->op <= X86_MOVZX) &&
-                    mov->l.type == OP_REG && mov->r.type == OP_REG &&
-                    !(mov->l.reg < LAST_PREG && mov->r.type < LAST_PREG)) {
+                mov->l.type == OP_GPR && mov->r.type == OP_GPR &&
+                !(mov->l.reg < LAST_GPR && mov->r.type < LAST_GPR)) {
                 // This mov is a coalescing candidate if the live ranges of reg1
                 // and reg2 DON'T intersect
                 int reg1 = mov->l.reg, reg2 = mov->r.reg;
@@ -174,20 +174,20 @@ static RegGraph build_coalescing_graph(Fn *fn, LiveRange *ranges) {
     return g;
 }
 
-// Removes one non-move related node of insignificant degree (degree <LAST_PREG)
+// Removes one non-move related node of insignificant degree (degree <LAST_GPR)
 // from the interference graph and pushes it onto the stack. Returns 1 if we
 // successfully found a node to remove, or 0 if we didn't.
 static int simplify(RegGraph *ig, RegGraph *cg, int *stack, int *num_stack) {
     // Find a non-move related node of insignificant degree
-    for (int vreg = LAST_PREG; vreg < ig->num_regs; vreg++) {
+    for (int vreg = LAST_GPR; vreg < ig->num_regs; vreg++) {
         if (!node_exists(ig, vreg)) {
             continue; // The node doesn't exist
         }
         if (num_edges(cg, vreg) > 0) {
             continue; // This node is move related
         }
-        if (num_edges(ig, vreg) >= LAST_PREG) {
-            continue; // This node is of significant degree (>=LAST_PREG edges)
+        if (num_edges(ig, vreg) >= LAST_GPR) {
+            continue; // This node is of significant degree (>=LAST_GPR edges)
         }
         stack[(*num_stack)++] = vreg; // Add to the stack
         remove_node(ig, vreg); // Remove from graphs
@@ -202,7 +202,7 @@ static int simplify(RegGraph *ig, RegGraph *cg, int *stack, int *num_stack) {
 
 // Calculates the Brigg's criteria for coalescing for two nodes
 //   Nodes a and b can be coalesced if the resulting node ab has fewer than
-//   LAST_PREG nodes of significant degree
+//   LAST_GPR nodes of significant degree
 // Basically, calculate the degree of every (unique) neighbour of a and b and
 // count the number of these neighbours that have significant degree
 static int briggs_criteria(RegGraph *ig, int reg1, int reg2) {
@@ -214,7 +214,7 @@ static int briggs_criteria(RegGraph *ig, int reg1, int reg2) {
                 edge_exists(ig, reg2, neighbour)) && // or of reg2?
                 !seen[neighbour]) { // Unique?
             seen[neighbour] = 1;
-            if (num_edges(ig, neighbour) >= LAST_PREG) { // Significant?
+            if (num_edges(ig, neighbour) >= LAST_GPR) { // Significant?
                 count++;
             }
         }
@@ -237,18 +237,18 @@ static int coalesce(RegGraph *ig, RegGraph *cg, int *coalesce_map) {
             if (!edge_exists(cg, reg1, reg2)) {
                 continue; // Nodes aren't move-related
             }
-            if (briggs_criteria(ig, reg1, reg2) >= LAST_PREG) {
+            if (briggs_criteria(ig, reg1, reg2) >= LAST_GPR) {
                 continue; // Can't coalesce
             }
             // Coalesce one node into the other; if one of the regs is a preg,
             // then make sure we coalesce the vreg into it
-            int to_coalesce = reg1 < LAST_PREG ? reg2 : reg1; // Pick the vreg
+            int to_coalesce = reg1 < LAST_GPR ? reg2 : reg1; // Pick the vreg
             int target = to_coalesce == reg1 ? reg2 : reg1; // The other one
             copy_edges(ig, to_coalesce, target);
             copy_edges(cg, to_coalesce, target);
             remove_node(ig, to_coalesce);
             remove_node(cg, to_coalesce);
-            coalesce_map[to_coalesce - LAST_PREG] = target;
+            coalesce_map[to_coalesce - LAST_GPR] = target;
             printf("coalescing ");
             print_reg(to_coalesce);
             printf(" into ");
@@ -265,15 +265,15 @@ static int coalesce(RegGraph *ig, RegGraph *cg, int *coalesce_map) {
 // found a node to freeze, or 0 otherwise
 static int freeze(RegGraph *ig, RegGraph *cg) {
     // Find a move related node of insignificant degree
-    for (int vreg = LAST_PREG; vreg < ig->num_regs; vreg++) {
+    for (int vreg = LAST_GPR; vreg < ig->num_regs; vreg++) {
         if (!node_exists(ig, vreg)) {
             continue; // The node doesn't exist
         }
         if (num_edges(cg, vreg) == 0) {
             continue; // This node is NOT move related
         }
-        if (num_edges(ig, vreg) >= LAST_PREG) {
-            continue; // This node is of significant degree (>=LAST_PREG edges)
+        if (num_edges(ig, vreg) >= LAST_GPR) {
+            continue; // This node is of significant degree (>=LAST_GPR edges)
         }
         remove_node(cg, vreg); // Remove from coalesce
         printf("freezing ");
@@ -289,11 +289,11 @@ static int freeze(RegGraph *ig, RegGraph *cg) {
 // until we try select registers though)
 static int spill(RegGraph *ig, RegGraph *cg, int *stack, int *num_stack) {
     // Find a node of significant degree
-    for (int vreg = LAST_PREG; vreg < ig->num_regs; vreg++) {
+    for (int vreg = LAST_GPR; vreg < ig->num_regs; vreg++) {
         if (!node_exists(ig, vreg)) {
             continue; // The node doesn't exist
         }
-        if (num_edges(ig, vreg) < LAST_PREG) {
+        if (num_edges(ig, vreg) < LAST_GPR) {
             continue; // This node isn't of significant degree
         }
         stack[(*num_stack)++] = vreg; // Add to the stack
@@ -309,19 +309,19 @@ static int spill(RegGraph *ig, RegGraph *cg, int *stack, int *num_stack) {
 
 // Select keeps popping vregs off the stack and assigning physical registers
 // until it hits a vreg that NEEDS to be spilled (not handled yet)
-static void select_regs(RegGraph *ig, int *stack, int num_stack, Reg *reg_map,
+static void select_regs(RegGraph *ig, int *stack, int num_stack, int *reg_map,
                         int *coalesce_map) {
     // For each of the coalesced regs, we need to copy across their
     // interferences in the original interference graph ('coalesce' modified a
     // COPY) to the target reg they were coalesced into
-    for (int vreg = LAST_PREG; vreg < ig->num_regs; vreg++) {
-        int target = coalesce_map[vreg - LAST_PREG];
+    for (int vreg = LAST_GPR; vreg < ig->num_regs; vreg++) {
+        int target = coalesce_map[vreg - LAST_GPR];
         if (target != -1) { // If 'vreg' was coalesced into 'target'
             copy_edges(ig, vreg, target);
         }
     }
 
-    memset(reg_map, 0xff, (ig->num_regs - LAST_PREG) * sizeof(Reg));
+    memset(reg_map, 0xff, (ig->num_regs - LAST_GPR) * sizeof(int));
     while (num_stack) { // Work our way down the stack allocating regs
         int vreg = stack[--num_stack]; // Pop from the stack
 
@@ -330,10 +330,10 @@ static void select_regs(RegGraph *ig, int *stack, int num_stack, Reg *reg_map,
         while (edge_exists(ig, vreg, preg)) {
             preg++;
         }
-        if (preg >= LAST_PREG) { // All pregs interfere -> spill
+        if (preg >= LAST_GPR) { // All pregs interfere -> spill
             assert(0); // No spilling yet
         }
-        reg_map[vreg - LAST_PREG] = preg;
+        reg_map[vreg - LAST_GPR] = preg;
         printf("allocating ");
         print_reg(vreg);
         printf(" to ");
@@ -345,15 +345,15 @@ static void select_regs(RegGraph *ig, int *stack, int num_stack, Reg *reg_map,
     }
 }
 
-static void colour_graph(RegGraph *ig, RegGraph *cg, Reg *reg_map,
+static void colour_graph(RegGraph *ig, RegGraph *cg, int *reg_map,
                          int *coalesce_map) {
     // Set up a stack of nodes to define an order in which to colour the vregs
-    int stack[ig->num_regs - LAST_PREG];
+    int stack[ig->num_regs - LAST_GPR];
     int num_stack = 0;
 
     // Keep track of which nodes we've coalesce_map into what. Maps vreg -> reg
     // (i.e. from the set of all vregs -> the set of all preg and vregs)
-    memset(coalesce_map, 0xff, sizeof(int) * (ig->num_regs - LAST_PREG));
+    memset(coalesce_map, 0xff, sizeof(int) * (ig->num_regs - LAST_GPR));
 
     // We're going to destroy the data in the interference graph by removing
     // nodes, so create a copy we can modify
@@ -396,25 +396,25 @@ static void colour_graph(RegGraph *ig, RegGraph *cg, Reg *reg_map,
     select_regs(ig, stack, num_stack, reg_map, coalesce_map);
 }
 
-static int map_vreg(int vreg, Reg *reg_map, int *coalesce_map) {
-    if (vreg < LAST_PREG) {
+static int map_vreg(int vreg, int *reg_map, int *coalesce_map) {
+    if (vreg < LAST_GPR) {
         return vreg; // Not a vreg
     }
     int reg = vreg;
     // Find the end of the coalescing chain (e.g., %3 -> %2 -> rax)
-    while (reg >= LAST_PREG && coalesce_map[reg - LAST_PREG] != -1) {
-        reg = coalesce_map[reg - LAST_PREG];
+    while (reg >= LAST_GPR && coalesce_map[reg - LAST_GPR] != -1) {
+        reg = coalesce_map[reg - LAST_GPR];
     }
-    if (reg >= LAST_PREG) {
+    if (reg >= LAST_GPR) {
         // 'reg' might be the original vreg or a coalesced vreg
-        reg = reg_map[reg - LAST_PREG];
+        reg = reg_map[reg - LAST_GPR];
     }
     assert(reg != -1);
     return reg;
 }
 
-static void replace_vreg(AsmOperand *o, Reg *reg_map, int *coalesce_map) {
-    if (o->type == OP_REG) {
+static void replace_vreg(AsmOperand *o, int *reg_map, int *coalesce_map) {
+    if (o->type == OP_GPR) {
         o->reg = map_vreg(o->reg, reg_map, coalesce_map);
     } else if (o->type == OP_MEM) {
         if (o->base_size > REG_NONE) {
@@ -426,11 +426,11 @@ static void replace_vreg(AsmOperand *o, Reg *reg_map, int *coalesce_map) {
     }
 }
 
-static void replace_ins_vregs(AsmIns *ins, Reg *reg_map, int *coalesce_map) {
+static void replace_ins_vregs(AsmIns *ins, int *reg_map, int *coalesce_map) {
     replace_vreg(&ins->l, reg_map, coalesce_map);
     replace_vreg(&ins->r, reg_map, coalesce_map);
     if (ins->op >= X86_MOV && ins->op <= X86_MOVZX &&
-            ins->l.type == OP_REG && ins->r.type == OP_REG &&
+        ins->l.type == OP_GPR && ins->r.type == OP_GPR &&
             ins->l.reg == ins->r.reg) {
         if ((ins->op == X86_MOVSX || ins->op == X86_MOVZX) &&
                 ins->l.size > ins->r.size) {
@@ -441,7 +441,7 @@ static void replace_ins_vregs(AsmIns *ins, Reg *reg_map, int *coalesce_map) {
 }
 
 // Change all vregs in the assembly to their allocated register
-static void replace_vregs(Fn *fn, Reg *reg_map, int *coalesce_map) {
+static void replace_vregs(Fn *fn, int *reg_map, int *coalesce_map) {
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
             replace_ins_vregs(ins, reg_map, coalesce_map);
@@ -450,14 +450,32 @@ static void replace_vregs(Fn *fn, Reg *reg_map, int *coalesce_map) {
 }
 
 void reg_alloc(Fn *fn, LiveRange *ranges) {
-    if (fn->num_regs == 0 || !fn->last) {
+    if (fn->num_regs == LAST_GPR || !fn->last) {
         return; // No vregs to allocate, or the function is empty
     }
     print_live_ranges(ranges, fn->num_regs);
+
+    // Interference graph (IG) - nodes are registers (either vreg or GPR);
+    // edges are drawn between nodes that are live at the same time (i.e.,
+    // they interfere)
     RegGraph ig = build_interference_graph(ranges, fn->num_regs);
+
+    // Coalescing graph (CG) - nodes are registers (either vreg or GPR);
+    // edges are drawn between nodes that are candidates for coalescing, i.e.,
+    // two registers related by a move instruction that don't interfere
     RegGraph cg = build_coalescing_graph(fn, ranges);
-    Reg reg_map[fn->num_regs - LAST_PREG];
-    int coalesce_map[fn->num_regs - LAST_PREG];
+
+    // 'reg_map' tells us the PHYSICAL register that each VIRTUAL register has
+    // been allocated to
+    int reg_map[fn->num_regs - LAST_GPR];
+
+    // 'coalesce_map' tells us which register (either physical or virtual)
+    // each VIRTUAL register has been coalesced into (if any)
+    int coalesce_map[fn->num_regs - LAST_GPR];
+
+    // Performs the actual register allocation and coalescing
     colour_graph(&ig, &cg, reg_map, coalesce_map);
+
+    // Runs through the code and replaces each vreg with its allocated register
     replace_vregs(fn, reg_map, coalesce_map);
 }

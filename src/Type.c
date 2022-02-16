@@ -1,5 +1,4 @@
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -98,7 +97,7 @@ int bytes(Type t) {
     return (t.prim == T_i1 && t.ptrs == 0) ? 1 : bits(t) / 8;
 }
 
-char * print_type(Type t) {
+char * type_str(Type t) {
     char *prim = PRIM_NAMES[t.prim];
     size_t len = strlen(prim) + t.ptrs + 1;
     char *str = malloc(sizeof(char) * len + 1);

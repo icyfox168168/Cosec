@@ -2,7 +2,7 @@
 #ifndef COSEC_TYPE_H
 #define COSEC_TYPE_H
 
-#define UNREACHABLE() exit(1)
+#define UNREACHABLE() assert(0)
 
 // We steal the great idea from LLVM to merge signed and unsigned integer
 // types for simplicity, the rationale being that all we really care about is
@@ -49,6 +49,6 @@ int is_int(Type t);
 int is_fp(Type t);
 int are_equal(Type l, Type r);
 
-char * print_type(Type t);
+char * type_str(Type t);
 
 #endif

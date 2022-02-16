@@ -1,6 +1,13 @@
 
 #include <assert.h>
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
 #include "Emitter.h"
+
+#define BB_PREFIX    ".BB_"
+#define CONST_PREFIX "K_"
 
 static char *X86_OPCODE_NAMES[] = {
 #define X(_, str, __) str,
@@ -15,49 +22,68 @@ static char *NASM_MEM_PREFIX[] = {
     [8] = "qword",
 };
 
-static void write_reg(int reg, RegSize size, FILE *out) {
+static void write_gpr(int reg, RegSize size, FILE *out) {
     assert(size != REG_NONE);
-    if (reg < LAST_PREG) {
-        fprintf(out, "%s", REG_NAMES[reg][size]);
+    if (reg < LAST_GPR) {
+        fprintf(out, "%s", GPR_NAMES[reg][size]);
     } else {
-        fprintf(out, "%%%d", reg - LAST_PREG);
+        fprintf(out, "%%%d", reg - LAST_GPR);
         switch (size) {
-            case REG_Q: fprintf(out, "(q)"); break;
-            case REG_D: fprintf(out, "(d)"); break;
-            case REG_W: fprintf(out, "(w)"); break;
-            case REG_H: fprintf(out, "(h)"); break;
-            case REG_L: fprintf(out, "(l)"); break;
+            case REG_Q: fprintf(out, "q"); break;
+            case REG_D: fprintf(out, "d"); break;
+            case REG_W: fprintf(out, "w"); break;
+            case REG_H: fprintf(out, "h"); break;
+            case REG_L: fprintf(out, "l"); break;
             default: UNREACHABLE();
         }
     }
 }
 
+static void write_sse_reg(int reg, FILE *out) {
+    if (reg < LAST_SSE) {
+        fprintf(out, "%s", SSE_REG_NAMES[reg]);
+    } else {
+        fprintf(out, "%%%df", reg - LAST_SSE);
+    }
+}
+
+static void write_mem(AsmOperand op, FILE *out) {
+    if (op.access_size > 0) {
+        fprintf(out, "%s ", NASM_MEM_PREFIX[op.access_size]);
+    }
+    fprintf(out, "[");
+    write_gpr(op.base_reg, op.base_size, out); // Base
+    if (op.index_size > REG_NONE) { // Index
+        fprintf(out, " + ");
+        write_gpr(op.index_reg, op.index_size, out);
+        if (op.scale > 1) { // Scale
+            fprintf(out, "*%d", op.scale);
+        }
+    }
+    if (op.disp > 0) {
+        fprintf(out, " + %d", op.disp);
+    } else if (op.disp < 0) {
+        fprintf(out, " - %d", -op.disp);
+    }
+    fprintf(out, "]");
+}
+
+static void write_const(AsmOperand op, FILE *out) {
+    if (op.access_size > 0) {
+        fprintf(out, "%s ", NASM_MEM_PREFIX[op.access_size]);
+    }
+    fprintf(out, "[rel " CONST_PREFIX "%d]", op.const_idx);
+}
+
 static void write_operand(AsmOperand op, FILE *out) {
     switch (op.type) {
-    case OP_IMM: fprintf(out, "%d", op.imm); break;
-    case OP_REG: write_reg(op.reg, op.size, out); break;
-    case OP_MEM:
-        if (op.access_size > 0) {
-            fprintf(out, "%s ", NASM_MEM_PREFIX[op.access_size]);
-        }
-        fprintf(out, "[");
-        write_reg(op.base_reg, op.base_size, out); // Base
-        if (op.index_size > REG_NONE) { // Index
-            fprintf(out, " + ");
-            write_reg(op.index_reg, op.index_size, out);
-            if (op.scale > 1) { // Scale
-                fprintf(out, "*%d", op.scale);
-            }
-        }
-        if (op.disp > 0) {
-            fprintf(out, " + %d", op.disp);
-        } else if (op.disp < 0) {
-            fprintf(out, " - %d", -op.disp);
-        }
-        fprintf(out, "]");
-        break;
-    case OP_LABEL: fprintf(out, "%s", op.bb->label); break;
-    case OP_FN:    fprintf(out, "%s", op.fn->name); break;
+        case OP_IMM:   fprintf(out, "%d", op.imm); break;
+        case OP_GPR:   write_gpr(op.reg, op.size, out); break;
+        case OP_XMM:   write_sse_reg(op.reg, out); break;
+        case OP_MEM:   write_mem(op, out); break;
+        case OP_CONST: write_const(op, out); break;
+        case OP_LABEL: fprintf(out, "%s", op.bb->label); break;
+        case OP_FN:    fprintf(out, "%s", op.fn->name); break;
     }
 }
 
@@ -84,7 +110,24 @@ static void write_bb(BB *bb, FILE *out) {
     }
 }
 
+static char * bb_label(int idx) {
+    int num_digits = (idx == 0) ? 1 : (int) log10(idx) + 1;
+    char *out = malloc(strlen(BB_PREFIX) + num_digits + 1);
+    sprintf(out, BB_PREFIX "%d", idx);
+    return out;
+}
+
+static void label_bbs(Fn *fn) {
+    int idx = 0;
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        if (!bb->label) {
+            bb->label = bb_label(idx++);
+        }
+    }
+}
+
 static void write_fn(Fn *fn, FILE *out) {
+    label_bbs(fn);
     fprintf(out, "global %s\n", fn->name); // Make every function global
     fprintf(out, "%s:\n", fn->name);
     for (BB *bb = fn->entry; bb; bb = bb->next) {

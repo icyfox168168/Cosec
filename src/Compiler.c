@@ -1,14 +1,10 @@
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include <math.h>
 
 #include "Compiler.h"
 #include "Lexer.h"
-
-#define BB_PREFIX ".BB_"
 
 typedef struct loop {
     BrChain *breaks;
@@ -27,6 +23,9 @@ Fn * new_fn() {
     fn->entry = NULL;
     fn->last = NULL;
     fn->num_regs = 0;
+    fn->max_consts = 0;
+    fn->num_consts = 0;
+    fn->consts = NULL;
     return fn;
 }
 
@@ -960,11 +959,17 @@ static void compile_block(Compiler *c, Stmt *stmt) {
 // ---- Module ----------------------------------------------------------------
 
 static void compile_fn_args(Compiler *c, FnArg *args) {
-    int arg_num = 0;
+    int gpr_arg_num = 0, fp_arg_num = 0;
     for (FnArg *arg = args; arg; arg = arg->next) { // Emit IR_FARGs
         IrIns *farg = new_ir(IR_FARG);
-        farg->arg_num = arg_num++;
         farg->type = arg->local->type;
+        if (is_fp(farg->type)) {
+            // Count floating point arguments SEPARATELY since they go into
+            // SSE registers (separate from the general purpose registers)
+            farg->arg_num = fp_arg_num++;
+        } else {
+            farg->arg_num = gpr_arg_num++;
+        }
         emit(c, farg);
         arg->ir_farg = farg;
     }
@@ -978,22 +983,6 @@ static void compile_fn_args(Compiler *c, FnArg *args) {
         store->l = alloc;
         store->r = arg->ir_farg;
         emit(c, store);
-    }
-}
-
-static char * bb_label(int idx) {
-    int num_digits = (idx == 0) ? 1 : (int) log10(idx) + 1;
-    char *out = malloc(strlen(BB_PREFIX) + num_digits + 1);
-    sprintf(out, BB_PREFIX "%d", idx);
-    return out;
-}
-
-static void label_bbs(Fn *fn) {
-    int idx = 0;
-    for (BB *bb = fn->entry; bb; bb = bb->next) {
-        if (!bb->label) {
-            bb->label = bb_label(idx++);
-        }
     }
 }
 
@@ -1030,7 +1019,6 @@ static Fn * compile_fn_def(Compiler *c, FnDef *ast_fn) {
     compile_fn_args(c, ast_fn->decl->args);
     compile_block(c, ast_fn->body); // Body
     ensure_ret(fn); // Make sure every BB ends with a terminator instruction
-    label_bbs(fn);  // Add a label to every BB without one
     return fn;
 }
 

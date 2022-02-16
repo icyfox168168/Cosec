@@ -13,7 +13,9 @@
 // REQUIRES:
 // * Use chain analysis (for IR_LOAD folding)
 
-#define X86_REGS \
+// GPR stands for General Purpose Register; these consist of all the "integer"
+// registers, as opposed to the floating point registers xmm0-15.
+#define X86_GPRS \
     X(RAX, "rax", "eax",  "ax",   "ah", "al")   \
     X(RCX, "rcx", "ecx",  "cx",   "ch", "cl")   \
     X(RDX, "rdx", "edx",  "dx",   "dh", "dl")   \
@@ -32,11 +34,11 @@
     X(R15, "r15", "r15d", "r15w", NULL, "r15b")
 
 typedef enum {
-#define X(name, _, __, ___, ____, _____) REG_ ## name,
-    X86_REGS
+#define X(name, _, __, ___, ____, _____) GPR_ ## name,
+    X86_GPRS
 #undef X
-    LAST_PREG,
-} Reg;
+    LAST_GPR,
+} GPReg;
 
 typedef enum {
     REG_NONE, // Don't use the reg
@@ -47,19 +49,50 @@ typedef enum {
     REG_Q,    // All 64 bits (e.g., rax)
 } RegSize;
 
-static char *REG_NAMES[][6] = {
+static char *GPR_NAMES[][6] = {
 #define X(name, q, d, w, h, l) \
     {[REG_Q] = (q), [REG_D] = (d), [REG_W] = (w), [REG_H] = (h), [REG_L] = (l)},
-    X86_REGS
+    X86_GPRS
 #undef X
 };
 
 // Tells us the RegSize to use for a 'Type' of a certain number of BYTES.
-static RegSize REG_SIZE[] = {
+static RegSize GPR_SIZE[] = {
     [1] = REG_L,
     [2] = REG_W,
     [4] = REG_D,
     [8] = REG_Q,
+};
+
+#define X86_SSE \
+    X(XMM0,  "xmm0")  \
+    X(XMM1,  "xmm1")  \
+    X(XMM2,  "xmm2")  \
+    X(XMM3,  "xmm3")  \
+    X(XMM4,  "xmm4")  \
+    X(XMM5,  "xmm5")  \
+    X(XMM6,  "xmm6")  \
+    X(XMM7,  "xmm7")  \
+    X(XMM8,  "xmm8")  \
+    X(XMM9,  "xmm9")  \
+    X(XMM10, "xmm10") \
+    X(XMM11, "xmm11") \
+    X(XMM12, "xmm12") \
+    X(XMM13, "xmm13") \
+    X(XMM14, "xmm14") \
+    X(XMM15, "xmm15")
+
+typedef enum {
+#define X(name, _) SSE_ ## name,
+    X86_SSE
+#undef X
+    LAST_SSE,
+} SSEReg;
+
+static char *SSE_REG_NAMES[] = {
+#define X(name, str) [SSE_ ## name] = (str),
+    X86_SSE
+#undef X
 };
 
 #define X86_OPCODES          \
@@ -85,6 +118,18 @@ static RegSize REG_SIZE[] = {
     X(SHR, "shr", 2)         \
     X(SAR, "sar", 2)         \
                              \
+    /* Floating point arithmetic */ \
+    X(MOVSS, "movss", 2) /* ss = for floats */ \
+    X(MOVSD, "movsd", 2) /* sd = for doubles */ \
+    X(ADDSS, "addss", 2)     \
+    X(ADDSD, "addsd", 2)     \
+    X(SUBSS, "subss", 2)     \
+    X(SUBSD, "subsd", 2)     \
+    X(MULSS, "mulss", 2)     \
+    X(MULSD, "mulsd", 2)     \
+    X(DIVSS, "divss", 2)     \
+    X(DIVSD, "divsd", 2)     \
+                             \
     /* Comparisons */        \
     X(CMP, "cmp", 2)         \
     X(SETE, "sete", 1)       \
@@ -97,6 +142,10 @@ static RegSize REG_SIZE[] = {
     X(SETBE, "setbe", 1)     \
     X(SETA, "seta", 1)       \
     X(SETAE, "setae", 1)     \
+                             \
+    /* Floating point comparisons */ \
+    X(UCOMISS, "ucomiss", 2) \
+    X(UCOMISD, "ucomisd", 2) \
                              \
     /* Stack manipulation */ \
     X(PUSH, "push", 1)       \
@@ -133,24 +182,30 @@ static int X86_OPCODE_NARGS[] = { // Number of arguments each opcode takes
 
 typedef enum {
     OP_IMM,   // Immediate (constant)
-    OP_REG,   // Physical or virtual register (e.g., rax, %3, etc.)
+    OP_GPR,   // Physical or virtual general purpose register
+    OP_XMM,   // SSE physical or virtual register
     OP_MEM,   // Memory access
+    OP_CONST, // Constant in memory
     OP_LABEL, // Symbol for a branch
     OP_FN,    // Symbol for a call
 } AsmOperandType;
 
-// For OP_REG, 'operand.reg' is >= LAST_PREG if the operand represents a
-// virtual register. 'operand.reg' < LAST_PREG indicates a physical register
+// For OP_GPR, 'operand.reg' is >= LAST_GPR if the operand represents a
+// virtual register; 'operand.reg' < LAST_GPR indicates a physical register
 typedef struct {
     AsmOperandType type;
     union {
         int imm; // OP_IMM
-        struct { RegSize size; int reg; }; // OP_REG (physical or virtual)
+        struct { RegSize size; int reg; }; // OP_GPR or OP_XMM
         struct { // OP_MEM
+            int access_size;
             int base_reg; RegSize base_size;
             int index_reg; RegSize index_size;
             int scale, disp;
-            int access_size;
+        };
+        struct { // OP_CONST
+            int _access_size;
+            int const_idx;
         };
         struct bb *bb; // OP_LABEL
         struct fn *fn; // OP_FN

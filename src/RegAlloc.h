@@ -15,9 +15,6 @@
 // * vreg: a VIRTUAL register created by the assembler that's yet to be
 //   assigned to a physical register by the register allocator
 // * reg: refers to either a preg or vreg
-//
-// After 'reg_alloc', there will no longer be any assembly instructions with
-// type 'OP_VREG'.
 
 void reg_alloc(Fn *fn, LiveRange *ranges);
 

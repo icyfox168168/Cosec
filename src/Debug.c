@@ -1,7 +1,11 @@
 
 #include <stdio.h>
+#include <math.h>
+#include <string.h>
 
 #include "Debug.h"
+
+#define BB_PREFIX ".BB_"
 
 static char *PRIM_NAMES[] = {
 #define X(name, _) #name,
@@ -9,7 +13,7 @@ static char *PRIM_NAMES[] = {
 #undef X
 };
 
-static void print_debug_type(Type t) {
+static void print_type(Type t) {
     if (t.prim == T_NONE) {
         return;
     }
@@ -22,31 +26,31 @@ static void print_debug_type(Type t) {
 // ---- Abstract Syntax Tree --------------------------------------------------
 
 static void print_local(Local *local) {
-    print_debug_type(local->type);
+    print_type(local->type);
     printf(" %s", local->name);
 }
 
 static void print_expr(Expr *expr) {
     switch (expr->kind) {
     case EXPR_KINT:
-        print_debug_type(expr->type);
+        print_type(expr->type);
         printf(" %+d", expr->kint);
         break;
     case EXPR_KFLOAT:
-        print_debug_type(expr->type);
+        print_type(expr->type);
         printf(" %+g", expr->kfloat);
         break;
     case EXPR_LOCAL:
         print_local(expr->local);
         break;
     case EXPR_CONV:
-        print_debug_type(expr->type);
+        print_type(expr->type);
         printf(" ( conv ");
         print_expr(expr->l);
         printf(" )");
         break;
     case EXPR_POSTFIX:
-        print_debug_type(expr->type);
+        print_type(expr->type);
         printf(" ( ");
         print_expr(expr->l);
         printf(" ");
@@ -54,7 +58,7 @@ static void print_expr(Expr *expr) {
         printf(" )");
         break;
     case EXPR_UNARY:
-        print_debug_type(expr->type);
+        print_type(expr->type);
         printf(" ( ");
         print_tk(expr->op);
         printf(" ");
@@ -62,7 +66,7 @@ static void print_expr(Expr *expr) {
         printf(" )");
         break;
     case EXPR_BINARY:
-        print_debug_type(expr->type);
+        print_type(expr->type);
         printf(" ( ");
         print_tk(expr->op);
         printf(" ");
@@ -72,7 +76,7 @@ static void print_expr(Expr *expr) {
         printf(" )");
         break;
     case EXPR_TERNARY:
-        print_debug_type(expr->type);
+        print_type(expr->type);
         printf(" ( ? ");
         print_expr(expr->cond);
         printf(" ");
@@ -165,7 +169,7 @@ void print_ast(FnDef *fn) {
     if (!fn) {
         return;
     }
-    print_debug_type(fn->decl->return_type);
+    print_type(fn->decl->return_type);
     printf(" %s ( ", fn->decl->local->name);
     for (FnArg *arg = fn->decl->args; arg; arg = arg->next) {
         print_local(arg->local);
@@ -198,13 +202,14 @@ static void print_phi(IrIns *phi) {
 static void print_ins(IrIns *ins) {
     printf("\t"); // Indent all instructions by a tab
     printf("%.4d\t", ins->idx); // Instruction's index in the function
-    print_debug_type(ins->type); // Return type (void if control flow)
+    print_type(ins->type); // Return type (void if control flow)
     printf("\t%s\t", IR_OPCODE_NAMES[ins->op]); // Opcode name
     switch (ins->op) { // Handle special case instructions (e.g., constants)
     case IR_FARG:   printf("%d", ins->arg_num); break;
     case IR_KINT:   printf("%+d", ins->kint); break;
     case IR_KFLOAT: printf("%+g", ins->kfloat); break;
-    case IR_ALLOC:  { Type t = ins->type; t.ptrs--; print_debug_type(t); } break;
+    case IR_ALLOC:  { Type t = ins->type; t.ptrs--;
+        print_type(t); } break;
     case IR_BR:     printf("%s", ins->br ? ins->br->label : "NULL"); break;
     case IR_CONDBR:
         printf("%.4d\t", ins->cond->idx); // Condition
@@ -240,7 +245,24 @@ static void number_ins(Fn *fn) {
     }
 }
 
+static char * bb_label(int idx) {
+    int num_digits = (idx == 0) ? 1 : (int) log10(idx) + 1;
+    char *out = malloc(strlen(BB_PREFIX) + num_digits + 1);
+    sprintf(out, BB_PREFIX "%d", idx);
+    return out;
+}
+
+static void label_bbs(Fn *fn) {
+    int idx = 0;
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        if (!bb->label) {
+            bb->label = bb_label(idx++);
+        }
+    }
+}
+
 void print_ir(Fn *fn) {
+    label_bbs(fn);
     number_ins(fn);
     for (BB *bb = fn->entry; bb; bb = bb->next) {
         print_bb(bb); // Print BBs in the order they appear in the source

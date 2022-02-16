@@ -17,7 +17,8 @@
 //
 // * IR_FARG: only appears at the START of an IR function's entry basic block;
 //   used to reference the 'n'th argument for the function (where argument 0
-//   is the left most, argument 1 is next, etc.)
+//   is the left most, argument 1 is next, etc.); floating point arguments are
+//   counted SEPARATELY (since they go in SSE registers)
 // * ALLOC: allocates stack space of a given size and returns a POINTER to the
 //   start of this space (similar to LLVM's alloca)
 // * STORE: writes its SECOND argument (with type <type>) to its FIRST (which
@@ -172,14 +173,33 @@ typedef struct bb {
 
 BB * new_bb(); // Used by the assembler
 
+typedef enum {
+    CONST_F32,
+    CONST_F64,
+    CONST_STR,
+} ConstantType;
+
+typedef struct {
+    ConstantType kind;
+    union {
+        float f32;
+        double f64;
+        char *str;
+    };
+} Constant;
+
 typedef struct fn {
     struct fn *next;  // Linked list of functions
     char *name;       // Output name for the function
     BB *entry, *last; // Linked list of basic blocks
-    int num_regs;    // For the assembler (number of vregs used)
+
+    // For the assembler
+    int num_regs;     // Number of vregs used in the function
+    Constant *consts; // Constants used in the assembly
+    int num_consts, max_consts;
 } Fn;
 
-Fn * new_fn(); // Used by the assembler
+Fn * new_fn();
 
 typedef struct {
     Fn *fns;  // Linked list of functions

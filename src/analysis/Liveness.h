@@ -21,9 +21,9 @@ typedef struct interval {
 // head interval of the linked list
 typedef Interval * LiveRange;
 
-// In the returned array, the first LAST_PREG are physical register live ranges,
-// and the rest are vregs. E.g. vreg 3 is at live_range[LAST_PREG + 3].
-// Total size is LAST_PREG + num_regs
+// In the returned array, the first LAST_GPR are physical register live ranges,
+// and the rest are vregs. E.g. vreg 3 is at live_range[LAST_GPR + 3].
+// Total size is LAST_GPR + num_regs
 LiveRange * analyse_live_ranges(Fn *fn);
 
 int ranges_intersect(LiveRange r1, LiveRange r2);

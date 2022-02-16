@@ -199,12 +199,12 @@ static void check_conv(Expr *src, Type tt) {
     Type st = src->type;
     if (is_ptr(tt) && is_ptr(st) && !is_null_ptr(src)) {
         trigger_warning_at(src->tk, "incompatible pointer types '%s' and '%s'",
-                           print_type(st), print_type(tt));
+                           type_str(st), type_str(tt));
     }
     if (!((is_arith(tt) && is_arith(st)) || (is_ptr(tt) && is_ptr(st)) ||
             (is_ptr(tt) && is_int(st)) || (is_int(tt) && is_ptr(st)))) {
         trigger_error_at(src->tk, "invalid conversion from '%s' to '%s'",
-                         print_type(st), print_type(tt));
+                         type_str(st), type_str(tt));
     }
 }
 
@@ -311,11 +311,13 @@ static Type promote_binary_arith(Expr *l, Expr *r) {
 // to happen
 static Type resolve_binary_types(Tk o, Expr **l, Expr **r) {
     Type result, lt = (*l)->type, rt = (*r)->type;
-    if (is_bit_op(o) && is_int(lt) && is_int(rt)) {
+    if ((is_bit_op(o) || o == '%') && is_int(lt) && is_int(rt)) {
+        // '%' only accepts integer operands
         result = promote_binary_int(*l, *r);
         *l = conv_to(*l, result);
         *r = conv_to(*r, result);
-    } else if ((is_arith_op(o) || o == '?') && is_arith(lt) && is_arith(rt)) {
+    } else if (((is_arith_op(o) && o != '%') || o == '?') &&
+               is_arith(lt) && is_arith(rt)) {
         result = promote_binary_arith(*l, *r);
         *l = conv_to(*l, result);
         *r = conv_to(*r, result);
@@ -361,11 +363,11 @@ static Type resolve_binary_types(Tk o, Expr **l, Expr **r) {
     } else {
         if (o == '[') { // Print a different error for array access
             trigger_error_at((*r)->tk, "invalid argument '%s' to operation",
-                             print_type(rt));
+                             type_str(rt));
         } else {
             trigger_error_at(merge_tks((*l)->tk, (*r)->tk),
                              "invalid arguments '%s' and '%s' to operation",
-                             print_type(lt), print_type(rt));
+                             type_str(lt), type_str(rt));
         }
     }
     return result;
@@ -391,7 +393,7 @@ static Type resolve_unary_type(Tk op, Expr **e) {
         *e = conv_to(*e, result);
     } else {
         trigger_error_at((*e)->tk, "invalid argument '%s' to operation",
-                         print_type(t));
+                         type_str(t));
     }
     return result;
 }
