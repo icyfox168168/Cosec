@@ -173,18 +173,14 @@ typedef struct bb {
 
 BB * new_bb(); // Used by the assembler
 
-typedef enum {
-    CONST_F32,
-    CONST_F64,
-    CONST_STR,
-} ConstantType;
-
 typedef struct {
-    ConstantType kind;
+    Type type;
     union {
         float f32;
         double f64;
         char *str;
+        uint32_t out32; // For the emitter when writing to the output file
+        uint64_t out64;
     };
 } Constant;
 

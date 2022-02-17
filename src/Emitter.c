@@ -110,6 +110,21 @@ static void write_bb(BB *bb, FILE *out) {
     }
 }
 
+static void write_consts(Fn *fn, FILE *out) {
+    for (int i = 0; i < fn->num_consts; i++) {
+        Constant c = fn->consts[i];
+        fprintf(out, CONST_PREFIX "%d: ", i);
+        switch (c.type.prim) {
+        case T_f32:
+            fprintf(out, "dd 0x%x ; float %g", c.out32, c.f32); break;
+        case T_f64:
+            fprintf(out, "dq 0x%llx ; double %g", c.out64, c.f64); break;
+        default: UNREACHABLE();
+        }
+        fprintf(out, "\n");
+    }
+}
+
 static char * bb_label(int idx) {
     int num_digits = (idx == 0) ? 1 : (int) log10(idx) + 1;
     char *out = malloc(strlen(BB_PREFIX) + num_digits + 1);
@@ -128,6 +143,7 @@ static void label_bbs(Fn *fn) {
 
 static void write_fn(Fn *fn, FILE *out) {
     label_bbs(fn);
+    write_consts(fn, out);
     fprintf(out, "global %s\n", fn->name); // Make every function global
     fprintf(out, "%s:\n", fn->name);
     for (BB *bb = fn->entry; bb; bb = bb->next) {

@@ -304,12 +304,11 @@ static AsmOperand inline_imm_mem(Assembler *a, IrIns *ir_kint_or_load) {
 
 static void asm_kfloat(Assembler *a, IrIns *ir_kfloat) {
     Constant constant;
+    constant.type = ir_kfloat->type;
     if (ir_kfloat->type.prim == T_f32) {
         // Changing from float -> double -> float does not lose ANY precision
-        constant.kind = CONST_F32;
         constant.f32 = (float) ir_kfloat->kfloat;
     } else {
-        constant.kind = CONST_F64;
         constant.f64 = ir_kfloat->kfloat;
     }
     int idx = add_const(a->fn, constant);
@@ -368,7 +367,7 @@ static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
 static void asm_store(Assembler *a, IrIns *ir_store) {
     // The right operand has to be either an immediate or vreg (NOT memory)
     AsmOperand r = inline_imm(a, ir_store->r);
-    AsmIns *mov = new_asm(mov_op(ir_store->l->type)); // Store into memory
+    AsmIns *mov = new_asm(mov_op(ir_store->r->type)); // Store into memory
     mov->l = to_mem_operand(a, ir_store->l);
     mov->r = r;
     emit(a, mov);
