@@ -81,8 +81,7 @@ static void pipeline(char *file) {
     for (Fn *fn = module->fns; fn; fn = fn->next) {
         printf("Register allocation for function '%s':\n", fn->name);
         analyse_cfg(fn->entry);
-        LiveRange *live_ranges = analyse_live_ranges(fn);
-        reg_alloc(fn, live_ranges);
+        reg_alloc(fn);
         printf("\n");
     }
 

@@ -22,7 +22,7 @@ Fn * new_fn() {
     fn->next = NULL;
     fn->entry = NULL;
     fn->last = NULL;
-    fn->num_regs = 0;
+    fn->num_gprs = 0;
     fn->max_consts = 0;
     fn->num_consts = 0;
     fn->consts = NULL;
@@ -1025,7 +1025,6 @@ static Fn * compile_fn_def(Compiler *c, FnDef *ast_fn) {
 static Module * compile_module(Compiler *c, AstModule *ast) {
     Module *module = malloc(sizeof(Module));
     module->fns = NULL;
-    module->main = NULL;
     Fn **fn = &module->fns;
     for (FnDef *ast_fn = ast->fns; ast_fn; ast_fn = ast_fn->next) {
         *fn = compile_fn_def(c, ast_fn);

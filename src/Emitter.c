@@ -25,7 +25,7 @@ static char *NASM_MEM_PREFIX[] = {
 static void write_gpr(int reg, RegSize size, FILE *out) {
     assert(size != REG_NONE);
     if (reg < LAST_GPR) {
-        fprintf(out, "%s", GPR_NAMES[reg][size]);
+        fprintf(out, "%s", GPR_NAMES[size][reg]);
     } else {
         fprintf(out, "%%%d", reg - LAST_GPR);
         switch (size) {

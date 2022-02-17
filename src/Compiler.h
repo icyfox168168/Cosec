@@ -194,8 +194,8 @@ typedef struct fn {
     BB *entry, *last; // Linked list of basic blocks
 
     // For the assembler
-    int num_regs;     // Number of vregs used in the function
-    Constant *consts; // Constants used in the assembly
+    int num_gprs, num_sse_regs; // Number of vregs used in the function
+    Constant *consts;           // Constants used in the assembly
     int num_consts, max_consts;
 } Fn;
 
@@ -203,7 +203,6 @@ Fn * new_fn();
 
 typedef struct {
     Fn *fns;  // Linked list of functions
-    Fn *main; // Function called 'main', if there is one, used as program entry
 } Module;
 
 Module * compile(AstModule *ast);

@@ -49,10 +49,21 @@ typedef enum {
     REG_Q,    // All 64 bits (e.g., rax)
 } RegSize;
 
-static char *GPR_NAMES[][6] = {
-#define X(name, q, d, w, h, l) \
-    {[REG_Q] = (q), [REG_D] = (d), [REG_W] = (w), [REG_H] = (h), [REG_L] = (l)},
-    X86_GPRS
+static char *GPR_NAMES[][LAST_GPR] = {
+#define X(name, q, _, __, ___, ____) q,
+    [REG_Q] = { X86_GPRS },
+#undef X
+#define X(name, _, d, __, ___, ____) d,
+    [REG_D] = { X86_GPRS },
+#undef X
+#define X(name, _, __, w, ___, ____) w,
+    [REG_W] = { X86_GPRS },
+#undef X
+#define X(name, _, __, ___, h, ____) h,
+    [REG_H] = { X86_GPRS },
+#undef X
+#define X(name, _, __, ___, ____, l) l,
+    [REG_L] = { X86_GPRS },
 #undef X
 };
 
@@ -100,6 +111,8 @@ static char *SSE_REG_NAMES[] = {
     X(MOV, "mov", 2)         \
     X(MOVSX, "movsx", 2) /* sign extend, for signed ints */ \
     X(MOVZX, "movzx", 2) /* zero extend, for unsigned ints */ \
+    X(MOVSS, "movss", 2) /* ss = for floats */ \
+    X(MOVSD, "movsd", 2) /* sd = for doubles */ \
     X(LEA, "lea", 2)         \
                              \
     /* Arithmetic */         \
@@ -119,8 +132,6 @@ static char *SSE_REG_NAMES[] = {
     X(SAR, "sar", 2)         \
                              \
     /* Floating point arithmetic */ \
-    X(MOVSS, "movss", 2) /* ss = for floats */ \
-    X(MOVSD, "movsd", 2) /* sd = for doubles */ \
     X(ADDSS, "addss", 2)     \
     X(ADDSD, "addsd", 2)     \
     X(SUBSS, "subss", 2)     \

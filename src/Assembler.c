@@ -68,7 +68,7 @@ static AsmOpcode IR_OP_TO_JXX[NUM_IR_OPS] = { // Convert IR to Jxx opcode
 };
 
 static AsmOpcode INVERT_COND[NUM_X86_OPS] = { // Invert a conditional opcode
-    [X86_JE] = X86_JNE, // Jxx
+    [X86_JE] = X86_JNE,
     [X86_JNE] = X86_JE,
     [X86_JL] = X86_JGE,
     [X86_JLE] = X86_JG,
@@ -131,6 +131,16 @@ static int add_const(Fn *fn, Constant constant) {
     return fn->num_consts++;
 }
 
+// Returns the correct 'mov' operation for the type (changes if the type is
+// a floating point)
+static AsmOpcode mov_op(Type t) {
+    if (is_fp(t)) {
+        return t.prim == T_f32 ? X86_MOVSS : X86_MOVSD;
+    } else {
+        return X86_MOV;
+    }
+}
+
 static AsmOperand discharge(Assembler *a, IrIns *ins); // Forward declarations
 static void asm_cmp(Assembler *a, IrIns *ir_cmp);
 
@@ -178,7 +188,7 @@ static AsmOperand discharge_imm(Assembler *a, IrIns *ir_k) {
 
 static AsmOperand discharge_fp_load(Assembler *a, IrIns *ir_load) {
     ir_load->vreg = a->next_sse++;
-    AsmIns *mov = new_asm(ir_load->type.prim == T_f32 ? X86_MOVSS : X86_MOVSD);
+    AsmIns *mov = new_asm(mov_op(ir_load->type));
     mov->l.type = OP_XMM; // Load into a vreg
     mov->l.reg = ir_load->vreg;
     mov->r = to_mem_operand(a, ir_load->l);
@@ -305,8 +315,7 @@ static void asm_kfloat(Assembler *a, IrIns *ir_kfloat) {
     int idx = add_const(a->fn, constant);
 
     ir_kfloat->vreg = a->next_sse++;
-    AsmOpcode op = ir_kfloat->type.prim == T_f32 ? X86_MOVSS : X86_MOVSD;
-    AsmIns *mov = new_asm(op);
+    AsmIns *mov = new_asm(mov_op(ir_kfloat->type));
     mov->l.type = OP_XMM;
     mov->l.reg = ir_kfloat->vreg;
     mov->r.type = OP_CONST;
@@ -316,7 +325,7 @@ static void asm_kfloat(Assembler *a, IrIns *ir_kfloat) {
 }
 
 static void asm_fp_farg(Assembler *a, IrIns *ir_farg) {
-    AsmIns *mov = new_asm(ir_farg->type.prim == T_f32 ? X86_MOVSS : X86_MOVSD);
+    AsmIns *mov = new_asm(mov_op(ir_farg->type));
     ir_farg->vreg = a->next_sse++;
     mov->l.type = OP_XMM;
     mov->l.reg = ir_farg->vreg;
@@ -359,13 +368,7 @@ static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
 static void asm_store(Assembler *a, IrIns *ir_store) {
     // The right operand has to be either an immediate or vreg (NOT memory)
     AsmOperand r = inline_imm(a, ir_store->r);
-    AsmOpcode op;
-    if (is_fp(ir_store->l->type)) {
-        op = ir_store->l->type.prim == T_f32 ? X86_MOVSS : X86_MOVSD;
-    } else {
-        op = X86_MOV;
-    }
-    AsmIns *mov = new_asm(op); // Store into memory
+    AsmIns *mov = new_asm(mov_op(ir_store->l->type)); // Store into memory
     mov->l = to_mem_operand(a, ir_store->l);
     mov->r = r;
     emit(a, mov);
@@ -389,8 +392,7 @@ static void asm_fp_arith(Assembler *a, IrIns *ir_arith) {
     AsmOperand r = inline_imm_mem(a, ir_arith->r);
     ir_arith->vreg = a->next_sse++; // Allocate a new vreg for the result
 
-    AsmOpcode mov_op = ir_arith->type.prim == T_f32 ? X86_MOVSS : X86_MOVSD;
-    AsmIns *mov = new_asm(mov_op); // Emit a mov for the new vreg
+    AsmIns *mov = new_asm(mov_op(ir_arith->type)); // Emit mov for the new vreg
     mov->l.type = OP_XMM;
     mov->l.reg = ir_arith->vreg;
     mov->r = l;
@@ -455,7 +457,7 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
     AsmOperand dividend = discharge(a, ir_div->l); // Left always a vreg
     AsmOperand divisor = inline_mem(a, ir_div->r);
 
-    // TODO: CDQ etc. define ?dx; need to make register allocator aware
+    // TODO: CDQ etc. define rdx; need to make register allocator aware
     AsmIns *mov1 = new_asm(X86_MOV); // Mov dividend into eax
     mov1->l.type = OP_GPR;
     mov1->l.reg = GPR_RAX;
@@ -725,89 +727,13 @@ static void asm_fn(Fn *fn) {
         a.bb = bb;
         asm_bb(&a, bb);
     }
-    fn->num_regs = a.next_gpr;
-}
 
-// The 'main' function isn't the first thing that gets executed when the kernel
-// launches a user-space program, it's the 'start' function. 'start' performs
-// some set-up and shut-down things before and after calling 'main':
-// 1. Puts the arguments to 'main' (argc, argv, envp; given by the kernel on
-//    the stack) into registers according to the ABI calling convention
-// 2. Calls the 'exit' syscall after 'main' is finished
-//
-// The full start stub is (see https://en.wikipedia.org/wiki/Crt0):
-// _start:
-//     xor ebp, ebp         ; Effectively zero rbp
-//     mov edi, [rsp]       ; Take argc off the stack
-//     lea rsi, [rsp+8]     ; Take argv off the stack
-//     lea rdx, [rsp+16]    ; Take envp off the stack
-//     xor eax, eax         ; Convention per ABI
-//     call main            ; Call the main function
-//     mov rdi, rax         ; Exit syscall
-//     mov rax, 0x2000001
-//     syscall
-static Fn * asm_start(Fn *main) {
-    Fn *start = new_fn();
-    start->name = "_start";
-    BB *entry = new_bb();
-    start->entry = entry;
-
-    Assembler a;
-    a.bb = entry;
-
-    AsmIns *i;
-    i = new_asm(X86_XOR); // Zero rbp
-    i->l.type = OP_GPR; i->l.reg = GPR_RBP; i->l.size = REG_D;
-    i->r.type = OP_GPR; i->r.reg = GPR_RBP; i->r.size = REG_D;
-    emit(&a, i);
-    i = new_asm(X86_MOV); // Take argc off the stack
-    i->l.type = OP_GPR; i->l.reg = GPR_RDI; i->l.size = REG_D;
-    i->r.type = OP_MEM; i->r.base_reg = GPR_RSP; i->r.base_size = REG_Q;
-    i->r.index_reg = 0; i->r.index_size = REG_NONE; i->r.scale = 1;
-    i->r.disp = 0; i->r.access_size = 4;
-    emit(&a, i);
-    i = new_asm(X86_LEA); // Take argv off the stack
-    i->l.type = OP_GPR; i->l.reg = GPR_RSI; i->l.size = REG_Q;
-    i->r.type = OP_MEM; i->r.base_reg = GPR_RSP; i->r.base_size = REG_Q;
-    i->r.index_reg = 0; i->r.index_size = REG_NONE; i->r.scale = 1;
-    i->r.disp = 8; i->r.access_size = 8;
-    emit(&a, i);
-    i = new_asm(X86_LEA); // Take envp off the stack
-    i->l.type = OP_GPR; i->l.reg = GPR_RDX; i->l.size = REG_Q;
-    i->r.type = OP_MEM; i->r.base_reg = GPR_RSP; i->r.base_size = REG_Q;
-    i->r.index_reg = 0; i->r.index_size = REG_NONE; i->r.scale = 1;
-    i->r.disp = 16; i->r.access_size = 8;
-    emit(&a, i);
-    i = new_asm(X86_XOR); // Zero eax (convention per ABI)
-    i->l.type = OP_GPR; i->l.reg = GPR_RAX; i->l.size = REG_D;
-    i->r.type = OP_GPR; i->r.reg = GPR_RAX; i->r.size = REG_D;
-    emit(&a, i);
-    i = new_asm(X86_CALL); // Call main
-    i->l.type = OP_FN; i->l.fn = main;
-    emit(&a, i);
-    i = new_asm(X86_MOV); // syscall to exit
-    i->l.type = OP_GPR; i->l.reg = GPR_RDI; i->l.size = REG_Q;
-    i->r.type = OP_GPR; i->r.reg = GPR_RAX; i->l.size = REG_Q;
-    emit(&a, i);
-    i = new_asm(X86_MOV);
-    i->l.type = OP_GPR; i->l.reg = GPR_RAX; i->l.size = REG_Q;
-    i->r.type = OP_IMM; i->r.imm = 0x2000001;
-    emit(&a, i);
-    emit(&a, new_asm(X86_SYSCALL));
-    return start;
+    fn->num_gprs = a.next_gpr; // Tell the function how many vregs we used
+    fn->num_sse_regs = a.next_sse;
 }
 
 void assemble(Module *module) {
     for (Fn *fn = module->fns; fn; fn = fn->next) {
-        if (strcmp(fn->name, "main") == 0) {
-            module->main = fn; // Set the main function
-        }
         asm_fn(fn);
-    }
-    // Insert a 'start' stub if this module has a main function
-    if (module->main) {
-        Fn *start = asm_start(module->main);
-        start->next = module->fns;
-        module->fns = start;
     }
 }

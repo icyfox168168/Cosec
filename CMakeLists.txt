@@ -11,7 +11,6 @@ set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3")
 add_executable(Cosec
         src/analysis/Analysis.h
         src/analysis/CFG.c src/analysis/CFG.h
-        src/analysis/Liveness.c src/analysis/Liveness.h
         src/analysis/UseChain.c src/analysis/UseChain.h
         src/Assembler.c src/Assembler.h
         src/Compiler.c src/Compiler.h
