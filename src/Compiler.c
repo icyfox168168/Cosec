@@ -192,6 +192,23 @@ static IrOpcode UNSIGNED_BINOP[NUM_TKS] = {
     [TK_RSHIFT_ASSIGN] = IR_LSHR, // Logical shift
 };
 
+static IrOpcode FP_BINOP[NUM_TKS] = {
+    ['+'] = IR_ADD,
+    ['-'] = IR_SUB,
+    ['*'] = IR_MUL,
+    ['/'] = IR_FDIV,
+    [TK_EQ]  = IR_EQ,
+    [TK_NEQ] = IR_NEQ,
+    ['<']    = IR_FLT,
+    [TK_LE]  = IR_FLE,
+    ['>']    = IR_FGT,
+    [TK_GE]  = IR_FGE,
+    [TK_ADD_ASSIGN] = IR_ADD,
+    [TK_SUB_ASSIGN] = IR_SUB,
+    [TK_MUL_ASSIGN] = IR_MUL,
+    [TK_DIV_ASSIGN] = IR_FDIV,
+};
+
 static IrOpcode INVERT_COND[NUM_IR_OPS] = {
     [IR_EQ] = IR_NEQ,
     [IR_NEQ] = IR_EQ,
@@ -347,7 +364,7 @@ static IrIns * to_cond(Compiler *c, IrIns *expr) {
         return expr; // Already a condition, don't do anything
     }
     expr = discharge(c, expr);
-    assert(expr->op >= IR_EQ && expr->op <= IR_UGE); // Should be a comparison
+    assert(expr->op >= IR_EQ && expr->op <= IR_FGE); // Should be a comparison
     IrIns *br = new_ir(IR_CONDBR); // Emit a branch on the condition
     br->cond = expr;
     // Start a new true and false branch chain
@@ -397,7 +414,9 @@ static IrIns * compile_operation(Compiler *c, Expr *binary) {
     IrIns *right = compile_expr(c, binary->r);
     right = discharge(c, right);
     IrOpcode op;
-    if (binary->type.is_signed) {
+    if (is_fp(binary->l->type)) {
+        op = FP_BINOP[binary->op];
+    } else if (binary->type.is_signed) {
         op = SIGNED_BINOP[binary->op];
     } else {
         op = UNSIGNED_BINOP[binary->op];
@@ -591,7 +610,7 @@ static IrIns * compile_binary(Compiler *c, Expr *binary) {
         } // Fall through...
     case '*': case '/': case '%':
     case TK_LSHIFT: case TK_RSHIFT: case '&': case '|': case '^':
-    case '<': case TK_LE: case '>': case TK_GE: case TK_EQ: case TK_NEQ:
+    case TK_EQ: case TK_NEQ: case '<': case TK_LE: case '>': case TK_GE:
         return compile_operation(c, binary);
     case '=':
         return compile_assign(c, binary);

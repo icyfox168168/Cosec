@@ -52,6 +52,10 @@ static AsmOpcode IR_OP_TO_SETXX[NUM_IR_OPS] = { // Convert IR to SETxx opcode
     [IR_ULE] = X86_SETBE,
     [IR_UGT] = X86_SETA,
     [IR_UGE] = X86_SETAE,
+    [IR_FLT] = X86_SETB,
+    [IR_FLE] = X86_SETBE,
+    [IR_FGT] = X86_SETA,
+    [IR_FGE] = X86_SETAE,
 };
 
 static AsmOpcode IR_OP_TO_JXX[NUM_IR_OPS] = { // Convert IR to Jxx opcode
@@ -65,6 +69,10 @@ static AsmOpcode IR_OP_TO_JXX[NUM_IR_OPS] = { // Convert IR to Jxx opcode
     [IR_ULE] = X86_JBE,
     [IR_UGT] = X86_JA,
     [IR_UGE] = X86_JAE,
+    [IR_FLT] = X86_JB,
+    [IR_FLE] = X86_JBE,
+    [IR_FGT] = X86_JA,
+    [IR_FGE] = X86_JAE,
 };
 
 static AsmOpcode INVERT_COND[NUM_X86_OPS] = { // Invert a conditional opcode
@@ -402,7 +410,7 @@ static void asm_fp_arith(Assembler *a, IrIns *ir_arith) {
         case IR_ADD:  op = X86_ADDSS; break;
         case IR_SUB:  op = X86_SUBSS; break;
         case IR_MUL:  op = X86_MULSS; break;
-        case IR_SDIV: op = X86_DIVSS; break;
+        case IR_FDIV: op = X86_DIVSS; break;
         default: UNREACHABLE();
     }
     if (ir_arith->type.prim == T_f64) {
@@ -449,10 +457,6 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
 }
 
 static void asm_div_mod(Assembler *a, IrIns *ir_div) {
-    if (is_fp(ir_div->type)) {
-        asm_fp_arith(a, ir_div);
-        return;
-    }
     AsmOperand dividend = discharge(a, ir_div->l); // Left always a vreg
     AsmOperand divisor = inline_mem(a, ir_div->r);
 
@@ -549,11 +553,10 @@ static void asm_cmp(Assembler *a, IrIns *ir_cmp) {
     emit(a, cmp);
 }
 
-static void asm_ext(Assembler *a, IrIns *ir_ext) {
-    AsmOpcode op = ir_ext->op == IR_ZEXT ? X86_MOVZX : X86_MOVSX;
+static void asm_ext(Assembler *a, IrIns *ir_ext, AsmOpcode op) {
     AsmOperand src = inline_imm_mem(a, ir_ext->l);
     ir_ext->vreg = a->next_gpr++; // New vreg for result
-    AsmIns *mov = new_asm(op); // Move into a smaller reg
+    AsmIns *mov = new_asm(op); // Move into a larger reg
     mov->l.type = OP_GPR;
     mov->l.reg = ir_ext->vreg;
     mov->l.size = GPR_SIZE[bytes(ir_ext->type)];
@@ -575,6 +578,42 @@ static void asm_trunc(Assembler *a, IrIns *ir_trunc) {
     emit(a, mov);
 }
 
+static void asm_fp_ext_trunc(Assembler *a, IrIns *ir_ext, AsmOpcode op) {
+    // https://stackoverflow.com/questions/16597587/why-dont-gcc-and-clang-use-cvtss2sd-memory
+    // See the above link for why we don't use cvtxx2xx with a memory operand
+    AsmOperand src = discharge(a, ir_ext->l);
+    ir_ext->vreg = a->next_sse++; // New vreg for result
+    AsmIns *mov = new_asm(op); // Move into a larger reg
+    mov->l.type = OP_XMM;
+    mov->l.reg = ir_ext->vreg;
+    mov->r = src;
+    emit(a, mov);
+}
+
+static void asm_fp_to_int(Assembler *a, IrIns *ir_conv) {
+    AsmOperand src = discharge(a, ir_conv->l);
+    ir_conv->vreg = a->next_gpr++; // New vreg for result
+    AsmOpcode op = ir_conv->l->type.prim == T_f32 ? X86_CVTTSS2SI :
+            X86_CVTTSD2SI;
+    AsmIns *mov = new_asm(op); // Move into a larger reg
+    mov->l.type = OP_GPR;
+    mov->l.reg = ir_conv->vreg;
+    mov->l.size = GPR_SIZE[bytes(ir_conv->l->type)];
+    mov->r = src;
+    emit(a, mov);
+}
+
+static void asm_int_to_fp(Assembler *a, IrIns *ir_conv) {
+    AsmOperand src = discharge(a, ir_conv->l);
+    ir_conv->vreg = a->next_sse++; // New vreg for result
+    AsmOpcode op = ir_conv->type.prim == T_f32 ? X86_CVTSI2SS : X86_CVTSI2SD;
+    AsmIns *mov = new_asm(op); // Move into a larger reg
+    mov->l.type = OP_XMM;
+    mov->l.reg = ir_conv->vreg;
+    mov->r = src;
+    emit(a, mov);
+}
+
 // For IR_PTR2I, IR_I2PTR, IR_PTR2PTR -> we need to maintain SSA form over the
 // assembly output, so just emit a mov into a new vreg and let the coalescer
 // deal with it.
@@ -582,7 +621,7 @@ static void asm_trunc(Assembler *a, IrIns *ir_trunc) {
 // source operand, because the source operand might still be used after the
 // conversion operand (in which case, the new vreg's lifetime will interfere
 // with the source vreg's)
-static void asm_conv(Assembler *a, IrIns *ir_conv) {
+static void asm_ptr_conv(Assembler *a, IrIns *ir_conv) {
     AsmOperand src = inline_imm_mem(a, ir_conv->l);
     ir_conv->vreg = a->next_gpr++; // New vreg for result
     AsmIns *mov = new_asm(X86_MOV);
@@ -658,7 +697,7 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
     case IR_LOAD:  asm_load(a, ir_ins); break;
 
         // Arithmetic
-    case IR_ADD: case IR_SUB: case IR_MUL:
+    case IR_ADD: case IR_SUB: case IR_MUL: case IR_FDIV:
     case IR_AND: case IR_OR: case IR_XOR:
         asm_arith(a, ir_ins); break;
     case IR_SDIV: case IR_UDIV: case IR_SMOD: case IR_UMOD:
@@ -670,12 +709,20 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
     case IR_EQ:  case IR_NEQ:
     case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
     case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
-        break; // Don't do anything
+    case IR_FLT: case IR_FLE: case IR_FGT: case IR_FGE:
+        break; // Don't do anything; all on CONDBR
 
         // Conversions
     case IR_TRUNC: asm_trunc(a, ir_ins); break;
-    case IR_SEXT: case IR_ZEXT: asm_ext(a, ir_ins); break;
-    case IR_PTR2I: case IR_I2PTR: case IR_PTR2PTR: asm_conv(a, ir_ins); break;
+    case IR_SEXT:  asm_ext(a, ir_ins, X86_MOVSX); break;
+    case IR_ZEXT:  asm_ext(a, ir_ins, X86_MOVZX); break;
+    case IR_PTR2I: case IR_I2PTR: case IR_PTR2PTR:
+        asm_ptr_conv(a, ir_ins); break;
+
+    case IR_FPEXT:   asm_fp_ext_trunc(a, ir_ins, X86_CVTSS2SD); break;
+    case IR_FPTRUNC: asm_fp_ext_trunc(a, ir_ins, X86_CVTSD2SS); break;
+    case IR_FP2I:    asm_fp_to_int(a, ir_ins); break;
+    case IR_I2FP:    asm_int_to_fp(a, ir_ins); break;
 
         // Control flow
     case IR_BR:     asm_br(a, ir_ins); break;

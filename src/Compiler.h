@@ -46,6 +46,7 @@
     X(MUL, 2)             \
     X(SDIV, 2) /* Signed */ \
     X(UDIV, 2) /* Unsigned */ \
+    X(FDIV, 2) /* Floating point */ \
     X(SMOD, 2) /* Signed */ \
     X(UMOD, 2) /* Unsigned */ \
     X(AND, 2)             \
@@ -66,16 +67,20 @@
     X(ULE, 2)             \
     X(UGT, 2)             \
     X(UGE, 2)             \
+    X(FLT, 2) /* Ordered floating point comparisons */ \
+    X(FLE, 2)             \
+    X(FGT, 2)             \
+    X(FGE, 2)             \
                           \
     /* Conversions */     \
     X(TRUNC, 1)   /* Truncate an int to a smaller type */ \
     X(SEXT, 1)    /* Sign extend, for signed ints */ \
     X(ZEXT, 1)    /* Zero extend, for unsigned ints */ \
                           \
-    X(FPEXT, 1)   /* Extend a floating point TODO */ \
-    X(FPTRUNC, 1) /* Truncate a floating point TODO */ \
-    X(FP2I, 1)    /* Convert a floating point to an integer TODO */ \
-    X(I2FP, 1)    /* Convert an integer to a floating point TODO */ \
+    X(FPEXT, 1)   /* Extend a floating point */ \
+    X(FPTRUNC, 1) /* Truncate a floating point */ \
+    X(FP2I, 1)    /* Convert a floating point to an integer */ \
+    X(I2FP, 1)    /* Convert an integer to a floating point */ \
                           \
     X(PTR2I, 1)   /* Convert a pointer to an integer */ \
     X(I2PTR, 1)   /* Convert an integer to a pointer */ \

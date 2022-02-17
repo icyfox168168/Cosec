@@ -84,6 +84,13 @@ test(ptrs5 expressions/pointers/5.c)
 test(ptrs6 expressions/pointers/6.c)
 test(ptrs7 expressions/pointers/7.c)
 
+test(float1 expressions/floats/1.c)
+test(float2 expressions/floats/2.c)
+test(float3 expressions/floats/3.c)
+test(float4 expressions/floats/4.c)
+test(float5 expressions/floats/5.c)
+test(float6 expressions/floats/6.c)
+
 test(return1 return/1.c)
 test(return2 return/2.c)
 test(return3 return/3.c)

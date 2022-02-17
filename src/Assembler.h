@@ -106,76 +106,84 @@ static char *SSE_REG_NAMES[] = {
 #undef X
 };
 
-#define X86_OPCODES          \
-    /* Memory access */      \
-    X(MOV, "mov", 2)         \
+#define X86_OPCODES            \
+    /* Memory access */        \
+    X(MOV, "mov", 2)           \
     X(MOVSX, "movsx", 2) /* sign extend, for signed ints */ \
     X(MOVZX, "movzx", 2) /* zero extend, for unsigned ints */ \
     X(MOVSS, "movss", 2) /* ss = for floats */ \
     X(MOVSD, "movsd", 2) /* sd = for doubles */ \
-    X(LEA, "lea", 2)         \
-                             \
-    /* Arithmetic */         \
-    X(ADD, "add", 2)         \
-    X(SUB, "sub", 2)         \
-    X(MUL, "imul", 2)        \
+    X(LEA, "lea", 2)           \
+                               \
+    /* Arithmetic */           \
+    X(ADD, "add", 2)           \
+    X(SUB, "sub", 2)           \
+    X(MUL, "imul", 2)          \
     X(CWD, "cwd", 0) /* Sign extend ax into dx, for idiv */ \
     X(CDQ, "cdq", 0) /* Sign extend eax into edx, for idiv */ \
     X(CQO, "cqo", 0) /* Sign extend rax into rdx, for idiv */ \
-    X(IDIV, "idiv", 1)       \
-    X(DIV, "div", 1)         \
-    X(AND, "and", 2)         \
-    X(OR, "or", 2)           \
-    X(XOR, "xor", 2)         \
-    X(SHL, "shl", 2)         \
-    X(SHR, "shr", 2)         \
-    X(SAR, "sar", 2)         \
-                             \
+    X(IDIV, "idiv", 1)         \
+    X(DIV, "div", 1)           \
+    X(AND, "and", 2)           \
+    X(OR, "or", 2)             \
+    X(XOR, "xor", 2)           \
+    X(SHL, "shl", 2)           \
+    X(SHR, "shr", 2)           \
+    X(SAR, "sar", 2)           \
+                               \
     /* Floating point arithmetic */ \
-    X(ADDSS, "addss", 2)     \
-    X(ADDSD, "addsd", 2)     \
-    X(SUBSS, "subss", 2)     \
-    X(SUBSD, "subsd", 2)     \
-    X(MULSS, "mulss", 2)     \
-    X(MULSD, "mulsd", 2)     \
-    X(DIVSS, "divss", 2)     \
-    X(DIVSD, "divsd", 2)     \
-                             \
-    /* Comparisons */        \
-    X(CMP, "cmp", 2)         \
-    X(SETE, "sete", 1)       \
-    X(SETNE, "setne", 1)     \
-    X(SETL, "setl", 1)       \
-    X(SETLE, "setle", 1)     \
-    X(SETG, "setg", 1)       \
-    X(SETGE, "setge", 1)     \
-    X(SETB, "setb", 1)       \
-    X(SETBE, "setbe", 1)     \
-    X(SETA, "seta", 1)       \
-    X(SETAE, "setae", 1)     \
-                             \
+    X(ADDSS, "addss", 2)       \
+    X(ADDSD, "addsd", 2)       \
+    X(SUBSS, "subss", 2)       \
+    X(SUBSD, "subsd", 2)       \
+    X(MULSS, "mulss", 2)       \
+    X(MULSD, "mulsd", 2)       \
+    X(DIVSS, "divss", 2)       \
+    X(DIVSD, "divsd", 2)       \
+                               \
+    /* Comparisons */          \
+    X(CMP, "cmp", 2)           \
+    X(SETE, "sete", 1)         \
+    X(SETNE, "setne", 1)       \
+    X(SETL, "setl", 1)         \
+    X(SETLE, "setle", 1)       \
+    X(SETG, "setg", 1)         \
+    X(SETGE, "setge", 1)       \
+    X(SETB, "setb", 1)         \
+    X(SETBE, "setbe", 1)       \
+    X(SETA, "seta", 1)         \
+    X(SETAE, "setae", 1)       \
+                               \
     /* Floating point comparisons */ \
-    X(UCOMISS, "ucomiss", 2) \
-    X(UCOMISD, "ucomisd", 2) \
-                             \
-    /* Stack manipulation */ \
-    X(PUSH, "push", 1)       \
-    X(POP, "pop", 1)         \
-                             \
-    /* Control flow */       \
+    X(UCOMISS, "ucomiss", 2)   \
+    X(UCOMISD, "ucomisd", 2)   \
+                               \
+    /* Floating point conversions */ \
+    X(CVTSS2SD, "cvtss2sd", 2) \
+    X(CVTSD2SS, "cvtsd2ss", 2) \
+    X(CVTSI2SS, "cvtsi2ss", 2) \
+    X(CVTSI2SD, "cvtsi2sd", 2) \
+    X(CVTTSS2SI, "cvttss2si", 2) \
+    X(CVTTSD2SI, "cvttsd2si", 2) \
+                               \
+    /* Stack manipulation */   \
+    X(PUSH, "push", 1)         \
+    X(POP, "pop", 1)           \
+                               \
+    /* Control flow */         \
     X(JMP, "jmp", 1) /* Unconditional jump */ \
     X(JE, "je", 1)   /* Conditional jumps */ \
-    X(JNE, "jne", 1)         \
-    X(JL, "jl", 1)           \
-    X(JLE, "jle", 1)         \
-    X(JG, "jg", 1)           \
-    X(JGE, "jge", 1)         \
-    X(JB, "jb", 1)           \
-    X(JBE, "jbe", 1)         \
-    X(JA, "ja", 1)           \
-    X(JAE, "jae", 1)         \
-    X(CALL, "call", 1)       \
-    X(RET, "ret", 0)         \
+    X(JNE, "jne", 1)           \
+    X(JL, "jl", 1)             \
+    X(JLE, "jle", 1)           \
+    X(JG, "jg", 1)             \
+    X(JGE, "jge", 1)           \
+    X(JB, "jb", 1)             \
+    X(JBE, "jbe", 1)           \
+    X(JA, "ja", 1)             \
+    X(JAE, "jae", 1)           \
+    X(CALL, "call", 1)         \
+    X(RET, "ret", 0)           \
     X(SYSCALL, "syscall", 0)
 
 typedef enum {

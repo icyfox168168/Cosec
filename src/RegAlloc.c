@@ -764,6 +764,7 @@ static int gpr_uses_left(AsmIns *ins) {
     return X86_OPCODE_NARGS[op] >= 1 &&
            !(op >= X86_MOV && op <= X86_LEA) &&
            !(op >= X86_SETE && op <= X86_SETAE) &&
+           !(op >= X86_CVTTSS2SI && op <= X86_CVTTSD2SI) &&
            op != X86_POP;
 }
 
@@ -778,20 +779,25 @@ static int gpr_defs_left(AsmIns *ins) {
            (op >= X86_ADD && op <= X86_MUL) ||
            (op >= X86_AND && op <= X86_SAR) ||
            (op >= X86_SETE && op <= X86_SETAE) ||
+           (op >= X86_CVTTSS2SI && op <= X86_CVTTSD2SI) ||
            (op == X86_POP);
 }
 
 static int sse_is_mov(AsmIns *ins) {
-    return ins->op >= X86_MOVSS && ins->op <= X86_MOVSD;
+    return (ins->op >= X86_MOVSS && ins->op <= X86_MOVSD) ||
+           (ins->op >= X86_CVTSS2SD && ins->op <= X86_CVTSD2SS);
 }
 
 static int sse_is_redundant_mov(AsmIns *ins) {
-    return ins->l.reg == ins->r.reg;
+    return ins->op >= X86_MOVSS && ins->op <= X86_MOVSD &&
+           ins->l.reg == ins->r.reg;
 }
 
 static int sse_uses_left(AsmIns *ins) {
     AsmOpcode op = ins->op;
-    return X86_OPCODE_NARGS[op] >= 1 && !(op >= X86_MOVSS && op <= X86_MOVSD);
+    return X86_OPCODE_NARGS[op] >= 1 &&
+           !(op >= X86_MOVSS && op <= X86_MOVSD) &&
+           !(op >= X86_CVTSS2SD && op <= X86_CVTSI2SD);
 }
 
 static int sse_uses_right(AsmIns *ins) {
@@ -802,7 +808,8 @@ static int sse_uses_right(AsmIns *ins) {
 static int sse_defs_left(AsmIns *ins) {
     AsmOpcode op = ins->op;
     return (op >= X86_MOVSS && op <= X86_MOVSD) ||
-           (op >= X86_ADDSS && op <= X86_DIVSD);
+           (op >= X86_ADDSS && op <= X86_DIVSD) ||
+           (op >= X86_CVTSS2SD && op <= X86_CVTSI2SD);
 }
 
 static RegGroup GPR_REG_GROUP_INFO = {
