@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 
 #include "Lexer.h"
 #include "Error.h"
@@ -51,11 +52,11 @@ Lexer new_lexer(char *file) {
     return l;
 }
 
-static TkInfo info_at(Lexer *l) {
+static TkInfo info_at(Lexer *l, int len) {
     TkInfo info;
     info.file = l->file;
     info.start = l->c;
-    info.len = 0;
+    info.len = len;
     info.line = l->line;
     info.col = (int) (l->c - l->line_str) + 1;
     info.line_str = l->line_str;
@@ -85,8 +86,7 @@ static void lex_comments(Lexer *l) {
             l->c++;
         }
     } else if (*l->c == '/' && *(l->c + 1) == '*') {
-        TkInfo info = info_at(l);
-        info.len = 2;
+        TkInfo info = info_at(l, 2);
         l->c += 2; // Skip initial '/*'
         while (*l->c && !(*l->c == '*' && *(l->c + 1) == '/')) {
             check_newline(l);
@@ -124,8 +124,7 @@ static void lex_float(Lexer *l) {
     double num = strtod(l->c, &end); // Try reading a float
     l->c = end;
     if (errno != 0 || end == l->info.start || isalnum(*l->c)) {
-        TkInfo info = info_at(l);
-        info.len = 1;
+        TkInfo info = info_at(l, 1);
         trigger_error_at(info, "invalid digit '%c' in number", *l->c);
     }
     l->c = end;
@@ -139,8 +138,7 @@ static void lex_number(Lexer *l) {
     int num = (int) strtol(l->c, &end, 0); // Try reading an integer
     l->c = end;
     if (errno != 0 || end == l->info.start || isalnum(*l->c)) {
-        TkInfo info = info_at(l);
-        info.len = 1;
+        TkInfo info = info_at(l, 1);
         trigger_error_at(info, "invalid digit '%c' in number", *l->c);
     }
     if (*end == '.') { // If the int ends in a '.', then it was a float
@@ -151,6 +149,102 @@ static void lex_number(Lexer *l) {
     l->c = end;
     l->tk = TK_KINT;
     l->kint = num;
+}
+
+static char SIMPLE_ESC_SEQS[UCHAR_MAX] = {
+    ['\''] = '\'',
+    ['"']  = '"',
+    ['?']  = '?',
+    ['\\'] = '\\',
+    ['a']  = '\a',
+    ['b']  = '\b',
+    ['f']  = '\f',
+    ['n']  = '\n',
+    ['r']  = '\r',
+    ['t']  = '\t',
+    ['v']  = '\v',
+};
+
+static char lex_numeric_esc_seq(Lexer *l, int base) {
+    TkInfo err = info_at(l, 1);
+    char *end;
+    long num = strtol(l->c, &end, base);
+    err.len = (int) (end - l->c);
+    if (err.len == 0) {
+        trigger_error_at(err, "missing hex escape sequence");
+    } else if (num > UCHAR_MAX) {
+        trigger_error_at(err, "escape sequence out of range");
+    }
+    l->c = end;
+    return (char) num;
+}
+
+static char lex_esc_seq(Lexer *l) {
+    TkInfo err = info_at(l, 2);
+    l->c++; // Skip '\'
+    char c = *l->c;
+    if (SIMPLE_ESC_SEQS[(int) c]) {
+        l->c++;
+        return SIMPLE_ESC_SEQS[(int) c];
+    } else if (c >= '0' && c <= '7') {
+        return lex_numeric_esc_seq(l, 8);
+    } else if (c == 'x' || c == 'X') {
+        l->c++; // Skip the 'x'
+        return lex_numeric_esc_seq(l, 16);
+    } else {
+        trigger_error_at(err, "unknown escape sequence");
+    }
+}
+
+static void lex_char(Lexer *l) {
+    TkInfo start = info_at(l, 1);
+    l->c++; // Skip opening quote
+    char c = *l->c;
+    if (c == '\n' || c == '\r') {
+        trigger_error_at(start, "invalid character literal");
+    } else if (c == '\'') {
+        trigger_error_at(start, "empty character literal");
+    } else if (c == '\\') {
+        l->kch = lex_esc_seq(l);
+    } else {
+        l->kch = c;
+        l->c++; // Skip content
+    }
+    TkInfo end = info_at(l, 1);
+    if (*l->c++ != '\'') { // Skip terminating quote
+        trigger_error_at(end, "expected terminating '");
+    }
+}
+
+static void lex_str(Lexer *l) {
+    l->c++; // Skip opening quote
+
+    // Find the end of the string, to get an upper limit on the number of
+    // characters to malloc
+    char *end = l->c;
+    while (*end && !(*end == '"' && *(end - 1) != '\\')) { end++; }
+    size_t max_len = end - l->c;
+
+    char *str = malloc((max_len + 1) * sizeof(char));
+    int len = 0;
+    while (*l->c && !(*l->c == '"' && *(l->c - 1) != '\\')) {
+        char c = *l->c;
+        if (c == '\n' || c == '\r') { // Can't be a newline
+            TkInfo err = info_at(l, 1);
+            trigger_error_at(err, "string cannot contain newlines");
+        } else if (c == '\\') { // Escape sequence
+            c = lex_esc_seq(l);
+        } else { // Normal character
+            l->c++;
+        }
+        str[len++] = c;
+    }
+    str[len] = '\0';
+
+    TkInfo err = info_at(l, 1);
+    if (*l->c++ != '"') { // Skip closing quote
+        trigger_error_at(err, "expected terminating \"");
+    }
 }
 
 static void lex_symbol(Lexer *l) {
@@ -181,11 +275,15 @@ static void lex_symbol(Lexer *l) {
 void next_tk(Lexer *l) {
     lex_whitespace(l);
     lex_comments(l);
-    l->info = info_at(l);
+    l->info = info_at(l, 0);
     if (isalpha(*l->c) || *l->c == '_') { // Identifier
         lex_ident(l);
     } else if (isnumber(*l->c)) { // Number
         lex_number(l);
+    } else if (*l->c == '\'') { // Character
+        lex_char(l);
+    } else if (*l->c == '"') { // String
+        lex_str(l);
     } else { // Symbol
         lex_symbol(l);
     }

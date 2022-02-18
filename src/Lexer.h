@@ -10,6 +10,8 @@
     X(IDENT, "identifier")                 \
     X(KINT, "integer")                     \
     X(KFLOAT, "number")                    \
+    X(KCHAR, "character")                  \
+    X(KSTR, "string")                      \
                                            \
     /* Symbols */                          \
     Y(INC, '+', '+', "++")                 \
@@ -87,6 +89,7 @@ typedef struct {
     char *ident; int len; // For TK_IDENT
     int kint;             // For TK_KINT
     double kfloat;        // For TK_KFLOAT
+    char kch;             // For TK_KCHAR
 } Lexer;
 
 Lexer new_lexer(char *file);
