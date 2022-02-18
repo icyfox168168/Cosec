@@ -1,3 +1,5 @@
+# Look into using Csmith: https://github.com/csmith-project/csmith
+
 import subprocess
 import re
 import sys

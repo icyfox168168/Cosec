@@ -85,6 +85,7 @@ static Prec UNARY_PREC[NUM_TKS] = {
     ['!'] = PREC_UNARY, // Logical not
     ['&'] = PREC_UNARY, // Address-of
     ['*'] = PREC_UNARY, // Dereference
+    ['('] = PREC_UNARY, // Cast
     [TK_INC] = PREC_UNARY, // Increment
     [TK_DEC] = PREC_UNARY, // Decrement
 };
@@ -197,10 +198,6 @@ static int is_null_ptr(Expr *e) {
 
 static void check_conv(Expr *src, Type tt) {
     Type st = src->type;
-    if (is_ptr(tt) && is_ptr(st) && !is_null_ptr(src)) {
-        trigger_warning_at(src->tk, "incompatible pointer types '%s' and '%s'",
-                           type_str(st), type_str(tt));
-    }
     if (!((is_arith(tt) && is_arith(st)) || (is_ptr(tt) && is_ptr(st)) ||
             (is_ptr(tt) && is_int(st)) || (is_int(tt) && is_ptr(st)))) {
         trigger_error_at(src->tk, "invalid conversion from '%s' to '%s'",
@@ -213,7 +210,7 @@ static Expr * conv_const(Expr *expr, Type target) {
         expr->kind = EXPR_KFLOAT;
         expr->kfloat = (double) expr->kint;
     } else if (is_int(target) && expr->kind == EXPR_KFLOAT) {
-        expr->kind = EXPR_KFLOAT;
+        expr->kind = EXPR_KINT;
         expr->kint = (int) expr->kfloat;
     }
     expr->type = target;
@@ -670,28 +667,45 @@ static Expr * parse_unary_arith(Tk op, Expr *operand) {
     return unary;
 }
 
+static int has_decl(Parser *p); // Forward declarations
+static Type parse_type_specs(Parser *p);
+static AbstractDeclarator parse_abstract_declarator(Parser *p, Type base_type);
+
+static Expr * parse_cast(Parser *p, TkInfo start_tk) {
+    Type base_type = parse_type_specs(p);
+    AbstractDeclarator declarator = parse_abstract_declarator(p, base_type);
+    expect_tk(&p->l, ')');
+    next_tk(&p->l);
+    Expr *operand = parse_subexpr(p, UNARY_PREC['(']);
+    Expr *conv = conv_to(operand, declarator.type);
+    conv->tk = merge_tks(start_tk, operand->tk);
+    return conv;
+}
+
 static Expr * parse_unary(Parser *p) {
     Tk op = p->l.tk;
-    if (!UNARY_PREC[op]) { // Is there a unary operator
-        // Parse an operand and a potential postfix operator
-        Expr *operand = parse_operand(p);
-        return parse_postfix(p, operand);
+    TkInfo op_tk = p->l.info;
+    if (!UNARY_PREC[op]) { // If there's no unary operator
+        Expr *operand = parse_operand(p); // Parse an operand
+        return parse_postfix(p, operand); // And optional postfix operator
     }
-    TkInfo operator_tk = p->l.info;
     next_tk(&p->l); // Skip the unary operator
+    if (op == '(' && has_decl(p)) {
+        return parse_cast(p, op_tk);
+    }
     Expr *operand = parse_subexpr(p, UNARY_PREC[op]);
     Expr *unary;
     switch (op) {
     case '+': case '-': case '~':
         unary = parse_unary_arith(op, operand); break;
+    case TK_INC: case TK_DEC:
+        unary = parse_prefix_inc_dec(op, operand); break;
     case '!': unary = parse_not(operand); break;
     case '&': unary = parse_addr(operand); break;
     case '*': unary = parse_deref(operand); break;
-    case TK_INC: case TK_DEC:
-        unary = parse_prefix_inc_dec(op, operand); break;
     default: UNREACHABLE();
     }
-    unary->tk = merge_tks(operator_tk, operand->tk);
+    unary->tk = merge_tks(op_tk, operand->tk);
     return unary;
 }
 
@@ -806,7 +820,7 @@ static int has_decl(Parser *p) {
     return TYPE_SPECS[p->l.tk];
 }
 
-static Type parse_type_spec(Parser *p) {
+static Type parse_type_specs(Parser *p) {
     // Check there's at least one type specifier
     TkInfo start = p->l.info;
     if (!has_decl(p)) {
@@ -841,7 +855,7 @@ static Type parse_type_spec(Parser *p) {
     return type;
 }
 
-static Declarator parse_declarator(Parser *p, Type base_type) {
+static DirectDeclarator parse_direct_declarator(Parser *p, Type base_type) {
     TkInfo start = p->l.info;
     Type type = base_type;
     while (p->l.tk == '*') { // Pointers
@@ -853,15 +867,31 @@ static Declarator parse_declarator(Parser *p, Type base_type) {
     TkInfo name = p->l.info;
     next_tk(&p->l);
 
-    Declarator d;
+    DirectDeclarator d;
     d.name = name;
     d.type = type;
     d.tk = merge_tks(start, name);
     return d;
 }
 
+static AbstractDeclarator parse_abstract_declarator(Parser *p, Type base_type) {
+    Type type = base_type;
+    TkInfo start = p->l.info;
+    TkInfo end = start;
+    while (p->l.tk == '*') { // Pointers
+        type.ptrs++;
+        end = p->l.info;
+        next_tk(&p->l);
+    }
+
+    AbstractDeclarator d;
+    d.type = type;
+    d.tk = merge_tks(start, end);
+    return d;
+}
+
 static Stmt * parse_decl(Parser *p, Type base_type, int allowed_defn) {
-    Declarator declarator = parse_declarator(p, base_type);
+    DirectDeclarator declarator = parse_direct_declarator(p, base_type);
     Expr *value = NULL;
     if (allowed_defn && p->l.tk == '=') { // Optional assignment
         next_tk(&p->l); // Skip the '=' token
@@ -883,7 +913,7 @@ static Stmt * parse_decl(Parser *p, Type base_type, int allowed_defn) {
 }
 
 static Stmt * parse_decl_list(Parser *p) {
-    Type base_type = parse_type_spec(p); // Base type specifiers
+    Type base_type = parse_type_specs(p); // Base type specifiers
     Stmt *head;
     Stmt **decl = &head;
     while (p->l.tk != ';') {
@@ -1105,7 +1135,7 @@ static Stmt * parse_stmt(Parser *p) {
 // ---- Module ----------------------------------------------------------------
 
 static FnArg * parse_fn_decl_arg(Parser *p) {
-    Type base_type = parse_type_spec(p); // Type
+    Type base_type = parse_type_specs(p); // Type
     FnArg *arg = malloc(sizeof(FnArg));
     arg->next = NULL;
     Stmt *decl = parse_decl(p, base_type, 0);
@@ -1140,7 +1170,7 @@ static FnDef * parse_fn_def(Parser *p) {
     p->fn = def;
 
     def->decl = malloc(sizeof(FnDecl));
-    def->decl->return_type = parse_type_spec(p); // Return type
+    def->decl->return_type = parse_type_specs(p); // Return type
 
     expect_tk(&p->l, TK_IDENT); // Name
     def->decl->local = def_local(p, p->l.info, type_none());
