@@ -30,11 +30,9 @@
 //   <type>*, and the second argument value to add to the pointer (similar to
 //   LLVM's 'getelementptr')
 #define IR_OPCODES        \
-    /* Constants */       \
-    X(KINT, 1)            \
-    X(KFLOAT, 1)          \
-    X(KCHAR, 1)           \
-    X(KSTR, 1)            \
+    /* Immediates and constants */ \
+    X(IMM, 1)             \
+    X(CONST, 1)           \
                           \
     /* Memory accesses */ \
     X(FARG, 1)            \
@@ -137,10 +135,8 @@ typedef struct ir_ins {
     union {
         PhiChain *phi; // IR_PHI
         int arg_num;   // IR_FARG
-        int kint;      // IR_KINT
-        double kfloat; // IR_KFLOAT
-        char kch;      // IR_KCHAR
-        char *kstr;    // IR_KSTR
+        int imm;       // IR_IMM
+        int const_idx; // IR_CONST; index into function's 'consts' array
         struct { struct ir_ins *l, *r; }; // Unary and binary operations
         struct bb *br;                    // IR_BR
         struct {                          // IR_CONDBR

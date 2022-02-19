@@ -130,15 +130,6 @@ void delete_asm(AsmIns *ins) {
     }
 }
 
-static int add_const(Fn *fn, Constant constant) {
-    if (fn->num_consts >= fn->max_consts) {
-        fn->max_consts *= 2;
-        fn->consts = realloc(fn->consts, sizeof(double) * fn->max_consts);
-    }
-    fn->consts[fn->num_consts] = constant;
-    return fn->num_consts++;
-}
-
 // Returns the correct 'mov' operation for the type (changes if the type is
 // a floating point)
 static AsmOpcode mov_op(Type t) {
@@ -189,9 +180,43 @@ static AsmOperand discharge_imm(Assembler *a, IrIns *ir_k) {
     mov->l.reg = ir_k->vreg;
     mov->l.size = GPR_SIZE[bytes(ir_k->type)];
     mov->r.type = OP_IMM;
-    mov->r.imm = ir_k->kint;
+    mov->r.imm = ir_k->imm;
     emit(a, mov);
     return mov->l; // The vreg we 'mov'd into is the result
+}
+
+static AsmOperand discharge_fp_const(Assembler *a, IrIns *ir_k) {
+    ir_k->vreg = a->next_sse++;
+    AsmIns *mov = new_asm(mov_op(ir_k->type));
+    mov->l.type = OP_XMM;
+    mov->l.reg = ir_k->vreg;
+    mov->r.type = OP_CONST;
+    mov->r.access_size = bytes(ir_k->type);
+    mov->r.const_idx = ir_k->const_idx;
+    emit(a, mov);
+    return mov->l; // The vreg we 'mov'd into is the result
+}
+
+static AsmOperand discharge_str_const(Assembler *a, IrIns *ir_k) {
+    ir_k->vreg = a->next_gpr++;
+    AsmIns *mov = new_asm(X86_LEA);
+    mov->l.type = OP_GPR;
+    mov->l.reg = ir_k->vreg;
+    mov->l.size = GPR_SIZE[bytes(ir_k->type)];
+    mov->r.type = OP_CONST;
+    mov->r.imm = ir_k->const_idx;
+    emit(a, mov);
+    return mov->l; // The vreg we 'mov'd into is the result
+}
+
+static AsmOperand discharge_const(Assembler *a, IrIns *ir_k) {
+    if (is_fp(ir_k->type)) {
+        return discharge_fp_const(a, ir_k);
+    } else if (ir_k->type.prim == T_i8 && ir_k->type.ptrs == 1) {
+        return discharge_str_const(a, ir_k);
+    } else {
+        UNREACHABLE();
+    }
 }
 
 static AsmOperand discharge_fp_load(Assembler *a, IrIns *ir_load) {
@@ -262,7 +287,8 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
         return result;
     }
     switch (ins->op) {
-    case IR_KINT:  return discharge_imm(a, ins);   // Immediate
+    case IR_IMM:   return discharge_imm(a, ins);   // Immediate
+    case IR_CONST: return discharge_const(a, ins); // Constant (float or string)
     case IR_LOAD:  return discharge_load(a, ins);  // Memory load
     case IR_ALLOC: return discharge_alloc(a, ins); // Pointer load
     case IR_EQ: case IR_NEQ:
@@ -273,62 +299,47 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
     }
 }
 
-static AsmOperand inline_mem(Assembler *a, IrIns *ir_load) {
-    if (ir_load->op == IR_LOAD) { // Inline a load
-        // IR_LOADs are emitted as they happen by 'asm_ins' if they have more
-        // than one usage; they're only inlined if they have ONE use
-        if (ir_load->vreg >= 0) { // Load has already been emitted
-            return discharge(a, ir_load); // Already in a vreg
-        }
-        return to_mem_operand(a, ir_load->l); // Has only ONE use -> inline
-    } else { // Everything else, put in a vreg
-        return discharge(a, ir_load);
+static AsmOperand inline_imm(Assembler *a, IrIns *ir_k) {
+    if (ir_k->op == IR_IMM) { // Constant
+        AsmOperand result;
+        result.type = OP_IMM;
+        result.imm = ir_k->imm;
+        return result;
+    } else {
+        return discharge(a, ir_k);
     }
 }
 
-static AsmOperand inline_imm(Assembler *a, IrIns *ir_kint) {
-    if (ir_kint->op == IR_KINT) { // Constant
+static AsmOperand inline_mem(Assembler *a, IrIns *ir_ins) {
+    if (ir_ins->op == IR_LOAD) { // Inline a load
+        // IR_LOADs are emitted as they happen by 'asm_ins' if they have more
+        // than one usage; they're only inlined if they have ONE use
+        if (ir_ins->vreg >= 0) { // Load has already been emitted
+            return discharge(a, ir_ins); // Already in a vreg
+        }
+        return to_mem_operand(a, ir_ins->l); // Has only ONE use -> inline
+    } else if (ir_ins->op == IR_CONST) {
         AsmOperand result;
-        result.type = OP_IMM;
-        result.imm = ir_kint->kint;
+        result.type = OP_CONST;
+        result.const_idx = ir_ins->const_idx;
+        result.access_size = bytes(ir_ins->type);
         return result;
-    } else {
-        return discharge(a, ir_kint);
+    } else { // Everything else, put in a vreg
+        return discharge(a, ir_ins);
     }
 }
 
 // If operand is IR_KINT, then returns OP_IMM AsmOperand; if operand is an
 // IR_LOAD, then returns an OP_MEM AsmOperand; otherwise discharges the operand
 // to a vreg
-static AsmOperand inline_imm_mem(Assembler *a, IrIns *ir_kint_or_load) {
-    if (ir_kint_or_load->op == IR_KINT) { // Inline a constant integer
-        return inline_imm(a, ir_kint_or_load);
-    } else if (ir_kint_or_load->op == IR_LOAD) { // Inline a load
-        return inline_mem(a, ir_kint_or_load);
+static AsmOperand inline_imm_mem(Assembler *a, IrIns *ir_ins) {
+    if (ir_ins->op == IR_IMM) {
+        return inline_imm(a, ir_ins);
+    } else if (ir_ins->op == IR_LOAD || ir_ins->op == IR_CONST) {
+        return inline_mem(a, ir_ins);
     } else { // Otherwise, put it in a vreg
-        return discharge(a, ir_kint_or_load);
+        return discharge(a, ir_ins);
     }
-}
-
-static void asm_kfloat(Assembler *a, IrIns *ir_kfloat) {
-    Constant constant;
-    constant.type = ir_kfloat->type;
-    if (ir_kfloat->type.prim == T_f32) {
-        // Changing from float -> double -> float does not lose ANY precision
-        constant.f32 = (float) ir_kfloat->kfloat;
-    } else {
-        constant.f64 = ir_kfloat->kfloat;
-    }
-    int idx = add_const(a->fn, constant);
-
-    ir_kfloat->vreg = a->next_sse++;
-    AsmIns *mov = new_asm(mov_op(ir_kfloat->type));
-    mov->l.type = OP_XMM;
-    mov->l.reg = ir_kfloat->vreg;
-    mov->r.type = OP_CONST;
-    mov->r.access_size = bytes(ir_kfloat->type);
-    mov->r.const_idx = idx;
-    emit(a, mov);
 }
 
 static void asm_fp_farg(Assembler *a, IrIns *ir_farg) {
@@ -686,9 +697,8 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
 
 static void asm_ins(Assembler *a, IrIns *ir_ins) {
     switch (ir_ins->op) {
-        // Constants
-    case IR_KINT:   break; // Don't do anything for constants
-    case IR_KFLOAT: asm_kfloat(a, ir_ins); break;
+        // Constants - do nothing
+    case IR_IMM: case IR_CONST: break;
 
         // Memory accesses
     case IR_FARG:  asm_farg(a, ir_ins); break;
@@ -761,10 +771,6 @@ static void asm_fn(Fn *fn) {
     a.stack_size = 0;
     a.next_gpr = LAST_GPR; // Save the first LAST_GPR for physical registers
     a.next_sse = LAST_SSE;
-
-    fn->num_consts = 0; // Space for constants
-    fn->max_consts = 4;
-    fn->consts = malloc(sizeof(Constant) * fn->max_consts);
 
     a.bb = fn->entry; // Add the function preamble to the entry BB
     asm_fn_preamble(&a);

@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
+#include <assert.h>
 
 #include "Debug.h"
 
@@ -199,6 +200,26 @@ static char *IR_OPCODE_NAMES[] = {
 #undef X
 };
 
+static void print_imm(IrIns *imm) {
+    printf("%+d", imm->imm);
+    if (imm->type.prim == T_i8 && imm->type.ptrs == 0 && imm->type.is_signed) {
+        printf(" ('%c')", (char) imm->imm);
+    }
+}
+
+static void print_const(Fn *fn, IrIns *k) {
+    Constant c = fn->consts[k->const_idx];
+    if (k->type.prim == T_f32 && k->type.ptrs == 0) {
+        printf("%+g", c.f32);
+    } else if (k->type.prim == T_f64 && k->type.ptrs == 0) {
+        printf("%+g", c.f64);
+    } else if (k->type.prim == T_i8 && k->type.ptrs == 1) {
+        printf("\"%s\"", c.str);
+    } else {
+        UNREACHABLE();
+    }
+}
+
 static void print_phi(IrIns *phi) {
     PhiChain *pair = phi->phi;
     while (pair) {
@@ -207,20 +228,17 @@ static void print_phi(IrIns *phi) {
     }
 }
 
-static void print_ins(IrIns *ins) {
+static void print_ins(Fn *fn, IrIns *ins) {
     printf("\t"); // Indent all instructions by a tab
     printf("%.4d\t", ins->idx); // Instruction's index in the function
     print_type(ins->type); // Return type (void if control flow)
     printf("\t%s\t", IR_OPCODE_NAMES[ins->op]); // Opcode name
     switch (ins->op) { // Handle special case instructions (e.g., constants)
-    case IR_FARG:   printf("%d", ins->arg_num); break;
-    case IR_KINT:   printf("%+d", ins->kint); break;
-    case IR_KFLOAT: printf("%+g", ins->kfloat); break;
-    case IR_KCHAR:  printf("'%c'", ins->kch); break;
-    case IR_KSTR:   printf("\"%s\"", ins->kstr); break;
-    case IR_ALLOC:  { Type t = ins->type; t.ptrs--;
-        print_type(t); } break;
-    case IR_BR:     printf("%s", ins->br ? ins->br->label : "NULL"); break;
+    case IR_FARG:  printf("%d", ins->arg_num); break;
+    case IR_IMM:   print_imm(ins); break;
+    case IR_CONST: print_const(fn, ins); break;
+    case IR_ALLOC: { Type t = ins->type; t.ptrs--; print_type(t); } break;
+    case IR_BR:    printf("%s", ins->br ? ins->br->label : "NULL"); break;
     case IR_CONDBR:
         printf("%.4d\t", ins->cond->idx); // Condition
         printf("%s\t", ins->true ? ins->true->label : "NULL"); // True branch
@@ -239,10 +257,10 @@ static void print_ins(IrIns *ins) {
     printf("\n");
 }
 
-static void print_bb(BB *bb) {
+static void print_bb(Fn *fn, BB *bb) {
     printf("%s:\n", bb->label); // Print the BB label
     for (IrIns *ins = bb->ir_head; ins; ins = ins->next) {
-        print_ins(ins); // Print every instruction in the BB
+        print_ins(fn, ins); // Print every instruction in the BB
     }
 }
 
@@ -275,6 +293,6 @@ void print_ir(Fn *fn) {
     label_bbs(fn);
     number_ins(fn);
     for (BB *bb = fn->entry; bb; bb = bb->next) {
-        print_bb(bb); // Print BBs in the order they appear in the source
+        print_bb(fn, bb); // Print BBs in the order they appear in the source
     }
 }

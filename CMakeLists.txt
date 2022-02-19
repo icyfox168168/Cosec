@@ -91,6 +91,10 @@ test(float4 expressions/floats/4.c)
 test(float5 expressions/floats/5.c)
 test(float6 expressions/floats/6.c)
 
+test(string1 expressions/strings/1.c)
+test(string2 expressions/strings/2.c)
+test(string3 expressions/strings/3.c)
+
 test(return1 return/1.c)
 test(return2 return/2.c)
 test(return3 return/3.c)

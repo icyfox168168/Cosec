@@ -23,9 +23,9 @@ Fn * new_fn() {
     fn->entry = NULL;
     fn->last = NULL;
     fn->num_gprs = 0;
-    fn->max_consts = 0;
+    fn->max_consts = 4;
     fn->num_consts = 0;
-    fn->consts = NULL;
+    fn->consts = malloc(sizeof(Constant) * fn->max_consts);
     return fn;
 }
 
@@ -129,6 +129,16 @@ static PhiChain * new_phi(BB *bb, IrIns *def) {
     phi->bb = bb;
     phi->def = def;
     return phi;
+}
+
+static int add_const(Compiler *c, Constant constant) {
+    Fn *fn = c->fn;
+    if (fn->num_consts >= fn->max_consts) {
+        fn->max_consts *= 2;
+        fn->consts = realloc(fn->consts, sizeof(double) * fn->max_consts);
+    }
+    fn->consts[fn->num_consts] = constant;
+    return fn->num_consts++;
 }
 
 
@@ -300,11 +310,11 @@ static IrIns * discharge(Compiler *c, IrIns *cond) {
         return cond; // Not a condition; doesn't need discharging
     }
 
-    IrIns *k_true = new_ir(IR_KINT); // True and false constants
-    k_true->kint = 1;
+    IrIns *k_true = new_ir(IR_IMM); // True and false constants
+    k_true->imm = 1;
     k_true->type = type_i1();
-    IrIns *k_false = new_ir(IR_KINT);
-    k_false->kint = 0;
+    IrIns *k_false = new_ir(IR_IMM);
+    k_false->imm = 0;
     k_false->type = type_i1();
 
     PhiChain *phi_head = NULL; // Construct the phi chain
@@ -440,8 +450,8 @@ static IrIns * compile_ptr_arith(Compiler *c, Expr *binary) {
     IrIns *ptr = is_ptr(binary->l->type) ? left : right;
     IrIns *to_add = is_ptr(binary->l->type) ? right : left;
     if (binary->op == '-') { // Negate the offset if needed
-        IrIns *zero = new_ir(IR_KINT);
-        zero->kint = 0;
+        IrIns *zero = new_ir(IR_IMM);
+        zero->imm = 0;
         zero->type = to_add->type;
         IrIns *sub = new_ir(IR_SUB);
         sub->l = zero;
@@ -450,10 +460,10 @@ static IrIns * compile_ptr_arith(Compiler *c, Expr *binary) {
         to_add = sub;
     }
 
-    IrIns *amount = new_ir(IR_KINT);
+    IrIns *amount = new_ir(IR_IMM);
     Type deref = ptr->type;
     deref.ptrs--;
-    amount->kint = bytes(deref);
+    amount->imm = bytes(deref);
     amount->type = to_add->type;
     emit(c, amount);
     IrIns *mul = new_ir(IR_MUL);
@@ -494,8 +504,8 @@ static IrIns * compile_ptr_sub(Compiler *c, Expr *binary) {
     int log2 = 0;
     int val = bytes(deref_type) - 1;
     while (val) { val >>= 1; log2++; }
-    IrIns *size = new_ir(IR_KINT);
-    size->kint = log2;
+    IrIns *size = new_ir(IR_IMM);
+    size->imm = log2;
     size->type = sub->type;
     emit(c, size);
     IrIns *div = new_ir(IR_ASHR);
@@ -757,32 +767,40 @@ static IrIns * compile_local(Compiler *c, Expr *expr) {
 }
 
 static IrIns * compile_kint(Compiler *c, Expr *expr) {
-    IrIns *k = new_ir(IR_KINT);
-    k->kint = expr->kint;
+    IrIns *k = new_ir(IR_IMM);
+    k->imm = expr->kint;
     k->type = expr->type;
     emit(c, k);
     return k;
 }
 
 static IrIns * compile_kfloat(Compiler *c, Expr *expr) {
-    IrIns *k = new_ir(IR_KFLOAT);
-    k->kfloat = expr->kfloat;
+    Constant constant = {.type = expr->type};
+    if (expr->type.prim == T_f32) {
+        // Changing from float -> double -> float does not lose ANY precision
+        constant.f32 = (float) expr->kfloat;
+    } else {
+        constant.f64 = expr->kfloat;
+    }
+    IrIns *k = new_ir(IR_CONST);
+    k->const_idx = add_const(c, constant);
     k->type = expr->type;
     emit(c, k);
     return k;
 }
 
 static IrIns * compile_kchar(Compiler *c, Expr *expr) {
-    IrIns *k = new_ir(IR_KCHAR);
-    k->kch = expr->kch;
+    IrIns *k = new_ir(IR_IMM);
+    k->imm = (int) expr->kch;
     k->type = expr->type;
     emit(c, k);
     return k;
 }
 
 static IrIns * compile_kstr(Compiler *c, Expr *expr) {
-    IrIns *k = new_ir(IR_KSTR);
-    k->kstr = expr->kstr;
+    Constant constant = {.type = expr->type, .str = expr->kstr};
+    IrIns *k = new_ir(IR_CONST);
+    k->const_idx = add_const(c, constant);
     k->type = expr->type;
     emit(c, k);
     return k;

@@ -47,7 +47,7 @@ static void write_sse_reg(int reg, FILE *out) {
     }
 }
 
-static void write_mem(AsmOperand op, FILE *out) {
+static void write_mem_op(AsmOperand op, FILE *out) {
     if (op.access_size > 0) {
         fprintf(out, "%s ", NASM_MEM_PREFIX[op.access_size]);
     }
@@ -68,7 +68,7 @@ static void write_mem(AsmOperand op, FILE *out) {
     fprintf(out, "]");
 }
 
-static void write_const(AsmOperand op, FILE *out) {
+static void write_const_op(AsmOperand op, FILE *out) {
     if (op.access_size > 0) {
         fprintf(out, "%s ", NASM_MEM_PREFIX[op.access_size]);
     }
@@ -80,8 +80,8 @@ static void write_operand(AsmOperand op, FILE *out) {
         case OP_IMM:   fprintf(out, "%d", op.imm); break;
         case OP_GPR:   write_gpr(op.reg, op.size, out); break;
         case OP_XMM:   write_sse_reg(op.reg, out); break;
-        case OP_MEM:   write_mem(op, out); break;
-        case OP_CONST: write_const(op, out); break;
+        case OP_MEM:   write_mem_op(op, out); break;
+        case OP_CONST: write_const_op(op, out); break;
         case OP_LABEL: fprintf(out, "%s", op.bb->label); break;
         case OP_FN:    fprintf(out, "%s", op.fn->name); break;
     }
@@ -110,18 +110,23 @@ static void write_bb(BB *bb, FILE *out) {
     }
 }
 
+static void write_const(int idx, Constant c, FILE *out) {
+    fprintf(out, CONST_PREFIX "%d: ", idx);
+    if (c.type.prim == T_f32 && c.type.ptrs == 0) {
+        fprintf(out, "dd 0x%x ; float %g", c.out32, c.f32);
+    } else if (c.type.prim == T_f64 && c.type.ptrs == 0) {
+        fprintf(out, "dq 0x%llx ; double %g", c.out64, c.f64);
+    } else if (c.type.prim == T_i8 && c.type.ptrs == 1) {
+        fprintf(out, "db \"%s\", 0", c.str);
+    } else {
+        UNREACHABLE();
+    }
+    fprintf(out, "\n");
+}
+
 static void write_consts(Fn *fn, FILE *out) {
     for (int i = 0; i < fn->num_consts; i++) {
-        Constant c = fn->consts[i];
-        fprintf(out, CONST_PREFIX "%d: ", i);
-        switch (c.type.prim) {
-        case T_f32:
-            fprintf(out, "dd 0x%x ; float %g", c.out32, c.f32); break;
-        case T_f64:
-            fprintf(out, "dq 0x%llx ; double %g", c.out64, c.f64); break;
-        default: UNREACHABLE();
-        }
-        fprintf(out, "\n");
+        write_const(i, fn->consts[i], out);
     }
 }
 
