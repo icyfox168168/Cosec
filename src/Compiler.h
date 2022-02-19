@@ -33,6 +33,8 @@
     /* Constants */       \
     X(KINT, 1)            \
     X(KFLOAT, 1)          \
+    X(KCHAR, 1)           \
+    X(KSTR, 1)            \
                           \
     /* Memory accesses */ \
     X(FARG, 1)            \
@@ -133,10 +135,12 @@ typedef struct ir_ins {
     IrOpcode op;
     Type type; // Type of the RESULT of the instruction
     union {
-        PhiChain *phi;                    // IR_PHI
-        int arg_num;                      // IR_FARG
-        int kint;                         // IR_KINT
-        double kfloat;                    // IR_KFLOAT
+        PhiChain *phi; // IR_PHI
+        int arg_num;   // IR_FARG
+        int kint;      // IR_KINT
+        double kfloat; // IR_KFLOAT
+        char kch;      // IR_KCHAR
+        char *kstr;    // IR_KSTR
         struct { struct ir_ins *l, *r; }; // Unary and binary operations
         struct bb *br;                    // IR_BR
         struct {                          // IR_CONDBR

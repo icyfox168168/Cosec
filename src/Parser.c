@@ -272,7 +272,7 @@ static Type promote_binary_int(Expr *l, Expr *r) {
     Type lt = l->type, rt = r->type;
     if (bits(lt) < 32 && bits(rt) < 32) {
         // 0. Implicit promotion to (signed) 'int' for "small" integer types
-        return type_signed_i32();
+        return (Type) {.prim = T_i32, .ptrs = 0, .is_signed = 1};
     } else if (bits(lt) == bits(rt) &&
                lt.is_signed == rt.is_signed) {
         // 1. Types are equal
@@ -326,12 +326,13 @@ static Type resolve_binary_types(Tk o, Expr **l, Expr **r) {
         result.is_signed = promotion.is_signed; // Preserve signed-ness
     } else if ((o == '+' || o == '-') && is_ptr(lt) && is_int(rt)) {
         result = lt; // Result is a pointer
-        *r = conv_to(*r, type_unsigned_i64()); // Can only add i64 to pointers
+        *r = conv_to(*r, (Type) {.prim = T_i64, .ptrs = 0, .is_signed = 0});
     } else if (o == '+' && is_int(rt) && is_ptr(lt)) {
         result = rt; // Result is a pointer
-        *l = conv_to(*l, type_unsigned_i64()); // Can only add i64 to pointers
+        *l = conv_to(*l, (Type) {.prim = T_i64, .ptrs = 0, .is_signed = 0});
     } else if (o == '-' && is_ptr(lt) && is_ptr(rt) && are_equal(lt, rt)) {
-        result = type_unsigned_i64(); // Result is an INTEGER
+        // Result is an INTEGER
+        result = (Type) {.prim = T_i64, .ptrs = 0, .is_signed = 0};
     } else if (o == '?' && is_ptr(lt) && is_ptr(rt) && are_equal(lt, rt)) {
         result = lt; // Doesn't matter which one we pick
     } else if ((is_rel_op(o) || is_eq_op(o)) &&
@@ -356,7 +357,7 @@ static Type resolve_binary_types(Tk o, Expr **l, Expr **r) {
     } else if (o == '[' && is_ptr(lt) && is_int(rt)) {
         result = lt;
         result.ptrs--; // Results in dereference to pointer
-        *r = conv_to(*r, type_unsigned_i64()); // Can only add i64 to pointers
+        *r = conv_to(*r, (Type) {.prim = T_i64, .ptrs = 0, .is_signed = 0});
     } else {
         if (o == '[') { // Print a different error for array access
             trigger_error_at((*r)->tk, "invalid argument '%s' to operation",
@@ -375,7 +376,7 @@ static Type resolve_binary_types(Tk o, Expr **l, Expr **r) {
 static Type promote_unary_arith(Expr *operand) {
     if (is_int(operand->type) && bits(operand->type) < 32) {
         // Implicit promotion to (signed) 'int' for "small" integer types
-        return type_signed_i32();
+        return (Type) {.prim = T_i32, .ptrs = 0, .is_signed = 1};
     } else {
         return operand->type; // No conversion necessary
     }
@@ -514,7 +515,7 @@ static Expr * parse_kint(Parser *p) {
     expect_tk(&p->l, TK_KINT);
     Expr *k = new_expr(EXPR_KINT);
     k->kint = p->l.kint;
-    k->type = type_signed_i32();
+    k->type = (Type) {.prim = T_i32, .ptrs = 0, .is_signed = 1};
     k->tk = p->l.info;
     next_tk(&p->l);
     return k;
@@ -524,7 +525,27 @@ static Expr * parse_kfloat(Parser *p) {
     expect_tk(&p->l, TK_KFLOAT);
     Expr *k = new_expr(EXPR_KFLOAT);
     k->kfloat = p->l.kfloat;
-    k->type = type_f32();
+    k->type = (Type) {.prim = T_f32, .ptrs = 0, .is_signed = 1};
+    k->tk = p->l.info;
+    next_tk(&p->l);
+    return k;
+}
+
+static Expr * parse_kchar(Parser *p) {
+    expect_tk(&p->l, TK_KCHAR);
+    Expr *k = new_expr(EXPR_KCHAR);
+    k->kch = p->l.kch;
+    k->type = (Type) {.prim = T_i8, .ptrs = 0, .is_signed = 1};
+    k->tk = p->l.info;
+    next_tk(&p->l);
+    return k;
+}
+
+static Expr * parse_kstr(Parser *p) {
+    expect_tk(&p->l, TK_KSTR);
+    Expr *k = new_expr(EXPR_KSTR);
+    k->kstr = p->l.kstr;
+    k->type = (Type) {.prim = T_i8, .ptrs = 1, .is_signed = 0};
     k->tk = p->l.info;
     next_tk(&p->l);
     return k;
@@ -546,23 +567,13 @@ static Expr * parse_local(Parser *p) {
     return expr;
 }
 
-static Expr * parse_braced_subexpr(Parser *p) {
-    TkInfo start = p->l.info;
-    expect_tk(&p->l, '(');
-    next_tk(&p->l);
-    Expr *expr = parse_subexpr(p, PREC_NONE);
-    expect_tk(&p->l, ')');
-    expr->tk = merge_tks(start, p->l.info);
-    next_tk(&p->l);
-    return expr;
-}
-
 static Expr * parse_operand(Parser *p) {
     switch (p->l.tk) {
         case TK_KINT:   return parse_kint(p);
         case TK_KFLOAT: return parse_kfloat(p);
+        case TK_KCHAR:  return parse_kchar(p);
+        case TK_KSTR:   return parse_kstr(p);
         case TK_IDENT:  return parse_local(p);
-        case '(':       return parse_braced_subexpr(p);
         default:        trigger_error_at(p->l.info, "expected expression");
     }
 }
@@ -601,22 +612,22 @@ static Expr * parse_array_access(Parser *p, Expr *array) {
 
 static Expr * parse_postfix(Parser *p, Expr *operand) {
     Tk op = p->l.tk;
-    if (POSTFIX_PREC[op]) { // ++ and -- are the only postfix operators for now
-        Expr *postfix;
-        switch (op) {
-        case TK_INC: case TK_DEC:
-            postfix = parse_postfix_inc_dec(op, operand);
-            postfix->tk = merge_tks(operand->tk, p->l.info);
-            next_tk(&p->l); // Skip the operator
-            break;
-        case '[':
-            postfix = parse_array_access(p, operand);
-            break;
-        default: UNREACHABLE();
-        }
-        return postfix;
+    if (!POSTFIX_PREC[op]) { // No postfix operation
+        return operand;
     }
-    return operand; // No postfix operation
+    Expr *postfix;
+    switch (op) {
+    case TK_INC: case TK_DEC:
+        postfix = parse_postfix_inc_dec(op, operand);
+        postfix->tk = merge_tks(operand->tk, p->l.info);
+        next_tk(&p->l); // Skip the operator
+        break;
+    case '[':
+        postfix = parse_array_access(p, operand);
+        break;
+    default: UNREACHABLE();
+    }
+    return postfix;
 }
 
 static Expr * parse_not(Expr *operand) {
@@ -682,6 +693,13 @@ static Expr * parse_cast(Parser *p, TkInfo start_tk) {
     return conv;
 }
 
+static Expr * parse_braced_subexpr(Parser *p) {
+    Expr *expr = parse_subexpr(p, PREC_NONE);
+    expect_tk(&p->l, ')');
+    next_tk(&p->l);
+    return expr;
+}
+
 static Expr * parse_unary(Parser *p) {
     Tk op = p->l.tk;
     TkInfo op_tk = p->l.info;
@@ -690,8 +708,12 @@ static Expr * parse_unary(Parser *p) {
         return parse_postfix(p, operand); // And optional postfix operator
     }
     next_tk(&p->l); // Skip the unary operator
-    if (op == '(' && has_decl(p)) {
-        return parse_cast(p, op_tk);
+    if (op == '(') {
+        if (has_decl(p)) { // Cast
+            return parse_cast(p, op_tk);
+        } else { // Expression in parentheses
+            return parse_braced_subexpr(p);
+        }
     }
     Expr *operand = parse_subexpr(p, UNARY_PREC[op]);
     Expr *unary;

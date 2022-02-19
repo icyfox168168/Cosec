@@ -214,6 +214,7 @@ static void lex_char(Lexer *l) {
     if (*l->c++ != '\'') { // Skip terminating quote
         trigger_error_at(end, "expected terminating '");
     }
+    l->tk = TK_KCHAR;
 }
 
 static void lex_str(Lexer *l) {
@@ -245,6 +246,8 @@ static void lex_str(Lexer *l) {
     if (*l->c++ != '"') { // Skip closing quote
         trigger_error_at(err, "expected terminating \"");
     }
+    l->tk = TK_KSTR;
+    l->kstr = str;
 }
 
 static void lex_symbol(Lexer *l) {

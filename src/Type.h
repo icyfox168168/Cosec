@@ -36,9 +36,6 @@ typedef struct {
 
 Type type_none();
 Type type_i1();
-Type type_signed_i32();
-Type type_unsigned_i64();
-Type type_f32();
 int bits(Type t);  // Returns the size of a type in bits
 int bytes(Type t); // Returns the size of a type in bytes
 

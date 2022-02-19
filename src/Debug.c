@@ -40,6 +40,14 @@ static void print_expr(Expr *expr) {
         print_type(expr->type);
         printf(" %+g", expr->kfloat);
         break;
+    case EXPR_KCHAR:
+        print_type(expr->type);
+        printf(" '%c'", expr->kch);
+        break;
+    case EXPR_KSTR:
+        print_type(expr->type);
+        printf(" \"%s\"", expr->kstr);
+        break;
     case EXPR_LOCAL:
         print_local(expr->local);
         break;
@@ -208,6 +216,8 @@ static void print_ins(IrIns *ins) {
     case IR_FARG:   printf("%d", ins->arg_num); break;
     case IR_KINT:   printf("%+d", ins->kint); break;
     case IR_KFLOAT: printf("%+g", ins->kfloat); break;
+    case IR_KCHAR:  printf("'%c'", ins->kch); break;
+    case IR_KSTR:   printf("\"%s\"", ins->kstr); break;
     case IR_ALLOC:  { Type t = ins->type; t.ptrs--;
         print_type(t); } break;
     case IR_BR:     printf("%s", ins->br ? ins->br->label : "NULL"); break;

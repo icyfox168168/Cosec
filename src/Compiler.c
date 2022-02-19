@@ -772,10 +772,28 @@ static IrIns * compile_kfloat(Compiler *c, Expr *expr) {
     return k;
 }
 
+static IrIns * compile_kchar(Compiler *c, Expr *expr) {
+    IrIns *k = new_ir(IR_KCHAR);
+    k->kch = expr->kch;
+    k->type = expr->type;
+    emit(c, k);
+    return k;
+}
+
+static IrIns * compile_kstr(Compiler *c, Expr *expr) {
+    IrIns *k = new_ir(IR_KSTR);
+    k->kstr = expr->kstr;
+    k->type = expr->type;
+    emit(c, k);
+    return k;
+}
+
 static IrIns * compile_expr(Compiler *c, Expr *expr) {
     switch (expr->kind) {
         case EXPR_KINT:    return compile_kint(c, expr);
         case EXPR_KFLOAT:  return compile_kfloat(c, expr);
+        case EXPR_KCHAR:   return compile_kchar(c, expr);
+        case EXPR_KSTR:    return compile_kstr(c, expr);
         case EXPR_LOCAL:   return compile_local(c, expr);
         case EXPR_CONV:    return compile_conv(c, expr);
         case EXPR_POSTFIX: return compile_postfix(c, expr);

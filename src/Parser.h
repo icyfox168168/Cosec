@@ -32,6 +32,8 @@ typedef struct {
 typedef enum {
     EXPR_KINT,    // Constant integer
     EXPR_KFLOAT,  // Constant floating point
+    EXPR_KCHAR,   // Character literal
+    EXPR_KSTR,    // String literal
     EXPR_LOCAL,   // Local variable
     EXPR_CONV,    // Type conversion
     EXPR_POSTFIX, // Postfix operation
@@ -44,11 +46,13 @@ typedef struct expr {
     ExprType kind;
     Type type; // Type for the result of the expression
     union {
-        int kint;                                         // EXPR_KINT
-        double kfloat;                                    // EXPR_KFLOAT
-        Local *local;                                     // EXPR_LOCAL
-        struct { Tk op; struct expr *l; };                // Unary, postfix
-        struct { Tk _o1; struct expr *_l1, *r; };         // EXPR_BINARY
+        int kint;      // EXPR_KINT
+        double kfloat; // EXPR_KFLOAT
+        char kch;      // EXPR_KCHAR
+        char *kstr;    // EXPR_KSTR
+        Local *local;  // EXPR_LOCAL
+        struct { Tk op; struct expr *l; }; // EXPR_UNARY, EXPR_POSTFIX
+        struct { Tk _o1; struct expr *_l1, *r; }; // EXPR_BINARY
         struct { Tk _o2; struct expr *_l2, *_r, *cond; }; // EXPR_TERNARY
         // Nothing for EXPR_CONV
     };

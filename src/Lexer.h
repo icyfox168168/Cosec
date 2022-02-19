@@ -90,6 +90,7 @@ typedef struct {
     int kint;             // For TK_KINT
     double kfloat;        // For TK_KFLOAT
     char kch;             // For TK_KCHAR
+    char *kstr;           // For TK_KSTR
 } Lexer;
 
 Lexer new_lexer(char *file);

@@ -10,14 +10,6 @@ static char *PRIM_NAMES[] = {
 #undef X
 };
 
-Type type_i1() {
-    Type t;
-    t.prim = T_i1;
-    t.ptrs = 0;
-    t.is_signed = 0;
-    return t;
-}
-
 Type type_none() {
     Type t;
     t.prim = T_NONE;
@@ -26,25 +18,9 @@ Type type_none() {
     return t;
 }
 
-Type type_signed_i32() {
+Type type_i1() {
     Type t;
-    t.prim = T_i32;
-    t.ptrs = 0;
-    t.is_signed = 1;
-    return t;
-}
-
-Type type_f32() {
-    Type t;
-    t.prim = T_f32;
-    t.ptrs = 0;
-    t.is_signed = 1;
-    return t;
-}
-
-Type type_unsigned_i64() {
-    Type t;
-    t.prim = T_i64;
+    t.prim = T_i1;
     t.ptrs = 0;
     t.is_signed = 0;
     return t;
@@ -71,8 +47,13 @@ int is_fp(Type t) {
 }
 
 int are_equal(Type l, Type r) {
-    // Right now, for two types to be compatible, they need to be the same
-    return l.prim == r.prim && l.ptrs == r.ptrs && l.is_signed == r.is_signed;
+    if (l.ptrs == r.ptrs && l.ptrs == 0) {
+        return l.prim == r.prim && l.is_signed == r.is_signed;
+    } else if (l.ptrs == r.ptrs && l.ptrs > 0) {
+        return l.prim == r.prim; // Don't care about signed-ness for pointers
+    } else {
+        return 1;
+    }
 }
 
 int bits(Type t) {
