@@ -127,7 +127,10 @@ static void write_const(int idx, Constant c, FILE *out) {
 
 static void write_consts(Fn *fn, FILE *out) {
     for (int i = 0; i < fn->num_consts; i++) {
-        write_const(i, fn->consts[i], out);
+        Constant c = fn->consts[i];
+        if (is_fp(c.type)) { // Only write floating point constants here
+            write_const(i, c, out);
+        }
     }
 }
 
@@ -158,10 +161,22 @@ static void write_fn(Fn *fn, FILE *out) {
 }
 
 void emit_nasm(Module *m, FILE *out) {
+    fprintf(out, "section .text\n");
     for (Fn *fn = m->fns; fn; fn = fn->next) {
         write_fn(fn, out); // Print every function in the module
         if (fn->next) {
             fprintf(out, "\n"); // Separated by a new line
+        }
+    }
+
+    // Write string constants to the data section
+    fprintf(out, "\nsection .data\n");
+    for (Fn *fn = m->fns; fn; fn = fn->next) {
+        for (int i = 0; i < fn->num_consts; i++) {
+            Constant c = fn->consts[i];
+            if (!is_fp(c.type)) {
+                write_const(i, c, out);
+            }
         }
     }
 }

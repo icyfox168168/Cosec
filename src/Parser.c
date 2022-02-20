@@ -165,6 +165,9 @@ static void ensure_lvalue(Expr *lvalue) {
     if (lvalue->kind == EXPR_UNARY && lvalue->op == '*') {
         return; // Assigning to a pointer dereference
     }
+    if (lvalue->kind == EXPR_BINARY && lvalue->op == '[') {
+        return; // Assigning to an array index
+    }
     trigger_error_at(lvalue->tk, "expression is not assignable");
 }
 

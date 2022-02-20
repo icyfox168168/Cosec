@@ -22,9 +22,6 @@ static void print_type(Type *t) {
     case T_PRIM: printf("%s", PRIM_NAMES[t->prim]); break;
     case T_PTR:
         print_type(t->ptr);
-        if (t->ptr->kind == T_PRIM) {
-            printf(" ");
-        }
         printf("*");
         break;
     }
