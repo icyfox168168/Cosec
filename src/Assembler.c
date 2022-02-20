@@ -132,9 +132,9 @@ void delete_asm(AsmIns *ins) {
 
 // Returns the correct 'mov' operation for the type (changes if the type is
 // a floating point)
-static AsmOpcode mov_op(Type t) {
+static AsmOpcode mov_op(Type *t) {
     if (is_fp(t)) {
-        return t.prim == T_f32 ? X86_MOVSS : X86_MOVSD;
+        return t->prim == T_f32 ? X86_MOVSS : X86_MOVSD;
     } else {
         return X86_MOV;
     }
@@ -167,9 +167,8 @@ static AsmOperand to_mem_operand(Assembler *a, IrIns *ir_ptr) {
         result.disp = 0;
     }
     result.scale = 1;
-    Type t = ir_ptr->type;
-    t.ptrs--;
-    result.access_size = bytes(t); // Number of bytes to read/write
+    // Number of bytes to read/write from memory
+    result.access_size = bytes(ir_ptr->type->ptr);
     return result;
 }
 
@@ -212,7 +211,8 @@ static AsmOperand discharge_str_const(Assembler *a, IrIns *ir_k) {
 static AsmOperand discharge_const(Assembler *a, IrIns *ir_k) {
     if (is_fp(ir_k->type)) {
         return discharge_fp_const(a, ir_k);
-    } else if (ir_k->type.prim == T_i8 && ir_k->type.ptrs == 1) {
+    } else if (ir_k->type->kind == T_PTR && ir_k->type->ptr->kind == T_PRIM &&
+               ir_k->type->ptr->prim == T_i8) {
         return discharge_str_const(a, ir_k);
     } else {
         UNREACHABLE();
@@ -373,13 +373,12 @@ static void asm_farg(Assembler *a, IrIns *ir_farg) {
 
 static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
     // Align the stack to the size of the type we're storing
-    Type t = ir_alloc->type;
-    t.ptrs--; // IR_ALLOC returns a POINTER to what we want stack space for
-    int alignment = bytes(t);
+    // IR_ALLOC returns a POINTER to what we want stack space for
+    int alignment = bytes(ir_alloc->type->ptr);
     if (a->stack_size % alignment != 0) { // Stack not already aligned
         a->stack_size += alignment - (a->stack_size % alignment);
     }
-    a->stack_size += bytes(t); // Create space on the stack
+    a->stack_size += bytes(ir_alloc->type->ptr); // Create space on the stack
     ir_alloc->stack_slot = a->stack_size;
 }
 
@@ -424,7 +423,7 @@ static void asm_fp_arith(Assembler *a, IrIns *ir_arith) {
         case IR_FDIV: op = X86_DIVSS; break;
         default: UNREACHABLE();
     }
-    if (ir_arith->type.prim == T_f64) {
+    if (ir_arith->type->prim == T_f64) {
         op++; // Use SD version for doubles (right after SS opcode)
     }
     AsmIns *arith = new_asm(op);
@@ -554,7 +553,7 @@ static void asm_cmp(Assembler *a, IrIns *ir_cmp) {
     AsmOperand r = inline_imm_mem(a, ir_cmp->r);
     AsmOpcode op;
     if (is_fp(ir_cmp->l->type)) {
-        op = ir_cmp->l->type.prim == T_f32 ? X86_UCOMISS : X86_UCOMISD;
+        op = ir_cmp->l->type->prim == T_f32 ? X86_UCOMISS : X86_UCOMISD;
     } else {
         op = X86_CMP;
     }
@@ -604,7 +603,7 @@ static void asm_fp_ext_trunc(Assembler *a, IrIns *ir_ext, AsmOpcode op) {
 static void asm_fp_to_int(Assembler *a, IrIns *ir_conv) {
     AsmOperand src = discharge(a, ir_conv->l);
     ir_conv->vreg = a->next_gpr++; // New vreg for result
-    AsmOpcode op = ir_conv->l->type.prim == T_f32 ? X86_CVTTSS2SI :
+    AsmOpcode op = ir_conv->l->type->prim == T_f32 ? X86_CVTTSS2SI :
             X86_CVTTSD2SI;
     AsmIns *mov = new_asm(op); // Move into a larger reg
     mov->l.type = OP_GPR;
@@ -617,7 +616,7 @@ static void asm_fp_to_int(Assembler *a, IrIns *ir_conv) {
 static void asm_int_to_fp(Assembler *a, IrIns *ir_conv) {
     AsmOperand src = discharge(a, ir_conv->l);
     ir_conv->vreg = a->next_sse++; // New vreg for result
-    AsmOpcode op = ir_conv->type.prim == T_f32 ? X86_CVTSI2SS : X86_CVTSI2SD;
+    AsmOpcode op = ir_conv->type->prim == T_f32 ? X86_CVTSI2SS : X86_CVTSI2SD;
     AsmIns *mov = new_asm(op); // Move into a larger reg
     mov->l.type = OP_XMM;
     mov->l.reg = ir_conv->vreg;

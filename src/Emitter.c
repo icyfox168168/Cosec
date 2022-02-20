@@ -112,11 +112,12 @@ static void write_bb(BB *bb, FILE *out) {
 
 static void write_const(int idx, Constant c, FILE *out) {
     fprintf(out, CONST_PREFIX "%d: ", idx);
-    if (c.type.prim == T_f32 && c.type.ptrs == 0) {
+    if (c.type->kind == T_PRIM && c.type->prim == T_f32) {
         fprintf(out, "dd 0x%x ; float %g", c.out32, c.f32);
-    } else if (c.type.prim == T_f64 && c.type.ptrs == 0) {
+    } else if (c.type->kind == T_PRIM && c.type->prim == T_f64) {
         fprintf(out, "dq 0x%llx ; double %g", c.out64, c.f64);
-    } else if (c.type.prim == T_i8 && c.type.ptrs == 1) {
+    } else if (c.type->kind == T_PTR && c.type->ptr->kind == T_PRIM &&
+               c.type->ptr->prim == T_i8) {
         fprintf(out, "db \"%s\", 0", c.str);
     } else {
         UNREACHABLE();

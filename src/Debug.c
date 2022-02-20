@@ -14,13 +14,19 @@ static char *PRIM_NAMES[] = {
 #undef X
 };
 
-static void print_type(Type t) {
-    if (t.prim == T_NONE) {
+static void print_type(Type *t) {
+    if (!t) {
         return;
     }
-    printf("%s", PRIM_NAMES[t.prim]); // Primitive name
-    for (int i = 0; i < t.ptrs; i++) {
-        printf("*"); // Star for every pointer indirection
+    switch (t->kind) {
+    case T_PRIM: printf("%s", PRIM_NAMES[t->prim]); break;
+    case T_PTR:
+        print_type(t->ptr);
+        if (t->ptr->kind == T_PRIM) {
+            printf(" ");
+        }
+        printf("*");
+        break;
     }
 }
 
@@ -202,18 +208,20 @@ static char *IR_OPCODE_NAMES[] = {
 
 static void print_imm(IrIns *imm) {
     printf("%+d", imm->imm);
-    if (imm->type.prim == T_i8 && imm->type.ptrs == 0 && imm->type.is_signed) {
+    if (imm->type->kind == T_PTR && imm->type->ptr->kind == T_PRIM &&
+            imm->type->ptr->prim == T_i8 && imm->type->ptr->is_signed) {
         printf(" ('%c')", (char) imm->imm);
     }
 }
 
 static void print_const(Fn *fn, IrIns *k) {
     Constant c = fn->consts[k->const_idx];
-    if (k->type.prim == T_f32 && k->type.ptrs == 0) {
+    if (k->type->kind == T_PRIM && k->type->prim == T_f32) {
         printf("%+g", c.f32);
-    } else if (k->type.prim == T_f64 && k->type.ptrs == 0) {
+    } else if (k->type->kind == T_PRIM && k->type->prim == T_f64) {
         printf("%+g", c.f64);
-    } else if (k->type.prim == T_i8 && k->type.ptrs == 1) {
+    } else if (k->type->kind == T_PTR && k->type->ptr->kind == T_PRIM &&
+               k->type->ptr->prim == T_i8) {
         printf("\"%s\"", c.str);
     } else {
         UNREACHABLE();
@@ -237,7 +245,7 @@ static void print_ins(Fn *fn, IrIns *ins) {
     case IR_FARG:  printf("%d", ins->arg_num); break;
     case IR_IMM:   print_imm(ins); break;
     case IR_CONST: print_const(fn, ins); break;
-    case IR_ALLOC: { Type t = ins->type; t.ptrs--; print_type(t); } break;
+    case IR_ALLOC: print_type(ins->type->ptr); break;
     case IR_BR:    printf("%s", ins->br ? ins->br->label : "NULL"); break;
     case IR_CONDBR:
         printf("%.4d\t", ins->cond->idx); // Condition

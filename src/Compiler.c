@@ -13,8 +13,8 @@ typedef struct loop {
 } Loop;
 
 typedef struct {
-    Fn *fn;        // Current IR function we're compiling TO
-    Loop *loop;    // Innermost loop that we're parsing (for breaks)
+    Fn *fn;     // Current IR function we're compiling TO
+    Loop *loop; // Innermost loop that we're parsing (for breaks)
 } Compiler;
 
 Fn * new_fn() {
@@ -57,8 +57,7 @@ static IrIns * new_ir(IrOpcode op) {
     ins->op = op;
     ins->next = NULL;
     ins->prev = NULL;
-    ins->type.prim = T_NONE;
-    ins->type.ptrs = 0;
+    ins->type = NULL;
     ins->vreg = -1; // Important for the assembler
     return ins;
 }
@@ -66,22 +65,20 @@ static IrIns * new_ir(IrOpcode op) {
 static void sanity_check(IrIns *ins) {
     if (ins->op == IR_STORE) {
         // Store <type> into <type>*
-        assert(ins->l->type.prim == ins->r->type.prim);
-        assert(ins->l->type.ptrs == ins->r->type.ptrs + 1);
+        assert(ins->l->type->kind == T_PTR);
+        assert(are_equal(ins->l->type->ptr, ins->r->type));
     } else if (ins->op == IR_LOAD) {
         // Load from <type>* into <type>
-        assert(ins->type.prim == ins->l->type.prim);
-        assert(ins->type.ptrs == ins->l->type.ptrs - 1);
+        assert(ins->l->type->kind == T_PTR);
+        assert(are_equal(ins->type, ins->l->type->ptr));
     } else if ((ins->op == IR_ADD || ins->op == IR_SUB) &&
                is_ptr(ins->l->type) && is_int(ins->r->type)) {
         // Add <type>* + i64
-        assert(ins->l->type.ptrs >= 1);
-        assert(ins->r->type.prim == T_i64);
-        assert(ins->r->type.ptrs == 0);
+        assert(ins->l->type->kind == T_PTR);
+        assert(are_equal(ins->r->type, t_prim(T_i64, 0)));
     } else if (IR_OPCODE_NARGS[ins->op] == 2) {
         // Otherwise, both types should be the SAME
-        assert(ins->l->type.prim == ins->r->type.prim);
-        assert(ins->l->type.ptrs == ins->r->type.ptrs);
+        assert(are_equal(ins->l->type, ins->r->type));
     }
 }
 
@@ -262,12 +259,12 @@ static void merge_branch_chains(BrChain **head, BrChain *to_append) {
 
 // Emits an IR conversion instruction that converts 'operand' from its type
 // 'src' to the target type 'target'
-static IrIns * emit_conv(Compiler *c, IrIns *operand, Type src, Type target) {
+static IrIns * emit_conv(Compiler *c, IrIns *operand, Type *src, Type *target) {
     IrOpcode op;
     if (is_int(src) && is_int(target)) {
         if (bits(target) < bits(src)) {
             op = IR_TRUNC; // Target type is smaller
-        } else if (bits(src) == 1 || !src.is_signed) {
+        } else if (bits(src) == 1 || !src->is_signed) {
             op = IR_ZEXT; // Always zext an i1, or if the value is unsigned
         } else {
             op = IR_SEXT; // Value is signed and larger than i1
@@ -293,7 +290,7 @@ static IrIns * emit_conv(Compiler *c, IrIns *operand, Type src, Type target) {
     }
     IrIns *conv = new_ir(op);
     conv->l = operand;
-    conv->type = target;
+    conv->type = t_copy(target);
     emit(c, conv);
     return conv;
 }
@@ -312,10 +309,10 @@ static IrIns * discharge(Compiler *c, IrIns *cond) {
 
     IrIns *k_true = new_ir(IR_IMM); // True and false constants
     k_true->imm = 1;
-    k_true->type = type_i1();
+    k_true->type = t_prim(T_i1, 0);
     IrIns *k_false = new_ir(IR_IMM);
     k_false->imm = 0;
-    k_false->type = type_i1();
+    k_false->type = t_prim(T_i1, 0);
 
     PhiChain *phi_head = NULL; // Construct the phi chain
     PhiChain **phi = &phi_head;
@@ -362,7 +359,7 @@ static IrIns * discharge(Compiler *c, IrIns *cond) {
 
     IrIns *phi_ins = new_ir(IR_PHI); // Phi instruction for the result
     phi_ins->phi = phi_head;
-    phi_ins->type.prim = T_i1;
+    phi_ins->type = t_prim(T_i1, 0);
     emit(c, phi_ins);
     return phi_ins;
 }
@@ -413,7 +410,7 @@ static IrIns * compile_ternary(Compiler *c, Expr *ternary) {
     IrIns *phi_ins = new_ir(IR_PHI);
     phi_ins->phi = new_phi(true_bb, true_val);
     phi_ins->phi->next = new_phi(false_bb, false_val);
-    phi_ins->type = ternary->type;
+    phi_ins->type = t_copy(ternary->type);
     emit(c, phi_ins);
     return phi_ins;
 }
@@ -426,7 +423,7 @@ static IrIns * compile_operation(Compiler *c, Expr *binary) {
     IrOpcode op;
     if (is_fp(binary->l->type)) {
         op = FP_BINOP[binary->op];
-    } else if (binary->type.is_signed) {
+    } else if (binary->type->is_signed) {
         op = SIGNED_BINOP[binary->op];
     } else {
         op = UNSIGNED_BINOP[binary->op];
@@ -434,7 +431,7 @@ static IrIns * compile_operation(Compiler *c, Expr *binary) {
     IrIns *operation = new_ir(op);
     operation->l = left;
     operation->r = right;
-    operation->type = binary->type;
+    operation->type = t_copy(binary->type);
     emit(c, operation);
     return operation;
 }
@@ -452,37 +449,34 @@ static IrIns * compile_ptr_arith(Compiler *c, Expr *binary) {
     if (binary->op == '-') { // Negate the offset if needed
         IrIns *zero = new_ir(IR_IMM);
         zero->imm = 0;
-        zero->type = to_add->type;
+        zero->type = t_copy(to_add->type);
         IrIns *sub = new_ir(IR_SUB);
         sub->l = zero;
         sub->r = to_add;
-        sub->type = to_add->type;
+        sub->type = t_copy(to_add->type);
         to_add = sub;
     }
 
     IrIns *amount = new_ir(IR_IMM);
-    Type deref = ptr->type;
-    deref.ptrs--;
-    amount->imm = bytes(deref);
-    amount->type = to_add->type;
+    amount->imm = bytes(ptr->type->ptr);
+    amount->type = t_copy(to_add->type);
     emit(c, amount);
     IrIns *mul = new_ir(IR_MUL);
     mul->l = to_add;
     mul->r = amount;
-    mul->type = to_add->type;
+    mul->type = t_copy(to_add->type);
     emit(c, mul);
     IrIns *add = new_ir(IR_ADD);
     add->l = ptr;
     add->r = mul;
-    add->type = ptr->type; // Results in a new pointer
+    add->type = t_copy(ptr->type); // Results in a new pointer
     emit(c, add);
     return add;
 }
 
 // For '<ptr> - <ptr>'
 static IrIns * compile_ptr_sub(Compiler *c, Expr *binary) {
-    Type deref_type = binary->l->type;
-    deref_type.ptrs--;
+    Type *deref_type = binary->l->type->ptr;
 
     IrIns *left = compile_expr(c, binary->l);
     left = discharge(c, left);
@@ -496,7 +490,7 @@ static IrIns * compile_ptr_sub(Compiler *c, Expr *binary) {
     IrIns *sub = new_ir(IR_SUB);
     sub->l = left;
     sub->r = right;
-    sub->type = binary->type;
+    sub->type = t_copy(binary->type);
     emit(c, sub);
     // Need to divide the sub by the size of the 'deref_type'; since all
     // type sizes are powers of 2, we can accomplish this with a shift.
@@ -506,12 +500,12 @@ static IrIns * compile_ptr_sub(Compiler *c, Expr *binary) {
     while (val) { val >>= 1; log2++; }
     IrIns *size = new_ir(IR_IMM);
     size->imm = log2;
-    size->type = sub->type;
+    size->type = t_copy(sub->type);
     emit(c, size);
     IrIns *div = new_ir(IR_ASHR);
     div->l = sub;
     div->r = size;
-    div->type = sub->type; // Results in i64
+    div->type = t_copy(sub->type); // Results in i64
     emit(c, div);
     return div;
 }
@@ -520,7 +514,7 @@ static IrIns * compile_arith_assign(Compiler *c, Expr *assign) {
     // The parser expects the output type for this assignment to be the type
     // of the lvalue (not its integer promotion type) -> this stuffs up the
     // return type of the arithmetic operation here, so fix it manually
-    assign->type = assign->l->type;
+    assign->type = t_copy(assign->l->type);
     IrIns *right = compile_operation(c, assign);
 
     // Find the lvalue expression, which gives us our target type for 'right'
@@ -551,7 +545,7 @@ static IrIns * compile_arith_assign(Compiler *c, Expr *assign) {
     load->op = IR_STORE;
     // IR_STORE destination is the same as the IR_LOAD (don't change store->l)
     load->r = right;
-    load->type = type_none(); // Clear the type set by IR_LOAD
+    load->type = NULL; // Clear the type set by the IR_LOAD
     return right; // Assignment evaluates to its right operand
 }
 
@@ -563,7 +557,7 @@ static IrIns * compile_assign(Compiler *c, Expr *assign) {
     load->op = IR_STORE; // Modify IR_LOAD into an IR_STORE
     // IR_STORE destination is the same as the IR_LOAD (don't change store->l)
     load->r = right;
-    load->type = type_none(); // Clear the type set by IR_LOAD
+    load->type = NULL; // Clear the type set by IR_LOAD
     return right; // Assignment evaluates to its right operand
 }
 
@@ -571,7 +565,7 @@ static IrIns * compile_array_access(Compiler *c, Expr *access) {
     IrIns *ptr = compile_ptr_arith(c, access);
     IrIns *load = new_ir(IR_LOAD); // Dereference the pointer
     load->l = ptr;
-    load->type = access->type;
+    load->type = t_copy(access->type);
     emit(c, load);
     return load;
 }
@@ -640,12 +634,12 @@ static IrIns * compile_binary(Compiler *c, Expr *binary) {
 static IrIns * compile_neg(Compiler *c, Expr *unary) {
     Expr *zero = new_expr(EXPR_KINT);
     zero->kint = 0;
-    zero->type = unary->type;
+    zero->type = t_copy(unary->type);
     Expr *sub = new_expr(EXPR_BINARY);
     sub->op = '-';
     sub->l = zero;
     sub->r = unary->l;
-    sub->type = unary->type;
+    sub->type = t_copy(unary->type);
     return compile_operation(c, sub);
 }
 
@@ -657,12 +651,12 @@ static IrIns * compile_plus(Compiler *c, Expr *unary) {
 static IrIns * compile_bit_not(Compiler *c, Expr *unary) {
     Expr *neg1 = new_expr(EXPR_KINT);
     neg1->kint = -1;
-    neg1->type = unary->type;
+    neg1->type = t_copy(unary->type);
     Expr *xor = new_expr(EXPR_BINARY);
     xor->op = '^';
     xor->l = unary->l;
     xor->r = neg1;
-    xor->type = unary->type;
+    xor->type = t_copy(unary->type);
     return compile_operation(c, xor);
 }
 
@@ -688,7 +682,7 @@ static IrIns * compile_deref(Compiler *c, Expr *unary) {
     IrIns *result = compile_expr(c, unary->l);
     IrIns *load = new_ir(IR_LOAD);
     load->l = result;
-    load->type = unary->type;
+    load->type = t_copy(unary->type);
     emit(c, load);
     return load;
 }
@@ -702,12 +696,12 @@ static IrIns * compile_deref(Compiler *c, Expr *unary) {
 static IrIns * compile_inc_dec(Compiler *c, Expr *unary, int is_prefix) {
     Expr *one = new_expr(EXPR_KINT);
     one->kint = 1;
-    one->type = unary->type; // Use the same type as what we're adding to
+    one->type = t_copy(unary->type); // Use the same type as what we're adding
     Expr *add = new_expr(EXPR_BINARY);
     add->op = unary->op == TK_INC ? '+' : '-';
     add->l = unary->l;
     add->r = one;
-    add->type = unary->type;
+    add->type = t_copy(unary->type);
     IrIns *right = compile_operation(c, add);
 
     // Find the emitted IR instruction corresponding to the lvalue.
@@ -723,7 +717,7 @@ static IrIns * compile_inc_dec(Compiler *c, Expr *unary, int is_prefix) {
     load->op = IR_STORE; // Modify IR_LOAD into an IR_STORE
     // IR_STORE destination is the same as the IR_LOAD (don't change store->l)
     load->r = right;
-    load->type = type_none(); // Clear the type set by IR_LOAD
+    load->type = NULL; // Clear the type set by IR_LOAD
     if (is_prefix) {
         return right;
     } else {
@@ -761,7 +755,7 @@ static IrIns * compile_local(Compiler *c, Expr *expr) {
     assert(expr->local->alloc); // Check the local has been allocated
     IrIns *load = new_ir(IR_LOAD);
     load->l = expr->local->alloc;
-    load->type = expr->type;
+    load->type = t_copy(expr->type);
     emit(c, load);
     return load;
 }
@@ -769,14 +763,15 @@ static IrIns * compile_local(Compiler *c, Expr *expr) {
 static IrIns * compile_kint(Compiler *c, Expr *expr) {
     IrIns *k = new_ir(IR_IMM);
     k->imm = expr->kint;
-    k->type = expr->type;
+    k->type = t_copy(expr->type);
     emit(c, k);
     return k;
 }
 
 static IrIns * compile_kfloat(Compiler *c, Expr *expr) {
-    Constant constant = {.type = expr->type};
-    if (expr->type.prim == T_f32) {
+    Constant constant;
+    constant.type = t_copy(expr->type);
+    if (expr->type->prim == T_f32) {
         // Changing from float -> double -> float does not lose ANY precision
         constant.f32 = (float) expr->kfloat;
     } else {
@@ -784,7 +779,7 @@ static IrIns * compile_kfloat(Compiler *c, Expr *expr) {
     }
     IrIns *k = new_ir(IR_CONST);
     k->const_idx = add_const(c, constant);
-    k->type = expr->type;
+    k->type = t_copy(expr->type);
     emit(c, k);
     return k;
 }
@@ -792,16 +787,16 @@ static IrIns * compile_kfloat(Compiler *c, Expr *expr) {
 static IrIns * compile_kchar(Compiler *c, Expr *expr) {
     IrIns *k = new_ir(IR_IMM);
     k->imm = (int) expr->kch;
-    k->type = expr->type;
+    k->type = t_copy(expr->type);
     emit(c, k);
     return k;
 }
 
 static IrIns * compile_kstr(Compiler *c, Expr *expr) {
-    Constant constant = {.type = expr->type, .str = expr->kstr};
+    Constant constant = {.type = t_copy(expr->type), .str = expr->kstr};
     IrIns *k = new_ir(IR_CONST);
     k->const_idx = add_const(c, constant);
-    k->type = expr->type;
+    k->type = t_copy(expr->type);
     emit(c, k);
     return k;
 }
@@ -829,8 +824,8 @@ static void compile_block(Compiler *c, Stmt *stmt);
 
 static void compile_decl(Compiler *c, Stmt *decl) {
     IrIns *alloc = new_ir(IR_ALLOC); // Create some stack space
-    alloc->type = decl->local->type;
-    alloc->type.ptrs += 1; // The result of IR_ALLOC is a POINTER to the value
+    // The result of IR_ALLOC is a POINTER to the value
+    alloc->type = t_ptr(t_copy(decl->local->type));
     emit(c, alloc);
     decl->local->alloc = alloc;
 }
@@ -1017,7 +1012,7 @@ static void compile_fn_args(Compiler *c, FnArg *args) {
     int gpr_arg_num = 0, fp_arg_num = 0;
     for (FnArg *arg = args; arg; arg = arg->next) { // Emit IR_FARGs
         IrIns *farg = new_ir(IR_FARG);
-        farg->type = arg->local->type;
+        farg->type = t_copy(arg->local->type);
         if (is_fp(farg->type)) {
             // Count floating point arguments SEPARATELY since they go into
             // SSE registers (separate from the general purpose registers)
@@ -1030,8 +1025,8 @@ static void compile_fn_args(Compiler *c, FnArg *args) {
     }
     for (FnArg *arg = args; arg; arg = arg->next) { // Emit IR_ALLOCs
         IrIns *alloc = new_ir(IR_ALLOC);
-        alloc->type = arg->local->type;
-        alloc->type.ptrs += 1; // IR_ALLOC returns a POINTER
+        // IR_ALLOC returns a POINTER
+        alloc->type = t_ptr(t_copy(arg->local->type));
         emit(c, alloc);
         arg->local->alloc = alloc;
         IrIns *store = new_ir(IR_STORE);

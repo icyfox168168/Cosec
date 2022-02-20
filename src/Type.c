@@ -10,86 +10,116 @@ static char *PRIM_NAMES[] = {
 #undef X
 };
 
-Type type_none() {
-    Type t;
-    t.prim = T_NONE;
-    t.ptrs = 0;
-    t.is_signed = 0;
+Type * t_prim(Prim prim, int is_signed) {
+    Type *t = malloc(sizeof(Type));
+    t->kind = T_PRIM;
+    t->prim = prim;
+    t->is_signed = is_signed;
     return t;
 }
 
-Type type_i1() {
-    Type t;
-    t.prim = T_i1;
-    t.ptrs = 0;
-    t.is_signed = 0;
+Type * t_ptr(Type *deref) {
+    Type *t = malloc(sizeof(Type));
+    t->kind = T_PTR;
+    t->ptr = deref;
+    t->is_signed = 0; // Pointers are never signed
     return t;
 }
 
-int is_ptr(Type t) {
-    return t.ptrs > 0;
+Type * t_copy(Type *t) {
+    Type *copy = malloc(sizeof(Type));
+    switch (t->kind) {
+    case T_PRIM:
+        copy->kind = T_PRIM;
+        copy->prim = t->prim;
+        copy->is_signed = t->is_signed;
+        break;
+    case T_PTR:
+        copy->kind = T_PTR;
+        copy->ptr = t_copy(t->ptr);
+        break;
+    }
+    return copy;
 }
 
-int is_void_ptr(Type t) {
-    return t.prim == T_void && t.ptrs == 1;
+int is_ptr(Type *t) {
+    return t->kind == T_PTR;
 }
 
-int is_arith(Type t) {
-    return t.ptrs == 0 && t.prim >= T_i1 && t.prim <= T_f64;
+int is_void_ptr(Type *t) {
+    return t->kind == T_PRIM && t->prim == T_void;
 }
 
-int is_int(Type t) {
-    return t.ptrs == 0 && t.prim >= T_i1 && t.prim <= T_i64;
+int is_arith(Type *t) {
+    return t->kind == T_PRIM && t->prim >= T_i1 && t->prim <= T_f64;
 }
 
-int is_fp(Type t) {
-    return t.ptrs == 0 && t.prim >= T_f32 && t.prim <= T_f64;
+int is_int(Type *t) {
+    return t->kind == T_PRIM && t->prim >= T_i1 && t->prim <= T_i64;
 }
 
-int are_equal(Type l, Type r) {
-    if (l.ptrs == r.ptrs && l.ptrs == 0) {
-        return l.prim == r.prim && l.is_signed == r.is_signed;
-    } else if (l.ptrs == r.ptrs && l.ptrs > 0) {
-        return l.prim == r.prim; // Don't care about signed-ness for pointers
-    } else {
-        return 1;
+int is_fp(Type *t) {
+    return t->kind == T_PRIM && (t->prim == T_f32 || t->prim == T_f64);
+}
+
+int are_equal(Type *l, Type *r) {
+    if (l->kind != r->kind) {
+        return 0;
+    }
+    switch (l->kind) {
+        case T_PRIM: return l->prim == r->prim && l->is_signed == r->is_signed;
+        case T_PTR:  return are_equal(l->ptr, r->ptr);
     }
 }
 
-int bits(Type t) {
-    if (t.ptrs > 0) {
-        return 64; // Pointers are always 8 bytes
-    }
-    switch (t.prim) {
-        case T_NONE: return -1;
-        case T_void: return 0;
-        case T_i1:   return 1;
-        case T_i8:   return 8;
-        case T_i16:  return 16;
-        case T_i32:  return 32;
-        case T_i64:  return 64;
-        case T_f32:  return 32;
-        case T_f64:  return 64;
+int bits(Type *t) {
+    switch (t->kind) {
+    case T_PTR: return 64; // Always 8 bytes
+    case T_PRIM:
+        switch (t->prim) {
+            case T_void: return 0;
+            case T_i1:   return 1;
+            case T_i8:   return 8;
+            case T_i16:  return 16;
+            case T_i32:  return 32;
+            case T_i64:  return 64;
+            case T_f32:  return 32;
+            case T_f64:  return 64;
+        }
     }
 }
 
-int bytes(Type t) {
+int bytes(Type *t) {
     // Can't just divide 'bits(t)' by 8, since this wouldn't work for i1
-    return (t.prim == T_i1 && t.ptrs == 0) ? 1 : bits(t) / 8;
+    return (t->kind == T_PRIM && t->prim == T_i1) ? 1 : bits(t) / 8;
 }
 
-char * type_str(Type t) {
-    char *prim = PRIM_NAMES[t.prim];
-    size_t len = strlen(prim) + t.ptrs + 1;
-    char *str = malloc(sizeof(char) * len + 1);
-    strcpy(str, prim);
-    size_t pos = strlen(prim);
-    if (t.ptrs >= 1) {
-        str[pos++] = ' ';
+#define MAX_TYPE_STR_LEN 100
+
+static void write_type_to_str(Type *t, char *str, size_t *len) {
+    switch (t->kind) {
+    case T_PTR:
+        write_type_to_str(t->ptr, str, len);
+        if (t->ptr->kind == T_PRIM) {
+            str[(*len)++] = ' '; // Space after primitive
+        }
+        str[(*len)++] = '*';
+        break;
+    case T_PRIM:
+        if (!t->is_signed) {
+            strcpy(&str[*len], "unsigned ");
+            *len += strlen("unsigned ");
+        }
+        strcpy(&str[*len], PRIM_NAMES[t->prim]);
+        *len += strlen(PRIM_NAMES[t->prim]);
+        break;
     }
-    for (int i = 0; i < t.ptrs; i++) {
-        str[pos++] = '*';
-    }
-    str[pos] = '\0';
+}
+
+char * type_to_str(Type *t) {
+    size_t len = 0;
+    char *str = malloc(sizeof(char) * MAX_TYPE_STR_LEN);
+    write_type_to_str(t, str, &len);
+    str[len] = '\0';
     return str;
 }

@@ -13,18 +13,18 @@
 
 typedef struct local {
     struct local *next;
-    Type type;
+    Type *type;
     char *name;
     struct ir_ins *alloc; // The IR_ALLOC instruction for this local
 } Local;
 
 typedef struct {
-    Type type;
+    Type *type;
     TkInfo tk;
 } AbstractDeclarator;
 
 typedef struct {
-    Type type;
+    Type *type;
     TkInfo name;
     TkInfo tk;
 } DirectDeclarator;
@@ -44,7 +44,7 @@ typedef enum {
 
 typedef struct expr {
     ExprType kind;
-    Type type; // Type for the result of the expression
+    Type *type; // Type for the result of the expression
     union {
         int kint;      // EXPR_KINT
         double kfloat; // EXPR_KFLOAT
@@ -99,7 +99,7 @@ typedef struct fn_arg {
 } FnArg;
 
 typedef struct {
-    Type return_type;
+    Type *return_type;
     Local *local;
     FnArg *args; // Linked list of function arguments
 } FnDecl;

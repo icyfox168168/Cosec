@@ -131,7 +131,7 @@ typedef struct ir_ins {
     struct bb *bb;
     int idx; // For debug printing
     IrOpcode op;
-    Type type; // Type of the RESULT of the instruction
+    Type *type; // Type of the RESULT of the instruction
     union {
         PhiChain *phi; // IR_PHI
         int arg_num;   // IR_FARG
@@ -179,7 +179,7 @@ typedef struct bb {
 BB * new_bb(); // Used by the assembler
 
 typedef struct {
-    Type type;
+    Type *type;
     union {
         float f32;
         double f64;
