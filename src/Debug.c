@@ -38,7 +38,7 @@ static void print_expr(Expr *expr) {
     switch (expr->kind) {
     case EXPR_KINT:
         print_type(expr->type);
-        printf(" %+lld", expr->kint);
+        printf(" +%llu", expr->kint);
         break;
     case EXPR_KFLOAT:
         print_type(expr->type);
@@ -204,7 +204,7 @@ static char *IR_OPCODE_NAMES[] = {
 };
 
 static void print_imm(IrIns *imm) {
-    printf("%+d", imm->imm);
+    printf("+%llu", imm->imm);
     if (imm->type->kind == T_PTR && imm->type->ptr->kind == T_PRIM &&
             imm->type->ptr->prim == T_i8 && imm->type->ptr->is_signed) {
         printf(" ('%c')", (char) imm->imm);

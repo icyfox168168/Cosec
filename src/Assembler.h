@@ -214,7 +214,7 @@ typedef enum {
 typedef struct {
     AsmOperandType type;
     union {
-        int imm; // OP_IMM
+        uint64_t imm; // OP_IMM
         struct { RegSize size; int reg; }; // OP_GPR or OP_XMM
         struct { // OP_MEM
             int access_size;

@@ -1,7 +1,6 @@
 
 #include <string.h>
 #include <assert.h>
-#include <limits.h>
 
 #include "Parser.h"
 #include "Error.h"
@@ -164,28 +163,20 @@ static int is_null_ptr(Expr *e) {
 }
 
 static void ensure_lvalue(Expr *lvalue) {
-    if (lvalue->kind == EXPR_LOCAL) {
-        return; // Assigning to a local
-    }
-    if (lvalue->kind == EXPR_UNARY && lvalue->op == '*') {
-        return; // Assigning to a pointer dereference
-    }
-    if (lvalue->kind == EXPR_BINARY && lvalue->op == '[') {
-        return; // Assigning to an array index
+    if (lvalue->kind == EXPR_LOCAL ||
+            (lvalue->kind == EXPR_UNARY && lvalue->op == '*') ||
+            (lvalue->kind == EXPR_BINARY && lvalue->op == '[')) {
+        return; // Assigning to a local, pointer dereference, or array index
     }
     trigger_error_at(lvalue->tk, "expression is not assignable");
 }
 
 static void ensure_can_take_addr(Expr *operand) {
     // See 6.5.3.2 in C99 standard for what's allowed
-    if (operand->kind == EXPR_LOCAL) {
-        return; // Address of a local
-    }
-    if (operand->kind == EXPR_UNARY && operand->op == '*') {
-        return; // Address of dereference
-    }
-    if (operand->kind == EXPR_BINARY && operand->op == '[') {
-        return; // Address of array access
+    if (operand->kind == EXPR_LOCAL ||
+            (operand->kind == EXPR_UNARY && operand->op == '*') ||
+            (operand->kind == EXPR_BINARY && operand->op == '[')) {
+        return; // Address of a local, dereference, or array access
     }
     trigger_error_at(operand->tk, "cannot take address of operand");
 }

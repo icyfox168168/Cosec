@@ -77,7 +77,7 @@ static void write_const_op(AsmOperand op, FILE *out) {
 
 static void write_operand(AsmOperand op, FILE *out) {
     switch (op.type) {
-        case OP_IMM:   fprintf(out, "%d", op.imm); break;
+        case OP_IMM:   fprintf(out, "%llu", op.imm); break;
         case OP_GPR:   write_gpr(op.reg, op.size, out); break;
         case OP_XMM:   write_sse_reg(op.reg, out); break;
         case OP_MEM:   write_mem_op(op, out); break;
@@ -170,11 +170,15 @@ void emit_nasm(Module *m, FILE *out) {
     }
 
     // Write string constants to the data section
-    fprintf(out, "\nsection .data\n");
+    int written_section_header = 0;
     for (Fn *fn = m->fns; fn; fn = fn->next) {
         for (int i = 0; i < fn->num_consts; i++) {
             Constant c = fn->consts[i];
             if (!is_fp(c.type)) {
+                if (!written_section_header) {
+                    fprintf(out, "\nsection .data\n");
+                    written_section_header = 1;
+                }
                 write_const(i, c, out);
             }
         }

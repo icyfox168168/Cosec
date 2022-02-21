@@ -135,7 +135,7 @@ typedef struct ir_ins {
     union {
         PhiChain *phi; // IR_PHI
         int arg_num;   // IR_FARG
-        int imm;       // IR_IMM
+        uint64_t imm;  // IR_IMM
         int const_idx; // IR_CONST; index into function's 'consts' array
         struct { struct ir_ins *l, *r; }; // Unary and binary operations
         struct bb *br;                    // IR_BR
