@@ -47,7 +47,7 @@ int is_ptr(Type *t) {
 }
 
 int is_void_ptr(Type *t) {
-    return t->kind == T_PRIM && t->prim == T_void;
+    return t->kind == T_PTR && t->ptr->kind == T_PRIM && t->ptr->prim == T_void;
 }
 
 int is_arith(Type *t) {

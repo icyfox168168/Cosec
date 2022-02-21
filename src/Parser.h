@@ -46,7 +46,7 @@ typedef struct expr {
     ExprType kind;
     Type *type; // Type for the result of the expression
     union {
-        int kint;      // EXPR_KINT
+        uint64_t kint; // EXPR_KINT
         double kfloat; // EXPR_KFLOAT
         char kch;      // EXPR_KCHAR
         char *kstr;    // EXPR_KSTR

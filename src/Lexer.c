@@ -135,9 +135,13 @@ static void lex_float(Lexer *l) {
 static void lex_number(Lexer *l) {
     char *end;
     errno = 0;
-    int num = (int) strtol(l->c, &end, 0); // Try reading an integer
+    uint64_t num = strtoull(l->c, &end, 0); // Try reading an integer
+    if (errno != 0) {
+        TkInfo info = info_at(l, (int) (end - l->c));
+        trigger_error_at(info, "number out of range");
+    }
     l->c = end;
-    if (errno != 0 || end == l->info.start || isalnum(*l->c)) {
+    if (end == l->info.start || isalnum(*l->c)) {
         TkInfo info = info_at(l, 1);
         trigger_error_at(info, "invalid digit '%c' in number", *l->c);
     }

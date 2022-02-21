@@ -87,7 +87,7 @@ typedef struct {
 
     Tk tk; // Most recently lexed token
     char *ident; int len; // For TK_IDENT
-    int kint;             // For TK_KINT
+    uint64_t kint;        // For TK_KINT
     double kfloat;        // For TK_KFLOAT
     char kch;             // For TK_KCHAR
     char *kstr;           // For TK_KSTR

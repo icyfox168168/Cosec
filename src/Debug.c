@@ -38,7 +38,7 @@ static void print_expr(Expr *expr) {
     switch (expr->kind) {
     case EXPR_KINT:
         print_type(expr->type);
-        printf(" %+d", expr->kint);
+        printf(" %+lld", expr->kint);
         break;
     case EXPR_KFLOAT:
         print_type(expr->type);

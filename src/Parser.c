@@ -1,6 +1,7 @@
 
 #include <string.h>
 #include <assert.h>
+#include <limits.h>
 
 #include "Parser.h"
 #include "Error.h"
@@ -158,6 +159,10 @@ static Tk ASSIGNMENT_TO_ARITH_OP[NUM_TKS] = {
     [TK_RSHIFT_ASSIGN] = TK_RSHIFT,
 };
 
+static int is_null_ptr(Expr *e) {
+    return e->kind == EXPR_KINT && e->kint == 0;
+}
+
 static void ensure_lvalue(Expr *lvalue) {
     if (lvalue->kind == EXPR_LOCAL) {
         return; // Assigning to a local
@@ -198,12 +203,23 @@ static void invalid_arguments(Expr *l, Expr *r) {
                      type_to_str(l->type), type_to_str(r->type));
 }
 
-static void check_conv(Expr *src, Type *t) {
+static void check_conv(Expr *src, Type *t, int explicit_cast) {
     Type *s = src->type;
     if (!((is_arith(t) && is_arith(s)) || (is_ptr(t) && is_ptr(s)) ||
           (is_ptr(t) && is_int(s)) || (is_int(t) && is_ptr(s)))) {
         trigger_error_at(src->tk, "invalid conversion from '%s' to '%s'",
                          type_to_str(s), type_to_str(t));
+    }
+    if (!explicit_cast && is_int(t) && is_int(s) && bits(t) < bits(s)) {
+        trigger_warning_at(src->tk, "implicit conversion from '%s' to '%s' "
+                                    "loses precision",
+                           type_to_str(s), type_to_str(t));
+    }
+    if (!explicit_cast && is_ptr(t) && is_ptr(s) && !are_equal(t, s) &&
+            !(is_void_ptr(s) || is_void_ptr(t) || is_null_ptr(src))) {
+        trigger_warning_at(src->tk, "implicit conversion between incompatible "
+                                    "pointer types '%s' and '%s'",
+                           type_to_str(s), type_to_str(t));
     }
 }
 
@@ -213,20 +229,20 @@ static Expr * conv_const(Expr *expr, Type *target) {
         expr->kfloat = (double) expr->kint;
     } else if (is_int(target) && expr->kind == EXPR_KFLOAT) {
         expr->kind = EXPR_KINT;
-        expr->kint = (int) expr->kfloat;
+        expr->kint = (uint64_t) expr->kfloat;
     }
     expr->type = target;
     return expr;
 }
 
-static Expr * conv_to(Expr *src, Type *target) {
+static Expr * conv_to(Expr *src, Type *target, int explicit_cast) {
     if (are_equal(src->type, target)) {
         return src; // No conversion necessary
     }
+    check_conv(src, target, explicit_cast);
     if (src->kind == EXPR_KINT || src->kind == EXPR_KFLOAT) {
         return conv_const(src, target); // Don't emit CONV on constants
     }
-    check_conv(src, target);
     Expr *conv = new_expr(EXPR_CONV);
     conv->l = src;
     conv->type = target;
@@ -248,10 +264,6 @@ static int is_rel_op(Tk o) {
 
 static int is_eq_op(Tk o) {
     return o == TK_EQ || o == TK_NEQ;
-}
-
-static int is_null_ptr(Expr *e) {
-    return e->kind == EXPR_KINT && e->kint == 0;
 }
 
 // Returns the type that a binary integer operation's operands should be
@@ -343,17 +355,17 @@ static Expr * parse_ternary(Parser *p, Expr *cond, Expr *l) {
     Type *result;
     if (is_arith(l->type) && is_arith(r->type)) {
         result = promote_binary_arith(l->type, r->type);
-        l = conv_to(l, result);
-        r = conv_to(r, result);
+        l = conv_to(l, result, 0);
+        r = conv_to(r, result, 0);
     } else if (is_ptr(l->type) && is_ptr(r->type) &&
                are_equal(l->type, r->type)) {
         result = l->type; // Doesn't matter which one we pick
     } else if (is_ptr(l->type) && (is_void_ptr(r->type) || is_null_ptr(r))) {
         result = l->type; // Pick the non-void pointer
-        r = conv_to(r, result); // Convert to the non-void pointer
+        r = conv_to(r, result, 0); // Convert to the non-void pointer
     } else if ((is_void_ptr(l->type) || is_null_ptr(l)) && is_ptr(r->type)) {
         result = r->type; // Pick the non-void pointer
-        l = conv_to(l, result); // Convert to the non-void pointer
+        l = conv_to(l, result, 0); // Convert to the non-void pointer
     } else {
         invalid_arguments(l, r);
     }
@@ -380,14 +392,14 @@ static Expr * parse_arith(Tk op, Expr *l, Expr *r) {
     Type *result;
     if (is_arith(l->type) && is_arith(r->type)) {
         result = promote_binary_arith(l->type, r->type);
-        l = conv_to(l, result);
-        r = conv_to(r, result);
+        l = conv_to(l, result, 0);
+        r = conv_to(r, result, 0);
     } else if ((op == '+' || op == '-') && is_ptr(l->type) && is_int(r->type)) {
         result = l->type; // Result is a pointer
-        r = conv_to(r, t_prim(T_i64, 0));
+        r = conv_to(r, t_prim(T_i64, 0), 0);
     } else if (op == '+' && is_int(l->type) && is_ptr(r->type)) {
         result = r->type; // Result is a pointer
-        l = conv_to(l, t_prim(T_i64, 0));
+        l = conv_to(l, t_prim(T_i64, 0), 0);
     } else if (op == '-' && is_ptr(l->type) && is_ptr(r->type) &&
                are_equal(l->type, r->type)) {
         // Result is an INTEGER
@@ -403,14 +415,14 @@ static Expr * parse_bit(Tk op, Expr *l, Expr *r) {
         invalid_arguments(l, r);
     }
     Type *result = promote_binary_int(l->type, r->type);
-    l = conv_to(l, result);
-    r = conv_to(r, result);
+    l = conv_to(l, result, 0);
+    r = conv_to(r, result, 0);
     return parse_operation(op, l, r, result);
 }
 
 static Expr * parse_assign(Expr *l, Expr *r) {
     ensure_lvalue(l);
-    r = conv_to(r, l->type); // Lower 'r' to 'l->type'
+    r = conv_to(r, l->type, 0); // Lower 'r' to 'l->type'
     Expr *assign = new_expr(EXPR_BINARY);
     assign->op = '=';
     assign->l = l;
@@ -437,19 +449,19 @@ static Expr * parse_eq(Tk op, Expr *l, Expr *r) {
     Type *result;
     if (is_arith(l->type) && is_arith(r->type)) {
         Type *promotion = promote_binary_arith(l->type, r->type);
-        l = conv_to(l, promotion);
-        r = conv_to(r, promotion);
+        l = conv_to(l, promotion, 0);
+        r = conv_to(r, promotion, 0);
         result = t_prim(T_i1, promotion->is_signed); // Preserve signed-ness
     } else if (is_ptr(l->type) && is_ptr(r->type) &&
                are_equal(l->type, r->type)) {
         result = t_prim(T_i1, 0); // Pointer comparisons always unsigned
     } else if (is_ptr(l->type) && (is_void_ptr(r->type) || is_null_ptr(r))) {
         Type *promotion = l->type; // Pick the non-void/non-null pointer
-        r = conv_to(r, promotion); // Convert to the non-void pointer
+        r = conv_to(r, promotion, 0); // Convert to the non-void pointer
         result = t_prim(T_i1, 0); // Pointer comparisons always unsigned
     } else if ((is_void_ptr(l->type) || is_null_ptr(l)) && is_ptr(r->type)) {
         Type *promotion = r->type; // Pick the non-void/non-null pointer
-        l = conv_to(l, promotion); // Convert to the non-void pointer
+        l = conv_to(l, promotion, 0); // Convert to the non-void pointer
         result = t_prim(T_i1, 0); // Pointer comparisons always unsigned
     } else {
         invalid_arguments(l, r);
@@ -461,8 +473,8 @@ static Expr * parse_rel(Tk op, Expr *l, Expr *r) {
     Type *result;
     if (is_arith(l->type) && is_arith(r->type)) {
         Type *promotion = promote_binary_arith(l->type, r->type);
-        l = conv_to(l, promotion);
-        r = conv_to(r, promotion);
+        l = conv_to(l, promotion, 0);
+        r = conv_to(r, promotion, 0);
         result = t_prim(T_i1, promotion->is_signed); // Preserve signed-ness
     } else if (is_ptr(l->type) && is_ptr(r->type) &&
                are_equal(l->type, r->type)) {
@@ -525,7 +537,13 @@ static Expr * parse_kint(Parser *p) {
     expect_tk(&p->l, TK_KINT);
     Expr *k = new_expr(EXPR_KINT);
     k->kint = p->l.kint;
-    k->type = t_prim(T_i32, 1);
+    if (k->kint > INT64_MAX) {
+        k->type = t_prim(T_i64, 0);
+    } else if (k->kint > INT32_MAX) {
+        k->type = t_prim(T_i64, 1);
+    } else {
+        k->type = t_prim(T_i32, 1);
+    }
     k->tk = p->l.info;
     next_tk(&p->l);
     return k;
@@ -614,7 +632,7 @@ static Expr * parse_array_access(Parser *p, Expr *array) {
         trigger_error_at(index->tk, "invalid argument '%s' to operation",
                          type_to_str(index->type));
     }
-    index = conv_to(index, t_prim(T_i64, 0)); // Have to add an i64
+    index = conv_to(index, t_prim(T_i64, 0), 0); // Have to add an i64
     Expr *array_access = new_expr(EXPR_BINARY);
     array_access->op = '[';
     array_access->l = array;
@@ -688,7 +706,7 @@ static Expr * parse_unary_arith(Tk op, Expr *operand) {
                          type_to_str(operand->type));
     }
     Type *result = promote_unary_arith(operand->type);
-    operand = conv_to(operand, result);
+    operand = conv_to(operand, result, 0);
     Expr *unary = new_expr(EXPR_UNARY);
     unary->op = op;
     unary->l = operand;
@@ -706,7 +724,7 @@ static Expr * parse_cast(Parser *p, TkInfo start_tk) {
     expect_tk(&p->l, ')');
     next_tk(&p->l);
     Expr *operand = parse_subexpr(p, UNARY_PREC['(']);
-    Expr *conv = conv_to(operand, declarator.type);
+    Expr *conv = conv_to(operand, declarator.type, 1);
     conv->tk = merge_tks(start_tk, operand->tk);
     return conv;
 }
@@ -1123,7 +1141,7 @@ static Stmt * parse_ret(Parser *p) {
     Stmt *ret = new_stmt(STMT_RET);
     if (p->l.tk != ';') {
         Expr *value = parse_expr(p);
-        value = conv_to(value, p->fn->decl->return_type);
+        value = conv_to(value, p->fn->decl->return_type, 0);
         ret->expr = value;
     }
     expect_tk(&p->l, ';');
