@@ -20,14 +20,9 @@ typedef struct local {
 
 typedef struct {
     Type *type;
+    TkInfo name; // Zeroed in an abstract declarator
     TkInfo tk;
-} AbstractDeclarator;
-
-typedef struct {
-    Type *type;
-    TkInfo name;
-    TkInfo tk;
-} DirectDeclarator;
+} Declarator;
 
 typedef enum {
     EXPR_KINT,    // Constant integer

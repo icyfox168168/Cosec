@@ -374,11 +374,12 @@ static void asm_farg(Assembler *a, IrIns *ir_farg) {
 static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
     // Align the stack to the size of the type we're storing
     // IR_ALLOC returns a POINTER to what we want stack space for
-    int alignment = bytes(ir_alloc->type->ptr);
-    if (a->stack_size % alignment != 0) { // Stack not already aligned
-        a->stack_size += alignment - (a->stack_size % alignment);
+    Type *to_alloc = ir_alloc->type->ptr;
+    int align = alignment(to_alloc);
+    if (a->stack_size % align != 0) { // Stack not already aligned
+        a->stack_size += align - (a->stack_size % align);
     }
-    a->stack_size += bytes(ir_alloc->type->ptr); // Create space on the stack
+    a->stack_size += bytes(to_alloc); // Create space on the stack
     ir_alloc->stack_slot = a->stack_size;
 }
 

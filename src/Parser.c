@@ -183,7 +183,8 @@ static void ensure_can_take_addr(Expr *operand) {
 
 static void ensure_can_deref(Expr *operand) {
     if (operand->type->kind != T_PTR) {
-        trigger_error_at(operand->tk, "cannot dereference operand");
+        trigger_error_at(operand->tk, "cannot dereference operand of type '%s'",
+                         type_to_str(operand->type));
     }
 }
 
@@ -619,7 +620,8 @@ static Expr * parse_array_access(Parser *p, Expr *array) {
     index->tk = merge_tks(start, p->l.info);
     next_tk(&p->l);
 
-    if (!(is_ptr(array->type) && is_int(index->type))) {
+    ensure_can_deref(array);
+    if (!is_int(index->type)) {
         trigger_error_at(index->tk, "invalid argument '%s' to operation",
                          type_to_str(index->type));
     }
@@ -707,11 +709,11 @@ static Expr * parse_unary_arith(Tk op, Expr *operand) {
 
 static int has_decl(Parser *p); // Forward declarations
 static Type * parse_type_specs(Parser *p);
-static AbstractDeclarator parse_abstract_declarator(Parser *p, Type *base_type);
+static Declarator parse_declarator(Parser *p, Type *base, int is_abstract);
 
 static Expr * parse_cast(Parser *p, TkInfo start_tk) {
     Type *base_type = parse_type_specs(p);
-    AbstractDeclarator declarator = parse_abstract_declarator(p, base_type);
+    Declarator declarator = parse_declarator(p, base_type, 1);
     expect_tk(&p->l, ')');
     next_tk(&p->l);
     Expr *operand = parse_subexpr(p, UNARY_PREC['(']);
@@ -772,6 +774,17 @@ static Expr * parse_subexpr(Parser *p, Prec min_prec) {
 
 static Expr * parse_expr(Parser *p) {
     return parse_subexpr(p, PREC_NONE);
+}
+
+static uint64_t parse_const_expr(Parser *p) {
+    // TODO: constant expressions only consist of an integer so far
+    if (p->l.tk == TK_KINT) {
+        uint64_t result = p->l.kint;
+        next_tk(&p->l);
+        return result;
+    } else {
+        trigger_error_at(p->l.info, "expected constant expression");
+    }
 }
 
 
@@ -901,43 +914,64 @@ static Type * parse_type_specs(Parser *p) {
     return t_prim(TYPE_COMBINATION_TO_PRIM[combination], is_signed);
 }
 
-static DirectDeclarator parse_direct_declarator(Parser *p, Type *base_type) {
-    TkInfo start = p->l.info;
-    Type *type = base_type;
-    while (p->l.tk == '*') { // Pointers
-        type = t_ptr(type);
+// Forward declaration
+static void parse_declarator_internal(Parser *p, Declarator *decl);
+
+static void parse_direct_declarator(Parser *p, Declarator *decl) {
+    switch (p->l.tk) {
+    case TK_IDENT:
+        decl->name = p->l.info;
+        decl->tk = merge_tks(decl->tk, p->l.info);
+        next_tk(&p->l);
+        break;
+    case '(':
+        next_tk(&p->l);
+        parse_declarator_internal(p, decl);
+        expect_tk(&p->l, ')');
+        decl->tk = merge_tks(decl->tk, p->l.info);
+        next_tk(&p->l);
+        break;
+    default: break;
+    }
+    while (p->l.tk == '[') { // Arrays
+        next_tk(&p->l);
+        uint64_t size = parse_const_expr(p);
+        expect_tk(&p->l, ']');
+        decl->tk = merge_tks(decl->tk, p->l.info);
+        next_tk(&p->l);
+        decl->type = t_arr(decl->type, size);
+    }
+}
+
+static void parse_declarator_internal(Parser *p, Declarator *decl) {
+    int num_ptrs = 0;
+    while (p->l.tk == '*') {
+        num_ptrs++;
+        decl->tk = merge_tks(decl->tk, p->l.info);
         next_tk(&p->l);
     }
+    parse_direct_declarator(p, decl);
+    for (int i = 0; i < num_ptrs; i++) { // Pointers come at the end
+        decl->type = t_ptr(decl->type);
+    }
+}
 
-    expect_tk(&p->l, TK_IDENT); // Name
-    TkInfo name = p->l.info;
-    next_tk(&p->l);
-
-    DirectDeclarator d;
-    d.name = name;
-    d.type = type;
-    d.tk = merge_tks(start, name);
+static Declarator parse_declarator(Parser *p, Type *base, int is_abstract) {
+    Declarator d;
+    d.type = base;
+    d.name.start = NULL;
+    d.tk = p->l.info; // Start token
+    parse_declarator_internal(p, &d);
+    if (is_abstract && d.name.start) {
+        trigger_error_at(d.name, "variable name not permitted here");
+    } else if (!is_abstract && !d.name.start) {
+        trigger_error_at(d.tk, "expected variable name");
+    }
     return d;
 }
 
-static AbstractDeclarator parse_abstract_declarator(Parser *p, Type *base_type) {
-    Type *type = base_type;
-    TkInfo start = p->l.info;
-    TkInfo end = start;
-    while (p->l.tk == '*') { // Pointers
-        type = t_ptr(type);
-        end = p->l.info;
-        next_tk(&p->l);
-    }
-
-    AbstractDeclarator d;
-    d.type = type;
-    d.tk = merge_tks(start, end);
-    return d;
-}
-
-static Stmt * parse_decl(Parser *p, Type *base_type, int allowed_defn) {
-    DirectDeclarator declarator = parse_direct_declarator(p, base_type);
+static Stmt * parse_declaration(Parser *p, Type *base_type, int allowed_defn) {
+    Declarator declarator = parse_declarator(p, base_type, 0);
     Expr *value = NULL;
     if (allowed_defn && p->l.tk == '=') { // Optional assignment
         next_tk(&p->l); // Skip the '=' token
@@ -958,12 +992,12 @@ static Stmt * parse_decl(Parser *p, Type *base_type, int allowed_defn) {
     return result;
 }
 
-static Stmt * parse_decl_list(Parser *p) {
+static Stmt * parse_declaration_list(Parser *p) {
     Type *base_type = parse_type_specs(p); // Base type specifiers
     Stmt *head;
     Stmt **decl = &head;
     while (p->l.tk != ';') {
-        *decl = parse_decl(p, base_type, 1);
+        *decl = parse_declaration(p, base_type, 1);
         while (*decl) { // Find the end of the chain
             decl = &(*decl)->next;
         }
@@ -1050,7 +1084,7 @@ static Stmt * parse_for(Parser *p) {
     Local *scope = p->locals;
 
     if (has_decl(p)) { // Initializer
-        *stmt = parse_decl_list(p); // Declaration initializer
+        *stmt = parse_declaration_list(p); // Declaration initializer
     } else if (p->l.tk != ';') {
         *stmt = parse_expr_stmt(p); // Expression initializer
     } else {
@@ -1148,7 +1182,7 @@ static Stmt * parse_block(Parser *p) {
     Local *scope = p->locals; // New locals scope
     while (p->l.tk && p->l.tk != '}') {
         if (has_decl(p)) { // Declarations can only occur in BLOCKS
-            *stmt = parse_decl_list(p);
+            *stmt = parse_declaration_list(p);
         } else {
             *stmt = parse_stmt(p);
         }
@@ -1184,9 +1218,9 @@ static FnArg * parse_fn_decl_arg(Parser *p) {
     Type *base_type = parse_type_specs(p); // Type
     FnArg *arg = malloc(sizeof(FnArg));
     arg->next = NULL;
-    Stmt *decl = parse_decl(p, base_type, 0);
+    Stmt *decl = parse_declaration(p, base_type, 0);
     arg->local = decl->local;
-    assert(!decl->next); // Sanity check -> only one statement from 'parse_decl'
+    assert(!decl->next); // Sanity check -> only one statement from 'parse_declaration'
     return arg;
 }
 

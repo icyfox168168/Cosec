@@ -31,22 +31,27 @@ typedef enum {
 typedef enum {
     T_PRIM,
     T_PTR,
+    T_ARR,
 } Kind;
 
 typedef struct type {
     Kind kind;
     int is_signed;
     union {
-        Prim prim;
-        struct type *ptr;
+        Prim prim;        // For T_PRIM
+        struct type *ptr; // For T_PTR
+        struct { struct type *elem; uint64_t size; }; // For T_ARR
     };
 } Type;
 
 Type * t_prim(Prim prim, int is_signed);
 Type * t_ptr(Type *deref);
+Type * t_arr(Type *elem, uint64_t size);
 Type * t_copy(Type *t);
+
 int bits(Type *t);  // Returns the size of a type in bits
 int bytes(Type *t); // Returns the size of a type in bytes
+int alignment(Type *t); // Returns the alignment requirement for the type
 
 int is_ptr(Type *t);
 int is_void_ptr(Type *t);

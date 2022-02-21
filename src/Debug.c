@@ -19,7 +19,14 @@ static void print_type(Type *t) {
         return;
     }
     switch (t->kind) {
-    case T_PRIM: printf("%s", PRIM_NAMES[t->prim]); break;
+    case T_PRIM:
+        printf("%s", PRIM_NAMES[t->prim]);
+        break;
+    case T_ARR:
+        printf("[%llu x ", t->size);
+        print_type(t->elem);
+        printf("]");
+        break;
     case T_PTR:
         print_type(t->ptr);
         printf("*");

@@ -1,6 +1,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "Type.h"
 
@@ -26,20 +27,21 @@ Type * t_ptr(Type *deref) {
     return t;
 }
 
+Type * t_arr(Type *elem, uint64_t size) {
+    Type *t = malloc(sizeof(Type));
+    t->kind = T_ARR;
+    t->elem = elem;
+    t->size = size;
+    t->is_signed = 0; // Pointers/arrays are never signed
+    return t;
+}
+
 Type * t_copy(Type *t) {
-    Type *copy = malloc(sizeof(Type));
     switch (t->kind) {
-    case T_PRIM:
-        copy->kind = T_PRIM;
-        copy->prim = t->prim;
-        copy->is_signed = t->is_signed;
-        break;
-    case T_PTR:
-        copy->kind = T_PTR;
-        copy->ptr = t_copy(t->ptr);
-        break;
+        case T_PRIM: return t_prim(t->prim, t->is_signed);
+        case T_PTR:  return t_ptr(t_copy(t->ptr));
+        case T_ARR:  return t_arr(t_copy(t->elem), t->size);
     }
-    return copy;
 }
 
 int is_ptr(Type *t) {
@@ -69,12 +71,13 @@ int are_equal(Type *l, Type *r) {
     switch (l->kind) {
         case T_PRIM: return l->prim == r->prim && l->is_signed == r->is_signed;
         case T_PTR:  return are_equal(l->ptr, r->ptr);
+        case T_ARR:  return are_equal(l->elem, r->elem) && l->size == r->size;
     }
 }
 
 int bits(Type *t) {
     switch (t->kind) {
-    case T_PTR: return 64; // Always 8 bytes
+    case T_PTR: case T_ARR: return 64; // Always 8 bytes
     case T_PRIM:
         switch (t->prim) {
             case T_void: return 0;
@@ -94,32 +97,58 @@ int bytes(Type *t) {
     return (t->kind == T_PRIM && t->prim == T_i1) ? 1 : bits(t) / 8;
 }
 
-#define MAX_TYPE_STR_LEN 100
+int alignment(Type *t) {
+    // Right now, everything is aligned to its respective size
+    // TODO: all aggregate types >16 bytes should be aligned 16 bytes
+    return bytes(t);
+}
 
-static void write_type_to_str(Type *t, char *str, size_t *len) {
-    switch (t->kind) {
-    case T_PTR:
-        write_type_to_str(t->ptr, str, len);
-        if (t->ptr->kind == T_PRIM) {
-            str[(*len)++] = ' '; // Space after primitive
-        }
-        str[(*len)++] = '*';
-        break;
+#define MAX_TYPE_STR_LEN 200
+
+static void write_prim(Type *t, char **str) {
+    switch (t->kind) { // Recursively find the primitive type
     case T_PRIM:
         if (!t->is_signed) {
-            strcpy(&str[*len], "unsigned ");
-            *len += strlen("unsigned ");
+            *str += sprintf(*str, "unsigned ");
         }
-        strcpy(&str[*len], PRIM_NAMES[t->prim]);
-        *len += strlen(PRIM_NAMES[t->prim]);
+        *str += sprintf(*str, "%s", PRIM_NAMES[t->prim]);
         break;
+    case T_PTR:
+        write_prim(t->ptr, str);
+        if (t->ptr->kind == T_PRIM) {
+            *((*str)++) = ' '; // Space after primitive
+        }
+        break;
+    case T_ARR: write_prim(t->elem, str); break;
+    }
+}
+
+static void write_ptrs_and_arrays(Type *t, char **str) {
+    switch (t->kind) {
+    case T_PTR:
+        *((*str)++) = '*';
+        write_ptrs_and_arrays(t->ptr, str);
+        break;
+    case T_ARR:
+        if (t->elem->kind == T_PTR) {
+            *((*str)++) = '(';
+        }
+        write_ptrs_and_arrays(t->elem, str);
+        if (t->elem->kind == T_PTR) {
+            *((*str)++) = ')';
+        }
+        *str += sprintf(*str, "[%llu]", t->size);
+        break;
+    case T_PRIM: break;
     }
 }
 
 char * type_to_str(Type *t) {
-    size_t len = 0;
+    // TODO: count length of string first and alloc that
     char *str = malloc(sizeof(char) * MAX_TYPE_STR_LEN);
-    write_type_to_str(t, str, &len);
-    str[len] = '\0';
-    return str;
+    char *start = str;
+    write_prim(t, &str);
+    write_ptrs_and_arrays(t, &str);
+    *str = '\0';
+    return start;
 }
