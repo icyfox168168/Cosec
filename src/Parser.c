@@ -88,6 +88,7 @@ static Prec UNARY_PREC[NUM_TKS] = {
     ['('] = PREC_UNARY, // Cast
     [TK_INC] = PREC_UNARY, // Increment
     [TK_DEC] = PREC_UNARY, // Decrement
+    [TK_SIZEOF] = PREC_UNARY, // 'sizeof'
 };
 
 static Prec POSTFIX_PREC[NUM_TKS] = {
@@ -600,49 +601,6 @@ static Expr * parse_local(Parser *p) {
     return expr;
 }
 
-static int has_decl(Parser *p); // Forward declarations
-static Type * parse_type_specs(Parser *p);
-static Declarator parse_declarator(Parser *p, Type *base, int is_abstract);
-static Expr * parse_unary(Parser *p);
-
-static Expr * parse_sizeof(Parser *p) {
-    expect_tk(&p->l, TK_SIZEOF);
-    TkInfo start = p->l.info;
-    next_tk(&p->l);
-    Type *result;
-    TkInfo tk, end;
-    if (p->l.tk == '(') {
-        next_tk(&p->l);
-        if (!has_decl(p)) {
-            trigger_error_at(p->l.info, "expected type name");
-        }
-        tk = p->l.info;
-        Type *base_type = parse_type_specs(p);
-        Declarator decl = parse_declarator(p, base_type, 1);
-        result = decl.type;
-        tk = merge_tks(tk, decl.tk);
-        expect_tk(&p->l, ')');
-        end = p->l.info;
-        next_tk(&p->l);
-    } else {
-        Expr *operand = parse_unary(p);
-        result = operand->type; // Discard the operand itself; not evaluated
-        tk = operand->tk;
-        end = tk;
-    }
-    if (is_incomplete(result)) {
-        trigger_error_at(tk, "cannot calculate size of incomplete type '%s'",
-                         type_to_str(result));
-    }
-    // The operand to a 'sizeof' operator isn't evaluated (unless it's a VLA);
-    // 'sizeof' just evaluates to a constant integer
-    Expr *size = new_expr(EXPR_KINT);
-    size->kint = bytes(result);
-    size->type = t_prim(T_i64, 0); // Always 64 bits on a 64-bit system
-    size->tk = merge_tks(start, end);
-    return size;
-}
-
 static Expr * parse_operand(Parser *p) {
     switch (p->l.tk) {
         case TK_KINT:   return parse_kint(p);
@@ -650,7 +608,6 @@ static Expr * parse_operand(Parser *p) {
         case TK_KCHAR:  return parse_kchar(p);
         case TK_KSTR:   return parse_kstr(p);
         case TK_IDENT:  return parse_local(p);
-        case TK_SIZEOF: return parse_sizeof(p);
         default:        trigger_error_at(p->l.info, "expected expression");
     }
 }
@@ -764,6 +721,10 @@ static Expr * parse_unary_arith(Tk op, Expr *operand) {
     return unary;
 }
 
+static int has_decl(Parser *p); // Forward declarations
+static Type * parse_type_specs(Parser *p);
+static Declarator parse_declarator(Parser *p, Type *base, int is_abstract);
+
 static Expr * parse_cast(Parser *p, TkInfo start_tk) {
     Type *base_type = parse_type_specs(p);
     Declarator declarator = parse_declarator(p, base_type, 1);
@@ -782,6 +743,41 @@ static Expr * parse_braced_subexpr(Parser *p) {
     return expr;
 }
 
+static Expr * parse_sizeof(Parser *p, TkInfo op_tk) {
+    Type *result;
+    TkInfo tk, end;
+    if (p->l.tk == '(') {
+        next_tk(&p->l);
+        if (!has_decl(p)) {
+            trigger_error_at(p->l.info, "expected type name");
+        }
+        tk = p->l.info;
+        Type *base_type = parse_type_specs(p);
+        Declarator decl = parse_declarator(p, base_type, 1);
+        result = decl.type;
+        tk = merge_tks(tk, decl.tk);
+        expect_tk(&p->l, ')');
+        end = p->l.info;
+        next_tk(&p->l);
+    } else {
+        Expr *operand = parse_subexpr(p, UNARY_PREC[TK_SIZEOF]);
+        result = operand->type; // Discard the operand itself; not evaluated
+        tk = operand->tk;
+        end = tk;
+    }
+    if (is_incomplete(result)) {
+        trigger_error_at(tk, "cannot calculate size of incomplete type '%s'",
+                         type_to_str(result));
+    }
+    // The operand to a 'sizeof' operator isn't evaluated (unless it's a VLA);
+    // 'sizeof' just evaluates to a constant integer
+    Expr *size = new_expr(EXPR_KINT);
+    size->kint = bytes(result);
+    size->type = t_prim(T_i64, 0); // Always 64 bits on a 64-bit system
+    size->tk = merge_tks(op_tk, end);
+    return size;
+}
+
 static Expr * parse_unary(Parser *p) {
     Tk op = p->l.tk;
     TkInfo op_tk = p->l.info;
@@ -790,13 +786,19 @@ static Expr * parse_unary(Parser *p) {
         return parse_postfix(p, operand); // And optional postfix operator
     }
     next_tk(&p->l); // Skip the unary operator
-    if (op == '(') {
+
+    // A "special" unary operator -> casts, sub-expressions, sizeof
+    if (op == '(') { // Casts and subexpressions start with the same token :(
         if (has_decl(p)) { // Cast
             return parse_cast(p, op_tk);
         } else { // Expression in parentheses
             return parse_braced_subexpr(p);
         }
+    } else if (op == TK_SIZEOF) { // Special case
+        return parse_sizeof(p, op_tk);
     }
+
+    // Otherwise, a plain old unary operator
     Expr *operand = parse_subexpr(p, UNARY_PREC[op]);
     Expr *unary;
     switch (op) {
