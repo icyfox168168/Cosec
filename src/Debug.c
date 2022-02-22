@@ -14,24 +14,26 @@ static char *PRIM_NAMES[] = {
 #undef X
 };
 
-static void print_type(Type *t) {
+static int print_type(Type *t) {
     if (!t) {
-        return;
+        return 0;
     }
+    int len = 0;
     switch (t->kind) {
     case T_PRIM:
-        printf("%s", PRIM_NAMES[t->prim]);
+        len += printf("%s", PRIM_NAMES[t->prim]);
         break;
     case T_ARR:
-        printf("[%llu x ", t->size);
-        print_type(t->elem);
-        printf("]");
+        len += printf("[%llu x ", t->size);
+        len += print_type(t->elem);
+        len += printf("]");
         break;
     case T_PTR:
-        print_type(t->ptr);
-        printf("*");
+        len += print_type(t->ptr);
+        len += printf("*");
         break;
     }
+    return len;
 }
 
 // ---- Abstract Syntax Tree --------------------------------------------------
@@ -243,7 +245,10 @@ static void print_phi(IrIns *phi) {
 static void print_ins(Fn *fn, IrIns *ins) {
     printf("\t"); // Indent all instructions by a tab
     printf("%.4d\t", ins->idx); // Instruction's index in the function
-    print_type(ins->type); // Return type (void if control flow)
+    int type_len = print_type(ins->type); // Return type (void if control flow)
+    if (type_len < 8) { // Two tabs for short types
+        printf("\t");
+    }
     printf("\t%s\t", IR_OPCODE_NAMES[ins->op]); // Opcode name
     switch (ins->op) { // Handle special case instructions (e.g., constants)
     case IR_FARG:  printf("%d", ins->arg_num); break;

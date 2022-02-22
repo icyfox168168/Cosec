@@ -42,37 +42,29 @@ typedef enum {
 
 typedef enum {
     REG_NONE, // Don't use the reg
-    REG_L,    // Lowest 8 bits (e.g., al)
+    GPR_L,    // Lowest 8 bits (e.g., al)
     REG_H,    // Highest 8 bits of the lowest 16 bits (e.g., ah)
-    REG_W,    // Lowest 16 bits (e.g., ax)
-    REG_D,    // Lowest 32 bits (e.g., eax)
-    REG_Q,    // All 64 bits (e.g., rax)
-} RegSize;
+    GPR_W,    // Lowest 16 bits (e.g., ax)
+    GPR_D,    // Lowest 32 bits (e.g., eax)
+    GPR_Q,    // All 64 bits (e.g., rax)
+} GPRSize;
 
 static char *GPR_NAMES[][LAST_GPR] = {
 #define X(name, q, _, __, ___, ____) q,
-    [REG_Q] = { X86_GPRS },
+    [GPR_Q] = {X86_GPRS },
 #undef X
 #define X(name, _, d, __, ___, ____) d,
-    [REG_D] = { X86_GPRS },
+    [GPR_D] = {X86_GPRS },
 #undef X
 #define X(name, _, __, w, ___, ____) w,
-    [REG_W] = { X86_GPRS },
+    [GPR_W] = {X86_GPRS },
 #undef X
 #define X(name, _, __, ___, h, ____) h,
     [REG_H] = { X86_GPRS },
 #undef X
 #define X(name, _, __, ___, ____, l) l,
-    [REG_L] = { X86_GPRS },
+    [GPR_L] = {X86_GPRS },
 #undef X
-};
-
-// Tells us the RegSize to use for a 'Type' of a certain number of BYTES.
-static RegSize GPR_SIZE[] = {
-    [1] = REG_L,
-    [2] = REG_W,
-    [4] = REG_D,
-    [8] = REG_Q,
 };
 
 #define X86_SSE \
@@ -215,11 +207,11 @@ typedef struct {
     AsmOperandType type;
     union {
         uint64_t imm; // OP_IMM
-        struct { RegSize size; int reg; }; // OP_GPR or OP_XMM
+        struct { GPRSize size; int reg; }; // OP_GPR or OP_XMM
         struct { // OP_MEM
             int access_size;
-            int base_reg; RegSize base_size;
-            int index_reg; RegSize index_size;
+            int base_reg; GPRSize base_size;
+            int index_reg; GPRSize index_size;
             int scale, disp;
         };
         struct { // OP_CONST

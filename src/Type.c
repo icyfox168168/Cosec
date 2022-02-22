@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <assert.h>
 
 #include "Type.h"
 
@@ -52,6 +53,14 @@ int is_void_ptr(Type *t) {
     return t->kind == T_PTR && t->ptr->kind == T_PRIM && t->ptr->prim == T_void;
 }
 
+int is_arr(Type *t) {
+    return t->kind == T_ARR;
+}
+
+int is_ptr_arr(Type *t) {
+    return t->kind == T_PTR || t->kind == T_ARR;
+}
+
 int is_arith(Type *t) {
     return t->kind == T_PRIM && t->prim >= T_i1 && t->prim <= T_f64;
 }
@@ -75,9 +84,28 @@ int are_equal(Type *l, Type *r) {
     }
 }
 
+int is_incomplete(Type *t) {
+    // 'void' is the only incomplete type at the moment
+    return t->kind == T_PRIM && t->prim == T_void;
+}
+
+Type * to_ptr(Type *t) {
+    if (t->kind == T_PTR) {
+        return t_copy(t);
+    } else if (t->kind == T_ARR) {
+        Type *copy = t_copy(t);
+        copy->kind = T_PTR;
+        copy->ptr = t->elem;
+        return copy;
+    } else {
+        UNREACHABLE();
+    }
+}
+
 int bits(Type *t) {
     switch (t->kind) {
-    case T_PTR: case T_ARR: return 64; // Always 8 bytes
+    case T_PTR: return 64; // Always 8 bytes
+    case T_ARR: return (int) t->size * bits(t->elem); // TODO: don't cast int
     case T_PRIM:
         switch (t->prim) {
             case T_void: return 0;
@@ -98,9 +126,11 @@ int bytes(Type *t) {
 }
 
 int alignment(Type *t) {
-    // Right now, everything is aligned to its respective size
-    // TODO: all aggregate types >16 bytes should be aligned 16 bytes
-    return bytes(t);
+    if (bytes(t) > 16) { // All aggregate types >16 bytes are aligned 16 bytes
+        return 16;
+    } else {
+        return bytes(t); // Otherwise, types should be aligned to their size
+    }
 }
 
 #define MAX_TYPE_STR_LEN 200

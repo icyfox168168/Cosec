@@ -25,10 +25,9 @@
 //   must have type <type>*)
 // * LOAD: reads memory from a pointer <type>*, resulting in a value with type
 //   <type>
-// * LEA: performs pointer offset calculation. If LEA is set to return a value
-//   of type <type>, then the first argument must be a pointer with type
-//   <type>*, and the second argument value to add to the pointer (similar to
-//   LLVM's 'getelementptr')
+// * ELEM: performs pointer offset calculations, similar to LLVM's
+//   'getelementptr'. First argument is the base pointer, second is the index
+//   in BYTES.
 #define IR_OPCODES        \
     /* Immediates and constants */ \
     X(IMM, 1)             \
@@ -39,6 +38,7 @@
     X(ALLOC, 0)           \
     X(STORE, 2) /* Destination is FIRST argument, source is SECOND */ \
     X(LOAD, 1)            \
+    X(ELEM, 2) /* Pointer to an element in an array/pointer/struct */ \
                           \
     /* Arithmetic */      \
     X(ADD, 2)             \

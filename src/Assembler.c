@@ -12,6 +12,13 @@ typedef struct {
     int next_gpr, next_sse; // Next virtual register slot to use
 } Assembler;
 
+static GPRSize GPR_SIZE[] = {
+    [1] = GPR_L,
+    [2] = GPR_W,
+    [4] = GPR_D,
+    [8] = GPR_Q,
+};
+
 // Tells us which register each function argument is in, according to the
 // System V ABI. The array is indexed by function argument number, where 0 is
 // the left-most argument. Floating point function arguments are indexed
@@ -96,10 +103,10 @@ static AsmIns * new_asm(AsmOpcode op) {
     ins->op = op;
     ins->l.type = 0;
     ins->l.reg = 0;
-    ins->l.size = REG_Q;
+    ins->l.size = GPR_Q;
     ins->r.type = 0;
     ins->r.reg = 0;
-    ins->r.size = REG_Q;
+    ins->r.size = GPR_Q;
     return ins;
 }
 
@@ -150,7 +157,7 @@ static AsmOperand to_mem_operand(Assembler *a, IrIns *ir_ptr) {
     if (ir_ptr->op == IR_ALLOC) { // Load from stack
         result.type = OP_MEM;      // From memory
         result.base_reg = GPR_RBP; // Offset relative to rbp
-        result.base_size = REG_Q;
+        result.base_size = GPR_Q;
         result.index_reg = 0;
         result.index_size = REG_NONE;
         result.scale = 1;
@@ -159,8 +166,8 @@ static AsmOperand to_mem_operand(Assembler *a, IrIns *ir_ptr) {
         AsmOperand l = discharge(a, ir_ptr);
         result.type = OP_MEM;      // From memory
         result.base_reg = l.reg;   // Indexed by a vreg
-        result.base_size = l.size; // Should be REG_Q
-        assert(l.size == REG_Q);
+        result.base_size = l.size; // Should be GPR_Q
+        assert(l.size == GPR_Q);
         result.index_reg = 0;
         result.index_size = REG_NONE;
         result.scale = 1;
@@ -261,12 +268,12 @@ static AsmOperand discharge_rel(Assembler *a, IrIns *ir_rel) {
     AsmIns *set = new_asm(IR_OP_TO_SETXX[ir_rel->op]); // SETcc operation
     set->l.type = OP_GPR;
     set->l.reg = ir_rel->vreg;
-    set->l.size = REG_L; // Lowest 8 bits of the vreg
+    set->l.size = GPR_L; // Lowest 8 bits of the vreg
     emit(a, set);
     AsmIns *and = new_asm(X86_AND); // Clear the rest of the vreg
     and->l.type = OP_GPR;
     and->l.reg = ir_rel->vreg;
-    and->l.size = REG_L; // Lowest 8 bits (ir_rel type is always i1)
+    and->l.size = GPR_L; // Lowest 8 bits (ir_rel type is always i1)
     and->r.type = OP_IMM;
     and->r.imm = 1;
     emit(a, and);
@@ -453,12 +460,13 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
 
     AsmOpcode op;
     switch (ir_arith->op) {
-        case IR_ADD: op = X86_ADD; break;
-        case IR_SUB: op = X86_SUB; break;
-        case IR_MUL: op = X86_MUL; break;
-        case IR_AND: op = X86_AND; break;
-        case IR_OR:  op = X86_OR;  break;
-        case IR_XOR: op = X86_XOR; break;
+        case IR_ADD:  op = X86_ADD; break;
+        case IR_SUB:  op = X86_SUB; break;
+        case IR_MUL:  op = X86_MUL; break;
+        case IR_AND:  op = X86_AND; break;
+        case IR_OR:   op = X86_OR;  break;
+        case IR_XOR:  op = X86_XOR; break;
+        case IR_ELEM: op = X86_ADD; break; // Pointer offset calculation
         default: UNREACHABLE();
     }
     AsmIns *arith = new_asm(op);
@@ -475,7 +483,7 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
     AsmIns *mov1 = new_asm(X86_MOV); // Mov dividend into eax
     mov1->l.type = OP_GPR;
     mov1->l.reg = GPR_RAX;
-    mov1->l.size = REG_D;
+    mov1->l.size = GPR_D;
     mov1->r = dividend;
     emit(a, mov1);
 
@@ -526,7 +534,7 @@ static void asm_shift(Assembler *a, IrIns *ir_shift) {
         emit(a, mov2);
         r.type = OP_GPR;
         r.reg = GPR_RCX; // Use cl
-        r.size = REG_L;
+        r.size = GPR_L;
     }
 
     AsmIns *mov1 = new_asm(X86_MOV); // Emit a mov for the new vreg
@@ -676,7 +684,7 @@ static void asm_ret0(Assembler *a) {
     AsmIns *pop = new_asm(X86_POP); // pop rbp
     pop->l.type = OP_GPR;
     pop->l.reg = GPR_RBP;
-    pop->l.size = REG_Q;
+    pop->l.size = GPR_Q;
     emit(a, pop);
     emit(a, new_asm(X86_RET));
 }
@@ -689,7 +697,7 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
     AsmIns *mov = new_asm(needs_sext ? X86_MOVSX : X86_MOV);
     mov->l.type = OP_GPR;
     mov->l.reg = GPR_RAX;
-    mov->l.size = needs_sext ? REG_D : GPR_SIZE[bytes(ir_ret->l->type)];
+    mov->l.size = needs_sext ? GPR_D : GPR_SIZE[bytes(ir_ret->l->type)];
     mov->r = result;
     emit(a, mov);
     asm_ret0(a);
@@ -707,6 +715,7 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
     case IR_LOAD:  asm_load(a, ir_ins); break;
 
         // Arithmetic
+    case IR_ELEM: // IR_ELEM compiles to just an addition
     case IR_ADD: case IR_SUB: case IR_MUL: case IR_FDIV:
     case IR_AND: case IR_OR: case IR_XOR:
         asm_arith(a, ir_ins); break;
@@ -753,15 +762,15 @@ static void asm_fn_preamble(Assembler *a) {
     AsmIns *push = new_asm(X86_PUSH); // push rbp
     push->l.type = OP_GPR;
     push->l.reg = GPR_RBP;
-    push->l.size = REG_Q;
+    push->l.size = GPR_Q;
     emit(a, push);
     AsmIns *mov = new_asm(X86_MOV); // mov rbp, rsp
     mov->l.type = OP_GPR;
     mov->l.reg = GPR_RBP;
-    mov->l.size = REG_Q;
+    mov->l.size = GPR_Q;
     mov->r.type = OP_GPR;
     mov->r.reg = GPR_RSP;
-    mov->r.size = REG_Q;
+    mov->r.size = GPR_Q;
     emit(a, mov);
 }
 

@@ -55,10 +55,15 @@ int alignment(Type *t); // Returns the alignment requirement for the type
 
 int is_ptr(Type *t);
 int is_void_ptr(Type *t);
+int is_arr(Type *t);
+int is_ptr_arr(Type *t);
 int is_arith(Type *t);
 int is_int(Type *t);
 int is_fp(Type *t);
 int are_equal(Type *l, Type *r);
+int is_incomplete(Type *t);
+
+Type * to_ptr(Type *t); // Converts an array to a pointer
 
 char * type_to_str(Type *t);
 

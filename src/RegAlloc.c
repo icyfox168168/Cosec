@@ -814,7 +814,7 @@ static int sse_defs_left(AsmIns *ins) {
 
 static RegGroup GPR_REG_GROUP_INFO = {
     .num_pregs = LAST_GPR,
-    .preg_names = GPR_NAMES[REG_Q],
+    .preg_names = GPR_NAMES[GPR_Q],
     .uses_left = gpr_uses_left,
     .uses_right = gpr_uses_right,
     .defs_left = gpr_defs_left,

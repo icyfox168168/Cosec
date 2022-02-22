@@ -163,26 +163,31 @@ static int is_null_ptr(Expr *e) {
 }
 
 static void ensure_lvalue(Expr *lvalue) {
-    if (lvalue->kind == EXPR_LOCAL ||
+    // Can only assign to a local, pointer dereference, or array index
+    if (!(lvalue->kind == EXPR_LOCAL ||
             (lvalue->kind == EXPR_UNARY && lvalue->op == '*') ||
-            (lvalue->kind == EXPR_BINARY && lvalue->op == '[')) {
-        return; // Assigning to a local, pointer dereference, or array index
+            (lvalue->kind == EXPR_BINARY && lvalue->op == '['))) {
+        trigger_error_at(lvalue->tk, "expression is not assignable");
     }
-    trigger_error_at(lvalue->tk, "expression is not assignable");
+    if (is_arr(lvalue->type)) {
+        trigger_error_at(lvalue->tk, "array type '%s' is not assignable",
+                         type_to_str(lvalue->type));
+    }
 }
 
 static void ensure_can_take_addr(Expr *operand) {
-    // See 6.5.3.2 in C99 standard for what's allowed
-    if (operand->kind == EXPR_LOCAL ||
-            (operand->kind == EXPR_UNARY && operand->op == '*') ||
-            (operand->kind == EXPR_BINARY && operand->op == '[')) {
-        return; // Address of a local, dereference, or array access
+    // See 6.5.3.2 in C99 standard for what's allowed (local, dereference,
+    // and array access)
+    if (!(operand->kind == EXPR_LOCAL ||
+          (operand->kind == EXPR_UNARY && operand->op == '*') ||
+          (operand->kind == EXPR_BINARY && operand->op == '['))) {
+        trigger_error_at(operand->tk, "cannot take address of operand");
     }
-    trigger_error_at(operand->tk, "cannot take address of operand");
 }
 
 static void ensure_can_deref(Expr *operand) {
-    if (operand->type->kind != T_PTR) {
+    // Can only dereference a pointer or an array
+    if (operand->type->kind != T_PTR && operand->type->kind != T_ARR) {
         trigger_error_at(operand->tk, "cannot dereference operand of type '%s'",
                          type_to_str(operand->type));
     }
@@ -197,8 +202,10 @@ static void invalid_arguments(Expr *l, Expr *r) {
 
 static void check_conv(Expr *src, Type *t, int explicit_cast) {
     Type *s = src->type;
-    if (!((is_arith(t) && is_arith(s)) || (is_ptr(t) && is_ptr(s)) ||
-          (is_ptr(t) && is_int(s)) || (is_int(t) && is_ptr(s)))) {
+    if (!((is_arith(t) && is_arith(s)) ||
+          (is_ptr(t) && is_ptr(s)) ||
+          (is_ptr(t) && is_int(s)) || (is_int(t) && is_ptr(s)) ||
+          (is_ptr(t) && is_arr(s)) || (is_arr(t) && is_ptr(s)))) {
         trigger_error_at(src->tk, "invalid conversion from '%s' to '%s'",
                          type_to_str(s), type_to_str(t));
     }
@@ -211,6 +218,12 @@ static void check_conv(Expr *src, Type *t, int explicit_cast) {
             !(is_void_ptr(s) || is_void_ptr(t) || is_null_ptr(src))) {
         trigger_warning_at(src->tk, "implicit conversion between incompatible "
                                     "pointer types '%s' and '%s'",
+                           type_to_str(s), type_to_str(t));
+    }
+    if (!explicit_cast && is_ptr_arr(t) && is_ptr_arr(s) &&
+            !are_equal(t->ptr, s->ptr) && !is_void_ptr(s) && !is_void_ptr(t)) {
+        trigger_warning_at(src->tk, "implicit conversion between incompatible "
+                                    "pointer and array types '%s' and '%s'",
                            type_to_str(s), type_to_str(t));
     }
 }
@@ -587,6 +600,49 @@ static Expr * parse_local(Parser *p) {
     return expr;
 }
 
+static int has_decl(Parser *p); // Forward declarations
+static Type * parse_type_specs(Parser *p);
+static Declarator parse_declarator(Parser *p, Type *base, int is_abstract);
+static Expr * parse_unary(Parser *p);
+
+static Expr * parse_sizeof(Parser *p) {
+    expect_tk(&p->l, TK_SIZEOF);
+    TkInfo start = p->l.info;
+    next_tk(&p->l);
+    Type *result;
+    TkInfo tk, end;
+    if (p->l.tk == '(') {
+        next_tk(&p->l);
+        if (!has_decl(p)) {
+            trigger_error_at(p->l.info, "expected type name");
+        }
+        tk = p->l.info;
+        Type *base_type = parse_type_specs(p);
+        Declarator decl = parse_declarator(p, base_type, 1);
+        result = decl.type;
+        tk = merge_tks(tk, decl.tk);
+        expect_tk(&p->l, ')');
+        end = p->l.info;
+        next_tk(&p->l);
+    } else {
+        Expr *operand = parse_unary(p);
+        result = operand->type; // Discard the operand itself; not evaluated
+        tk = operand->tk;
+        end = tk;
+    }
+    if (is_incomplete(result)) {
+        trigger_error_at(tk, "cannot calculate size of incomplete type '%s'",
+                         type_to_str(result));
+    }
+    // The operand to a 'sizeof' operator isn't evaluated (unless it's a VLA);
+    // 'sizeof' just evaluates to a constant integer
+    Expr *size = new_expr(EXPR_KINT);
+    size->kint = bytes(result);
+    size->type = t_prim(T_i64, 0); // Always 64 bits on a 64-bit system
+    size->tk = merge_tks(start, end);
+    return size;
+}
+
 static Expr * parse_operand(Parser *p) {
     switch (p->l.tk) {
         case TK_KINT:   return parse_kint(p);
@@ -594,6 +650,7 @@ static Expr * parse_operand(Parser *p) {
         case TK_KCHAR:  return parse_kchar(p);
         case TK_KSTR:   return parse_kstr(p);
         case TK_IDENT:  return parse_local(p);
+        case TK_SIZEOF: return parse_sizeof(p);
         default:        trigger_error_at(p->l.info, "expected expression");
     }
 }
@@ -622,7 +679,7 @@ static Expr * parse_array_access(Parser *p, Expr *array) {
 
     ensure_can_deref(array);
     if (!is_int(index->type)) {
-        trigger_error_at(index->tk, "invalid argument '%s' to operation",
+        trigger_error_at(index->tk, "invalid argument '%s' to array access",
                          type_to_str(index->type));
     }
     index = conv_to(index, t_prim(T_i64, 0), 0); // Have to add an i64
@@ -706,10 +763,6 @@ static Expr * parse_unary_arith(Tk op, Expr *operand) {
     unary->type = result;
     return unary;
 }
-
-static int has_decl(Parser *p); // Forward declarations
-static Type * parse_type_specs(Parser *p);
-static Declarator parse_declarator(Parser *p, Type *base, int is_abstract);
 
 static Expr * parse_cast(Parser *p, TkInfo start_tk) {
     Type *base_type = parse_type_specs(p);

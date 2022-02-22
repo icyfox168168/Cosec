@@ -53,7 +53,8 @@
     K(DO, "do")                            \
     K(BREAK, "break")                      \
     K(CONTINUE, "continue")                \
-    K(RETURN, "return")
+    K(RETURN, "return")                    \
+    K(SIZEOF, "sizeof")
 
 typedef int Tk;
 enum {

@@ -22,18 +22,18 @@ static char *NASM_MEM_PREFIX[] = {
     [8] = "qword",
 };
 
-static void write_gpr(int reg, RegSize size, FILE *out) {
+static void write_gpr(int reg, GPRSize size, FILE *out) {
     assert(size != REG_NONE);
     if (reg < LAST_GPR) {
         fprintf(out, "%s", GPR_NAMES[size][reg]);
     } else {
         fprintf(out, "%%%d", reg - LAST_GPR);
         switch (size) {
-            case REG_Q: fprintf(out, "q"); break;
-            case REG_D: fprintf(out, "d"); break;
-            case REG_W: fprintf(out, "w"); break;
+            case GPR_Q: fprintf(out, "q"); break;
+            case GPR_D: fprintf(out, "d"); break;
+            case GPR_W: fprintf(out, "w"); break;
             case REG_H: fprintf(out, "h"); break;
-            case REG_L: fprintf(out, "l"); break;
+            case GPR_L: fprintf(out, "l"); break;
             default: UNREACHABLE();
         }
     }

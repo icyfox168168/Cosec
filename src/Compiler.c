@@ -69,12 +69,11 @@ static void sanity_check(IrIns *ins) {
         assert(are_equal(ins->l->type->ptr, ins->r->type));
     } else if (ins->op == IR_LOAD) {
         // Load from <type>* into <type>
-        assert(ins->l->type->kind == T_PTR);
+        assert(is_ptr(ins->l->type));
         assert(are_equal(ins->type, ins->l->type->ptr));
-    } else if ((ins->op == IR_ADD || ins->op == IR_SUB) &&
-               is_ptr(ins->l->type) && is_int(ins->r->type)) {
+    } else if (ins->op == IR_ELEM) {
         // Add <type>* + i64
-        assert(ins->l->type->kind == T_PTR);
+        assert(is_ptr(ins->l->type));
         assert(are_equal(ins->r->type, t_prim(T_i64, 0)));
     } else if (IR_OPCODE_NARGS[ins->op] == 2) {
         // Otherwise, both types should be the SAME
@@ -466,12 +465,12 @@ static IrIns * compile_ptr_arith(Compiler *c, Expr *binary) {
     mul->r = amount;
     mul->type = t_copy(to_add->type);
     emit(c, mul);
-    IrIns *add = new_ir(IR_ADD);
-    add->l = ptr;
-    add->r = mul;
-    add->type = t_copy(ptr->type); // Results in a new pointer
-    emit(c, add);
-    return add;
+    IrIns *elem = new_ir(IR_ELEM);
+    elem->l = ptr;
+    elem->r = mul;
+    elem->type = to_ptr(ptr->type); // Results in a POINTER
+    emit(c, elem);
+    return elem;
 }
 
 // For '<ptr> - <ptr>'
