@@ -367,14 +367,16 @@ static Expr * parse_ternary(Parser *p, Expr *cond, Expr *l) {
         result = promote_binary_arith(l->type, r->type);
         l = conv_to(l, result, 0);
         r = conv_to(r, result, 0);
-    } else if (is_ptr(l->type) && is_ptr(r->type) &&
+    } else if (is_ptr_arr(l->type) && is_ptr_arr(r->type) &&
                are_equal(l->type, r->type)) {
-        result = l->type; // Doesn't matter which one we pick
-    } else if (is_ptr(l->type) && (is_void_ptr(r->type) || is_null_ptr(r))) {
-        result = l->type; // Pick the non-void pointer
+        result = to_ptr(l->type); // Doesn't matter which one we pick
+    } else if (is_ptr_arr(l->type) &&
+               (is_void_ptr(r->type) || is_null_ptr(r))) {
+        result = to_ptr(l->type); // Pick the non-void pointer
         r = conv_to(r, result, 0); // Convert to the non-void pointer
-    } else if ((is_void_ptr(l->type) || is_null_ptr(l)) && is_ptr(r->type)) {
-        result = r->type; // Pick the non-void pointer
+    } else if ((is_void_ptr(l->type) || is_null_ptr(l)) &&
+               is_ptr_arr(r->type)) {
+        result = to_ptr(r->type); // Pick the non-void pointer
         l = conv_to(l, result, 0); // Convert to the non-void pointer
     } else {
         invalid_arguments(l, r);
@@ -404,13 +406,14 @@ static Expr * parse_arith(Tk op, Expr *l, Expr *r) {
         result = promote_binary_arith(l->type, r->type);
         l = conv_to(l, result, 0);
         r = conv_to(r, result, 0);
-    } else if ((op == '+' || op == '-') && is_ptr(l->type) && is_int(r->type)) {
-        result = l->type; // Result is a pointer
+    } else if ((op == '+' || op == '-') && is_ptr_arr(l->type) &&
+               is_int(r->type)) {
+        result = to_ptr(l->type); // Result is a pointer
         r = conv_to(r, t_prim(T_i64, 0), 0);
-    } else if (op == '+' && is_int(l->type) && is_ptr(r->type)) {
-        result = r->type; // Result is a pointer
+    } else if (op == '+' && is_int(l->type) && is_ptr_arr(r->type)) {
+        result = to_ptr(r->type); // Result is a pointer
         l = conv_to(l, t_prim(T_i64, 0), 0);
-    } else if (op == '-' && is_ptr(l->type) && is_ptr(r->type) &&
+    } else if (op == '-' && is_ptr_arr(l->type) && is_ptr_arr(r->type) &&
                are_equal(l->type, r->type)) {
         // Result is an INTEGER
         result = t_prim(T_i64, 0);
@@ -462,15 +465,17 @@ static Expr * parse_eq(Tk op, Expr *l, Expr *r) {
         l = conv_to(l, promotion, 0);
         r = conv_to(r, promotion, 0);
         result = t_prim(T_i1, promotion->is_signed); // Preserve signed-ness
-    } else if (is_ptr(l->type) && is_ptr(r->type) &&
+    } else if (is_ptr_arr(l->type) && is_ptr_arr(r->type) &&
                are_equal(l->type, r->type)) {
         result = t_prim(T_i1, 0); // Pointer comparisons always unsigned
-    } else if (is_ptr(l->type) && (is_void_ptr(r->type) || is_null_ptr(r))) {
-        Type *promotion = l->type; // Pick the non-void/non-null pointer
+    } else if (is_ptr_arr(l->type) &&
+               (is_void_ptr(r->type) || is_null_ptr(r))) {
+        Type *promotion = to_ptr(l->type); // Pick the non-void/non-null pointer
         r = conv_to(r, promotion, 0); // Convert to the non-void pointer
         result = t_prim(T_i1, 0); // Pointer comparisons always unsigned
-    } else if ((is_void_ptr(l->type) || is_null_ptr(l)) && is_ptr(r->type)) {
-        Type *promotion = r->type; // Pick the non-void/non-null pointer
+    } else if ((is_void_ptr(l->type) || is_null_ptr(l)) &&
+               is_ptr_arr(r->type)) {
+        Type *promotion = to_ptr(r->type); // Pick the non-void/non-null pointer
         l = conv_to(l, promotion, 0); // Convert to the non-void pointer
         result = t_prim(T_i1, 0); // Pointer comparisons always unsigned
     } else {
@@ -486,7 +491,7 @@ static Expr * parse_rel(Tk op, Expr *l, Expr *r) {
         l = conv_to(l, promotion, 0);
         r = conv_to(r, promotion, 0);
         result = t_prim(T_i1, promotion->is_signed); // Preserve signed-ness
-    } else if (is_ptr(l->type) && is_ptr(r->type) &&
+    } else if (is_ptr_arr(l->type) && is_ptr_arr(r->type) &&
                are_equal(l->type, r->type)) {
         result = t_prim(T_i1, 0); // Pointer comparisons always unsigned
     } else {

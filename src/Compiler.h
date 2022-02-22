@@ -26,8 +26,7 @@
 // * LOAD: reads memory from a pointer <type>*, resulting in a value with type
 //   <type>
 // * ELEM: performs pointer offset calculations, similar to LLVM's
-//   'getelementptr'. First argument is the base pointer, second is the index
-//   in BYTES.
+//   'getelementptr'. First argument is the base pointer, second is the index.
 #define IR_OPCODES        \
     /* Immediates and constants */ \
     X(IMM, 1)             \

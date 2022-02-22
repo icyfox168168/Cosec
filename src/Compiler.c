@@ -73,7 +73,7 @@ static void sanity_check(IrIns *ins) {
         assert(are_equal(ins->type, ins->l->type->ptr));
     } else if (ins->op == IR_ELEM) {
         // Add <type>* + i64
-        assert(is_ptr(ins->l->type));
+        assert(is_ptr_arr(ins->l->type));
         assert(are_equal(ins->r->type, t_prim(T_i64, 0)));
     } else if (IR_OPCODE_NARGS[ins->op] == 2) {
         // Otherwise, both types should be the SAME
@@ -296,16 +296,8 @@ static IrIns * emit_conv(Compiler *c, IrIns *operand, Type *src, Type *target) {
 
 static IrIns * compile_expr(Compiler *c, Expr *expr); // Forward declaration
 
-// Convert a condition expression into a value (e.g., that can be stored by
-// IR_STORE) by (1) emitting a phi instruction if there's more than one
-// true or false branch chain to patch; or (2) removing the CONDBR instruction
-// and referring to the underlying comparison instruction if there's only one
-// branch (no need for a phi)
-static IrIns * discharge(Compiler *c, IrIns *cond) {
-    if (cond->op != IR_CONDBR) { // Currently, only conditions need discharging
-        return cond; // Not a condition; doesn't need discharging
-    }
-
+static IrIns * discharge_cond(Compiler *c, IrIns *cond) {
+    assert(cond->op == IR_CONDBR);
     IrIns *k_true = new_ir(IR_IMM); // True and false constants
     k_true->imm = 1;
     k_true->type = t_prim(T_i1, 0);
@@ -361,6 +353,36 @@ static IrIns * discharge(Compiler *c, IrIns *cond) {
     phi_ins->type = t_prim(T_i1, 0);
     emit(c, phi_ins);
     return phi_ins;
+}
+
+static IrIns * discharge_array(Compiler *c, IrIns *array) {
+    assert(is_arr(array->type));
+    // Convert the array into a pointer by accessing its 0th element
+    IrIns *zero = new_ir(IR_IMM);
+    zero->imm = 0;
+    zero->type = t_prim(T_i64, 0); // Always unsigned
+    emit(c, zero);
+    IrIns *elem = new_ir(IR_ELEM);
+    elem->l = array;
+    elem->r = zero;
+    elem->type = t_ptr(t_copy(array->type->elem));
+    emit(c, elem);
+    return elem;
+}
+
+// Performs several conversions that make values usable in expressions:
+// * Converts condition expressions into values by (1) emitting a phi
+//   instruction if there's more than one true or false branch chain to patch;
+//   or (2) removing the CONDBR instruction and referring to the underlying
+//   comparison instruction if there's only one branch (no need for a phi)
+// * Converts array objects into a pointer to its 0th element
+static IrIns * discharge(Compiler *c, IrIns *ins) {
+    if (ins->op == IR_CONDBR) {
+        return discharge_cond(c, ins);
+    } else if (ins->type && is_arr(ins->type)) {
+        return discharge_array(c, ins);
+    }
+    return ins; // Doesn't need to be discharged
 }
 
 // Convert a compiled expression into a condition (e.g., for an if or while
@@ -437,37 +459,35 @@ static IrIns * compile_operation(Compiler *c, Expr *binary) {
 
 // For '<ptr> + <integer>' or '<ptr> - <integer>'
 static IrIns * compile_ptr_arith(Compiler *c, Expr *binary) {
-    // Exactly one of 'binary->l' or 'binary->r' is a pointer
+    // Exactly one of 'binary->l' or 'binary->r' is a pointer/array -> make sure
+    // we DON'T discharge an array! Saves an IR_ELEM instruction
     IrIns *left = compile_expr(c, binary->l);
-    left = discharge(c, left);
+    if (!is_ptr_arr(binary->l->type)) {
+        left = discharge(c, left);
+    }
     IrIns *right = compile_expr(c, binary->r);
-    right = discharge(c, right);
+    if (!is_ptr_arr(binary->r->type)) {
+        right = discharge(c, right);
+    }
 
-    IrIns *ptr = is_ptr(binary->l->type) ? left : right;
-    IrIns *to_add = is_ptr(binary->l->type) ? right : left;
+    IrIns *ptr = is_ptr_arr(binary->l->type) ? left : right;
+    IrIns *to_add = is_ptr_arr(binary->l->type) ? right : left;
     if (binary->op == '-') { // Negate the offset if needed
         IrIns *zero = new_ir(IR_IMM);
         zero->imm = 0;
         zero->type = t_copy(to_add->type);
+        emit(c, zero);
         IrIns *sub = new_ir(IR_SUB);
         sub->l = zero;
         sub->r = to_add;
         sub->type = t_copy(to_add->type);
+        emit(c, sub);
         to_add = sub;
     }
 
-    IrIns *amount = new_ir(IR_IMM);
-    amount->imm = bytes(ptr->type->ptr);
-    amount->type = t_copy(to_add->type);
-    emit(c, amount);
-    IrIns *mul = new_ir(IR_MUL);
-    mul->l = to_add;
-    mul->r = amount;
-    mul->type = t_copy(to_add->type);
-    emit(c, mul);
     IrIns *elem = new_ir(IR_ELEM);
     elem->l = ptr;
-    elem->r = mul;
+    elem->r = to_add;
     elem->type = to_ptr(ptr->type); // Results in a POINTER
     emit(c, elem);
     return elem;
@@ -604,11 +624,11 @@ static IrIns * compile_comma(Compiler *c, Expr *comma) {
 static IrIns * compile_binary(Compiler *c, Expr *binary) {
     switch (binary->op) {
     case '-':
-        if (is_ptr(binary->l->type) && is_ptr(binary->r->type)) {
+        if (is_ptr_arr(binary->l->type) && is_ptr_arr(binary->r->type)) {
             return compile_ptr_sub(c, binary); // <ptr> - <ptr>
         } // Fall through...
     case '+':
-        if (is_ptr(binary->l->type) || is_ptr(binary->r->type)) {
+        if (is_ptr_arr(binary->l->type) || is_ptr_arr(binary->r->type)) {
             return compile_ptr_arith(c, binary); // <ptr> + <integer>
         } // Fall through...
     case '*': case '/': case '%':
@@ -752,8 +772,24 @@ static IrIns * compile_conv(Compiler *c, Expr *conv) {
 
 static IrIns * compile_local(Compiler *c, Expr *expr) {
     assert(expr->local->alloc); // Check the local has been allocated
-    IrIns *load = new_ir(IR_LOAD);
-    load->l = expr->local->alloc;
+    Type *t = expr->local->alloc->type;
+    IrIns *load;
+    if (is_ptr(t) && is_arr(t->ptr)) { // Loading a pointer to an array
+        IrIns *zero = new_ir(IR_IMM);
+        zero->imm = 0;
+        zero->type = t_prim(T_i64, 0);
+        emit(c, zero);
+        load = new_ir(IR_ELEM);
+        load->l = expr->local->alloc;
+        load->r = zero;
+    } else if (is_arr(t)) {
+        load = expr->local->alloc; // The array itself -> nothing to load
+    } else if (is_ptr(t)) {
+        load = new_ir(IR_LOAD); // Any other normal variable
+        load->l = expr->local->alloc;
+    } else {
+        assert(0); // Shouldn't happen!
+    }
     load->type = t_copy(expr->type);
     emit(c, load);
     return load;
