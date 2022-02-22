@@ -174,6 +174,10 @@ static void ensure_lvalue(Expr *lvalue) {
         trigger_error_at(lvalue->tk, "array type '%s' is not assignable",
                          type_to_str(lvalue->type));
     }
+    if (is_incomplete(lvalue->type)) {
+        trigger_error_at(lvalue->tk, "incomplete type '%s' is not assignable",
+                         type_to_str(lvalue->type));
+    }
 }
 
 static void ensure_can_take_addr(Expr *operand) {
@@ -1027,6 +1031,7 @@ static Declarator parse_declarator(Parser *p, Type *base, int is_abstract) {
 
 static Stmt * parse_declaration(Parser *p, Type *base_type, int allowed_defn) {
     Declarator declarator = parse_declarator(p, base_type, 0);
+    Local *local = def_local(p, declarator.name, declarator.type);
     Expr *value = NULL;
     if (allowed_defn && p->l.tk == '=') { // Optional assignment
         next_tk(&p->l); // Skip the '=' token
@@ -1034,7 +1039,7 @@ static Stmt * parse_declaration(Parser *p, Type *base_type, int allowed_defn) {
     }
 
     Stmt *result = new_stmt(STMT_DECL);
-    result->local = def_local(p, declarator.name, declarator.type);
+    result->local = local;
     if (value) {
         Expr *local_expr = new_expr(EXPR_LOCAL);
         local_expr->local = result->local;
