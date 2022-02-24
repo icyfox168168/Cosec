@@ -23,7 +23,7 @@ static char *NASM_MEM_PREFIX[] = {
 };
 
 static void write_gpr(int reg, GPRSize size, FILE *out) {
-    assert(size != REG_NONE);
+    assert(size != GPR_NONE);
     if (reg < LAST_GPR) {
         fprintf(out, "%s", GPR_NAMES[size][reg]);
     } else {
@@ -53,7 +53,7 @@ static void write_mem_op(AsmOperand op, FILE *out) {
     }
     fprintf(out, "[");
     write_gpr(op.base_reg, op.base_size, out); // Base
-    if (op.index_size > REG_NONE) { // Index
+    if (op.index_size > GPR_NONE) { // Index
         fprintf(out, " + ");
         write_gpr(op.index_reg, op.index_size, out);
         if (op.scale > 1) { // Scale
@@ -61,9 +61,9 @@ static void write_mem_op(AsmOperand op, FILE *out) {
         }
     }
     if (op.disp > 0) {
-        fprintf(out, " + %d", op.disp);
+        fprintf(out, " + %lli", op.disp);
     } else if (op.disp < 0) {
-        fprintf(out, " - %d", -op.disp);
+        fprintf(out, " - %lli", -op.disp);
     }
     fprintf(out, "]");
 }

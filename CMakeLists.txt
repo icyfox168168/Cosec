@@ -85,6 +85,10 @@ test(ptrs6 pointers/6.c)
 test(ptrs7 pointers/7.c)
 test(ptrs8 pointers/8.c)
 
+test(arrays1 arrays/1.c)
+test(arrays2 arrays/2.c)
+test(arrays3 arrays/3.c)
+
 test(float1 floats/1.c)
 test(float2 floats/2.c)
 test(float3 floats/3.c)

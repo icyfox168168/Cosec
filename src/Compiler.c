@@ -65,7 +65,7 @@ static IrIns * new_ir(IrOpcode op) {
 static void sanity_check(IrIns *ins) {
     if (ins->op == IR_STORE) {
         // Store <type> into <type>*
-        assert(ins->l->type->kind == T_PTR);
+        assert(is_ptr(ins->l->type));
         assert(are_equal(ins->l->type->ptr, ins->r->type));
     } else if (ins->op == IR_LOAD) {
         // Load from <type>* into <type>
@@ -699,6 +699,7 @@ static IrIns * compile_addr(Compiler *c, Expr *unary) {
 
 static IrIns * compile_deref(Compiler *c, Expr *unary) {
     IrIns *result = compile_expr(c, unary->l);
+    result = discharge(c, result);
     IrIns *load = new_ir(IR_LOAD);
     load->l = result;
     load->type = t_copy(unary->type);

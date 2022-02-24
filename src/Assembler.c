@@ -12,13 +12,6 @@ typedef struct {
     int next_gpr, next_sse; // Next virtual register slot to use
 } Assembler;
 
-static GPRSize GPR_SIZE[] = {
-    [1] = GPR_L,
-    [2] = GPR_W,
-    [4] = GPR_D,
-    [8] = GPR_Q,
-};
-
 // Tells us which register each function argument is in, according to the
 // System V ABI. The array is indexed by function argument number, where 0 is
 // the left-most argument. Floating point function arguments are indexed
@@ -137,46 +130,62 @@ void delete_asm(AsmIns *ins) {
     }
 }
 
-// Returns the correct 'mov' operation for the type (changes if the type is
-// a floating point)
-static AsmOpcode mov_op(Type *t) {
-    if (is_fp(t)) {
-        return t->prim == T_f32 ? X86_MOVSS : X86_MOVSD;
+static GPRSize GPR_SIZE[] = {
+    [1] = GPR_L,
+    [2] = GPR_W,
+    [4] = GPR_D,
+    [8] = GPR_Q,
+};
+
+// Returns the register size to use for a specific type
+static GPRSize gpr_size(Type *t) {
+    if (is_arr(t)) {
+        return GPR_Q; // Treat all arrays as pointers
     } else {
-        return X86_MOV;
+        return GPR_SIZE[bytes(t)];
     }
 }
 
 static AsmOperand discharge(Assembler *a, IrIns *ins); // Forward declarations
-static void asm_cmp(Assembler *a, IrIns *ir_cmp);
+static AsmOperand to_mem_operand(Assembler *a, IrIns *ir_ptr);
 
-// Converts a pointer instruction (i.e., IR_ALLOC, IR_IDX, or some other pointer
-// value) to a memory access assembly operand, e.g., to [rbp - 4] or [rax]
-static AsmOperand to_mem_operand(Assembler *a, IrIns *ir_ptr) {
+static AsmOperand alloc_to_mem_operand(IrIns *ir_alloc) {
     AsmOperand result;
-    if (ir_ptr->op == IR_ALLOC) { // Load from stack
-        result.type = OP_MEM;      // From memory
-        result.base_reg = GPR_RBP; // Offset relative to rbp
-        result.base_size = GPR_Q;
-        result.index_reg = 0;
-        result.index_size = REG_NONE;
-        result.scale = 1;
-        result.disp = -ir_ptr->stack_slot;
-    } else { // Load from a vreg
-        AsmOperand l = discharge(a, ir_ptr);
-        result.type = OP_MEM;      // From memory
-        result.base_reg = l.reg;   // Indexed by a vreg
-        result.base_size = l.size; // Should be GPR_Q
-        assert(l.size == GPR_Q);
-        result.index_reg = 0;
-        result.index_size = REG_NONE;
-        result.scale = 1;
-        result.disp = 0;
-    }
+    result.type = OP_MEM;      // From memory
+    result.base_reg = GPR_RBP; // Offset relative to rbp
+    result.base_size = GPR_Q;
+    result.index_reg = 0;
+    result.index_size = GPR_NONE;
     result.scale = 1;
-    // Number of bytes to read/write from memory
+    result.disp = -ir_alloc->stack_slot;
+    result.access_size = bytes(ir_alloc->type->ptr);
+    return result;
+}
+
+static AsmOperand vreg_ptr_to_mem_operand(Assembler *a, IrIns *ir_ptr) {
+    AsmOperand l = discharge(a, ir_ptr);
+    AsmOperand result;
+    result.type = OP_MEM;      // From memory
+    result.base_reg = l.reg;   // Indexed by a vreg
+    result.base_size = l.size; // Should be GPR_Q
+    assert(l.size == GPR_Q);
+    result.index_reg = 0;
+    result.index_size = GPR_NONE;
+    result.scale = 1;
+    result.disp = 0;
     result.access_size = bytes(ir_ptr->type->ptr);
     return result;
+}
+
+// Converts a pointer instruction (i.e., IR_ALLOC, IR_ELEM, or some other
+// pointer value stored in a vreg) to a memory access assembly operand,
+// e.g., to [rbp - 4] or [rax]
+static AsmOperand to_mem_operand(Assembler *a, IrIns *ir_ptr) {
+    switch (ir_ptr->op) {
+        case IR_ALLOC: return alloc_to_mem_operand(ir_ptr);
+        default:       return vreg_ptr_to_mem_operand(a, ir_ptr);
+        // TODO: could incorporate IR_ELEM here for efficiency
+    }
 }
 
 static AsmOperand discharge_imm(Assembler *a, IrIns *ir_k) {
@@ -184,7 +193,7 @@ static AsmOperand discharge_imm(Assembler *a, IrIns *ir_k) {
     AsmIns *mov = new_asm(X86_MOV);
     mov->l.type = OP_GPR;
     mov->l.reg = ir_k->vreg;
-    mov->l.size = GPR_SIZE[bytes(ir_k->type)];
+    mov->l.size = gpr_size(ir_k->type);
     mov->r.type = OP_IMM;
     mov->r.imm = ir_k->imm;
     emit(a, mov);
@@ -193,7 +202,7 @@ static AsmOperand discharge_imm(Assembler *a, IrIns *ir_k) {
 
 static AsmOperand discharge_fp_const(Assembler *a, IrIns *ir_k) {
     ir_k->vreg = a->next_sse++;
-    AsmIns *mov = new_asm(mov_op(ir_k->type));
+    AsmIns *mov = new_asm(ir_k->type->prim == T_f32 ? X86_MOVSS : X86_MOVSD);
     mov->l.type = OP_XMM;
     mov->l.reg = ir_k->vreg;
     mov->r.type = OP_CONST;
@@ -208,7 +217,7 @@ static AsmOperand discharge_str_const(Assembler *a, IrIns *ir_k) {
     AsmIns *mov = new_asm(X86_LEA);
     mov->l.type = OP_GPR;
     mov->l.reg = ir_k->vreg;
-    mov->l.size = GPR_SIZE[bytes(ir_k->type)];
+    mov->l.size = gpr_size(ir_k->type);
     mov->r.type = OP_CONST;
     mov->r.imm = ir_k->const_idx;
     emit(a, mov);
@@ -228,7 +237,7 @@ static AsmOperand discharge_const(Assembler *a, IrIns *ir_k) {
 
 static AsmOperand discharge_fp_load(Assembler *a, IrIns *ir_load) {
     ir_load->vreg = a->next_sse++;
-    AsmIns *mov = new_asm(mov_op(ir_load->type));
+    AsmIns *mov = new_asm(ir_load->type->prim == T_f32 ? X86_MOVSS : X86_MOVSD);
     mov->l.type = OP_XMM; // Load into a vreg
     mov->l.reg = ir_load->vreg;
     mov->r = to_mem_operand(a, ir_load->l);
@@ -244,7 +253,7 @@ static AsmOperand discharge_load(Assembler *a, IrIns *ir_load) {
     AsmIns *mov = new_asm(X86_MOV);
     mov->l.type = OP_GPR; // Load into a vreg
     mov->l.reg = ir_load->vreg;
-    mov->l.size = GPR_SIZE[bytes(ir_load->type)];
+    mov->l.size = gpr_size(ir_load->type);
     mov->r = to_mem_operand(a, ir_load->l);
     emit(a, mov);
     return mov->l;
@@ -255,12 +264,14 @@ static AsmOperand discharge_alloc(Assembler *a, IrIns *ir_alloc) {
     AsmIns *lea = new_asm(X86_LEA);
     lea->l.type = OP_GPR;
     lea->l.reg = ir_alloc->vreg;
-    lea->l.size = GPR_SIZE[bytes(ir_alloc->type)];
+    lea->l.size = gpr_size(ir_alloc->type);
     lea->r = to_mem_operand(a, ir_alloc);
     lea->r.access_size = 0; // Don't care about bytes for a LEA instruction
     emit(a, lea);
     return lea->l;
 }
+
+static void asm_cmp(Assembler *a, IrIns *ir_cmp); // Forward declaration
 
 static AsmOperand discharge_rel(Assembler *a, IrIns *ir_rel) {
     asm_cmp(a, ir_rel); // Emit a comparison instruction
@@ -288,7 +299,7 @@ static AsmOperand discharge(Assembler *a, IrIns *ins) {
             result.type = OP_XMM;
         } else { // Result in a GPR
             result.type = OP_GPR;
-            result.size = GPR_SIZE[bytes(ins->type)];
+            result.size = gpr_size(ins->type);
         }
         result.reg = ins->vreg;
         return result;
@@ -350,7 +361,7 @@ static AsmOperand inline_imm_mem(Assembler *a, IrIns *ir_ins) {
 }
 
 static void asm_fp_farg(Assembler *a, IrIns *ir_farg) {
-    AsmIns *mov = new_asm(mov_op(ir_farg->type));
+    AsmIns *mov = new_asm(ir_farg->type->prim == T_f32 ? X86_MOVSS : X86_MOVSD);
     ir_farg->vreg = a->next_sse++;
     mov->l.type = OP_XMM;
     mov->l.reg = ir_farg->vreg;
@@ -370,7 +381,7 @@ static void asm_farg(Assembler *a, IrIns *ir_farg) {
     ir_farg->vreg = a->next_gpr++;
     mov->l.type = OP_GPR;
     mov->l.reg = ir_farg->vreg;
-    mov->l.size = GPR_SIZE[bytes(ir_farg->type)];
+    mov->l.size = gpr_size(ir_farg->type);
     mov->r.type = OP_GPR;
     // Pull the argument out of the register specified by the ABI
     mov->r.reg = FN_ARGS_GPRS[ir_farg->arg_num];
@@ -393,7 +404,16 @@ static void asm_alloc(Assembler *a, IrIns *ir_alloc) {
 static void asm_store(Assembler *a, IrIns *ir_store) {
     // The right operand has to be either an immediate or vreg (NOT memory)
     AsmOperand r = inline_imm(a, ir_store->r);
-    AsmIns *mov = new_asm(mov_op(ir_store->r->type)); // Store into memory
+    Type *t = ir_store->r->type;
+    AsmOpcode op;
+    if (is_fp(t) && t->prim == T_f32) {
+        op = X86_MOVSS;
+    } else if (is_fp(t) && t->prim == T_f64) {
+        op = X86_MOVSD;
+    } else {
+        op = X86_MOV;
+    }
+    AsmIns *mov = new_asm(op); // Store into memory
     mov->l = to_mem_operand(a, ir_store->l);
     mov->r = r;
     emit(a, mov);
@@ -411,13 +431,62 @@ static void asm_load(Assembler *a, IrIns *ir_load) {
     discharge_load(a, ir_load);
 }
 
+static void asm_elem(Assembler *a, IrIns *ir_elem) {
+    // TODO: can merge chained IR_ELEM instructions
+    AsmOperand base = discharge(a, ir_elem->l); // Base always a vreg
+    AsmOperand index = inline_imm(a, ir_elem->r);
+    if (index.type == OP_IMM && index.imm == 0) {
+        // Doesn't modify the pointer! So point to the base pointer
+        ir_elem->vreg = base.reg;
+        return;
+    }
+
+    int index_reg = -1;
+    if (index.type == OP_GPR) {
+        index_reg = a->next_gpr++;
+        AsmIns *mov = new_asm(X86_MOV);
+        mov->l.type = OP_GPR;
+        mov->l.reg = index_reg;
+        mov->r = index;
+        emit(a, mov);
+        AsmIns *mul = new_asm(X86_MUL); // TODO: mul by 1,2,4,8 can be folded into OP_MEM
+        mul->l = mov->l;
+        mul->r.type = OP_IMM;
+        mul->r.imm = bytes(ir_elem->type->ptr);
+        emit(a, mul);
+    }
+
+    ir_elem->vreg = a->next_gpr++;
+    AsmIns *lea = new_asm(X86_LEA);
+    lea->l.type = OP_GPR;
+    lea->l.reg = ir_elem->vreg;
+    lea->r.type = OP_MEM;
+    lea->r.base_reg = base.reg;
+    assert(base.size == GPR_Q);
+    lea->r.base_size = GPR_Q; // Must be i64
+    if (index.type == OP_IMM) {
+        lea->r.index_reg = 0;
+        lea->r.index_size = GPR_NONE;
+        lea->r.scale = 1;
+        lea->r.disp = (int64_t) index.imm * bytes(ir_elem->type->ptr);
+    } else { // OP_REG otherwise
+        lea->r.index_reg = index_reg;
+        assert(index.size == GPR_Q);
+        lea->r.index_size = GPR_Q; // Must be i64
+        lea->r.scale = 1;
+        lea->r.disp = 0;
+    }
+    lea->r.access_size = 0; // Irrelevant for LEA
+    emit(a, lea);
+}
+
 // Emits arithmetic operation for floating point values
 static void asm_fp_arith(Assembler *a, IrIns *ir_arith) {
     AsmOperand l = discharge(a, ir_arith->l); // Left operand always a vreg
     AsmOperand r = inline_imm_mem(a, ir_arith->r);
     ir_arith->vreg = a->next_sse++; // Allocate a new vreg for the result
 
-    AsmIns *mov = new_asm(mov_op(ir_arith->type)); // Emit mov for the new vreg
+    AsmIns *mov = new_asm(ir_arith->type->prim == T_f32 ? X86_MOVSS : X86_MOVSD);
     mov->l.type = OP_XMM;
     mov->l.reg = ir_arith->vreg;
     mov->r = l;
@@ -466,7 +535,6 @@ static void asm_arith(Assembler *a, IrIns *ir_arith) {
         case IR_AND:  op = X86_AND; break;
         case IR_OR:   op = X86_OR;  break;
         case IR_XOR:  op = X86_XOR; break;
-        case IR_ELEM: op = X86_ADD; break; // Pointer offset calculation
         default: UNREACHABLE();
     }
     AsmIns *arith = new_asm(op);
@@ -509,7 +577,7 @@ static void asm_div_mod(Assembler *a, IrIns *ir_div) {
     AsmIns *mov2 = new_asm(X86_MOV); // Move the result into a new vreg
     mov2->l.type = OP_GPR;
     mov2->l.reg = ir_div->vreg;
-    mov2->l.size = GPR_SIZE[bytes(ir_div->type)];
+    mov2->l.size = gpr_size(ir_div->type);
     mov2->r.type = OP_GPR;
     if (ir_div->op == IR_SDIV || ir_div->op == IR_UDIV) {
         mov2->r.reg = GPR_RAX; // Division (quotient in rax)
@@ -578,7 +646,7 @@ static void asm_ext(Assembler *a, IrIns *ir_ext, AsmOpcode op) {
     AsmIns *mov = new_asm(op); // Move into a larger reg
     mov->l.type = OP_GPR;
     mov->l.reg = ir_ext->vreg;
-    mov->l.size = GPR_SIZE[bytes(ir_ext->type)];
+    mov->l.size = gpr_size(ir_ext->type);
     mov->r = src;
     emit(a, mov);
 }
@@ -592,7 +660,7 @@ static void asm_trunc(Assembler *a, IrIns *ir_trunc) {
     // We can't do mov ax, qword [rbp-4]; we have to mov into a register the
     // same size as the SOURCE, then use the truncated register (i.e., ax) in
     // future instructions
-    mov->l.size = GPR_SIZE[bytes(ir_trunc->l->type)];
+    mov->l.size = gpr_size(ir_trunc->l->type);
     mov->r = src;
     emit(a, mov);
 }
@@ -617,7 +685,7 @@ static void asm_fp_to_int(Assembler *a, IrIns *ir_conv) {
     AsmIns *mov = new_asm(op); // Move into a larger reg
     mov->l.type = OP_GPR;
     mov->l.reg = ir_conv->vreg;
-    mov->l.size = GPR_SIZE[bytes(ir_conv->l->type)];
+    mov->l.size = gpr_size(ir_conv->l->type);
     mov->r = src;
     emit(a, mov);
 }
@@ -646,7 +714,7 @@ static void asm_ptr_conv(Assembler *a, IrIns *ir_conv) {
     AsmIns *mov = new_asm(X86_MOV);
     mov->l.type = OP_GPR;
     mov->l.reg = ir_conv->vreg;
-    mov->l.size = GPR_SIZE[bytes(ir_conv->type)];
+    mov->l.size = gpr_size(ir_conv->type);
     mov->r = src;
     emit(a, mov);
 }
@@ -697,7 +765,7 @@ static void asm_ret1(Assembler *a, IrIns *ir_ret) {
     AsmIns *mov = new_asm(needs_sext ? X86_MOVSX : X86_MOV);
     mov->l.type = OP_GPR;
     mov->l.reg = GPR_RAX;
-    mov->l.size = needs_sext ? GPR_D : GPR_SIZE[bytes(ir_ret->l->type)];
+    mov->l.size = needs_sext ? GPR_D : gpr_size(ir_ret->l->type);
     mov->r = result;
     emit(a, mov);
     asm_ret0(a);
@@ -713,9 +781,9 @@ static void asm_ins(Assembler *a, IrIns *ir_ins) {
     case IR_ALLOC: asm_alloc(a, ir_ins); break;
     case IR_STORE: asm_store(a, ir_ins); break;
     case IR_LOAD:  asm_load(a, ir_ins); break;
+    case IR_ELEM:  asm_elem(a, ir_ins); break;
 
         // Arithmetic
-    case IR_ELEM: // IR_ELEM compiles to just an addition
     case IR_ADD: case IR_SUB: case IR_MUL: case IR_FDIV:
     case IR_AND: case IR_OR: case IR_XOR:
         asm_arith(a, ir_ins); break;

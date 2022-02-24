@@ -301,15 +301,15 @@ static Type * promote_binary_int(Type *lt, Type *rt) {
         return t_prim(T_i32, 1);
     } else if (bits(lt) == bits(rt) && lt->is_signed == rt->is_signed) {
         // 1. Types are equal
-        return lt;
+        return t_copy(lt);
     } else if (lt->is_signed == rt->is_signed) {
         // 2. Both signed or unsigned -> convert to larger type
-        return bits(lt) > bits(rt) ? lt : rt;
+        return bits(lt) > bits(rt) ? t_copy(lt) : t_copy(rt);
     } else {
         // 3. and 4. pick the larger type; if they're both the same size then
         // pick the unsigned type
         Type *st = lt->is_signed ? lt : rt, *ut = lt->is_signed ? rt : lt;
-        return bits(ut) >= bits(st) ? ut : st;
+        return bits(ut) >= bits(st) ? t_copy(ut) : t_copy(st);
     }
 }
 
@@ -319,9 +319,9 @@ static Type * promote_binary_arith(Type *lt, Type *rt) {
     if (is_int(lt) && is_int(rt)) { // Both ints
         return promote_binary_int(lt, rt);
     } else if (is_fp(lt) && is_fp(rt)) { // Both floats
-        return bits(lt) > bits(rt) ? lt : rt; // Pick larger
+        return bits(lt) > bits(rt) ? t_copy(lt) : t_copy(rt); // Pick larger
     } else { // One's a float and one's an int
-        return is_fp(lt) ? lt : rt; // Pick float type
+        return is_fp(lt) ? t_copy(lt) : t_copy(rt); // Pick float type
     }
 }
 
@@ -332,7 +332,7 @@ static Type * promote_unary_arith(Type *t) {
         // Implicit promotion to (signed) 'int' for "small" integer types
         return t_prim(T_i32, 1);
     } else {
-        return t; // No conversion necessary
+        return t_copy(t); // No conversion necessary
     }
 }
 
@@ -351,7 +351,7 @@ static Expr * to_cond(Expr *expr) {
     // a pointer, then this constant is equivalent to a null pointer
     Expr *zero = new_expr(EXPR_KINT);
     zero->kint = 0;
-    zero->type = expr->type;
+    zero->type = t_copy(expr->type);
     zero->tk = expr->tk;
     return parse_eq(TK_NEQ, expr, zero);
 }
@@ -440,14 +440,14 @@ static Expr * parse_assign(Expr *l, Expr *r) {
     assign->op = '=';
     assign->l = l;
     assign->r = r;
-    assign->type = l->type;
+    assign->type = t_copy(l->type);
     assign->tk = merge_tks(l->tk, r->tk);
     return assign;
 }
 
 static Expr * parse_arith_assign(Tk op, Expr *l, Expr *r) {
     ensure_lvalue(l);
-    Type *lvalue_type = l->type;
+    Type *lvalue_type = t_copy(l->type);
     Tk arith_op = ASSIGNMENT_TO_ARITH_OP[op];
     Expr *assign = parse_arith(arith_op, l, r);
     assign->op = op;
@@ -517,7 +517,7 @@ static Expr * parse_comma(Expr *l, Expr *r) {
     comma->op = ',';
     comma->l = l;
     comma->r = r;
-    comma->type = r->type; // Comma results in its r operand
+    comma->type = t_copy(r->type); // Comma results in its r operand
     comma->tk = merge_tks(l->tk, r->tk);
     return comma;
 }
@@ -604,7 +604,7 @@ static Expr * parse_local(Parser *p) {
     }
     Expr *expr = new_expr(EXPR_LOCAL);
     expr->local = local;
-    expr->type = local->type;
+    expr->type = t_copy(local->type);
     expr->tk = p->l.info;
     next_tk(&p->l);
     return expr;
@@ -630,7 +630,7 @@ static Expr * parse_postfix_inc_dec(Tk op, Expr *operand) {
     Expr *postfix = new_expr(EXPR_POSTFIX);
     postfix->op = op;
     postfix->l = operand;
-    postfix->type = operand->type;
+    postfix->type = t_copy(operand->type);
     return postfix;
 }
 
@@ -653,7 +653,7 @@ static Expr * parse_array_access(Parser *p, Expr *array) {
     array_access->op = '[';
     array_access->l = array;
     array_access->r = index;
-    array_access->type = array->type->ptr;
+    array_access->type = t_copy(array->type->ptr);
     array_access->tk = merge_tks(array->tk, index->tk);
     return array_access;
 }
@@ -701,7 +701,7 @@ static Expr * parse_deref(Expr *operand) {
     Expr *deref = new_expr(EXPR_UNARY);
     deref->op = '*';
     deref->l = operand;
-    deref->type = operand->type->ptr;
+    deref->type = t_copy(operand->type->ptr);
     return deref;
 }
 
@@ -711,7 +711,7 @@ static Expr * parse_prefix_inc_dec(Tk op, Expr *operand) {
     Expr *prefix = new_expr(EXPR_UNARY);
     prefix->op = op;
     prefix->l = operand;
-    prefix->type = operand->type;
+    prefix->type = t_copy(operand->type);
     return prefix;
 }
 
@@ -748,6 +748,7 @@ static Expr * parse_cast(Parser *p, TkInfo start_tk) {
 static Expr * parse_braced_subexpr(Parser *p) {
     Expr *expr = parse_subexpr(p, PREC_NONE);
     expect_tk(&p->l, ')');
+    expr->tk = merge_tks(expr->tk, p->l.info);
     next_tk(&p->l);
     return expr;
 }

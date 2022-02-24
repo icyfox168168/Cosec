@@ -95,7 +95,6 @@ Type * to_ptr(Type *t) {
     } else if (t->kind == T_ARR) {
         Type *copy = t_copy(t);
         copy->kind = T_PTR;
-        copy->ptr = t->elem;
         return copy;
     } else {
         UNREACHABLE();

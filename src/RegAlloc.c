@@ -164,10 +164,10 @@ static int live_ranges_for_bb(RegGroup r, LiveRange *ranges, int num_regs,
         // the live ranges of GPRs!)
         if (r.in_mem_ops && (ins->l.type == OP_MEM || ins->r.type == OP_MEM)) {
             AsmOperand *mem_op = ins->l.type == OP_MEM ? &ins->l : &ins->r;
-            if (mem_op->base_size > REG_NONE) {
+            if (mem_op->base_size > GPR_NONE) {
                 live[mem_op->base_reg] = 1; // Base reg is used
             }
-            if (mem_op->index_size > REG_NONE) {
+            if (mem_op->index_size > GPR_NONE) {
                 live[mem_op->index_reg] = 1; // Index reg is used
             }
         }
@@ -681,10 +681,10 @@ static void replace_vreg(RegGroup r, AsmOperand *o, int *reg_map,
     if (o->type == r.reg_op) {
         o->reg = map_vreg(r, o->reg, reg_map, coalesce_map);
     } else if (r.in_mem_ops && o->type == OP_MEM) { // Only for GPRs!
-        if (o->base_size > REG_NONE) {
+        if (o->base_size > GPR_NONE) {
             o->base_reg = map_vreg(r, o->base_reg, reg_map, coalesce_map);
         }
-        if (o->index_size > REG_NONE) {
+        if (o->index_size > GPR_NONE) {
             o->index_reg = map_vreg(r, o->index_reg, reg_map, coalesce_map);
         }
     }

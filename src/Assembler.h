@@ -41,7 +41,7 @@ typedef enum {
 } GPReg;
 
 typedef enum {
-    REG_NONE, // Don't use the reg
+    GPR_NONE, // Don't use the reg
     GPR_L,    // Lowest 8 bits (e.g., al)
     REG_H,    // Highest 8 bits of the lowest 16 bits (e.g., ah)
     GPR_W,    // Lowest 16 bits (e.g., ax)
@@ -212,7 +212,8 @@ typedef struct {
             int access_size;
             int base_reg; GPRSize base_size;
             int index_reg; GPRSize index_size;
-            int scale, disp;
+            int scale;
+            int64_t disp;
         };
         struct { // OP_CONST
             int _access_size;
