@@ -31,7 +31,7 @@ Expr * new_expr(ExprType kind) {
     return expr;
 }
 
-static Local * find_local(Parser *p, char *name, int len) {
+static Local * find_local(Parser *p, char *name, size_t len) {
     for (Local *l = p->locals; l; l = l->next) {
         if (strlen(l->name) == len && strncmp(l->name, name, len) == 0) {
             return l;
@@ -597,7 +597,7 @@ static Expr * parse_kstr(Parser *p) {
 static Expr * parse_local(Parser *p) {
     expect_tk(&p->l, TK_IDENT);
     char *name = p->l.ident;
-    int len = p->l.len;
+    size_t len = p->l.len;
     Local *local = find_local(p, name, len);
     if (!local) { // Check the local exists
         trigger_error_at(p->l.info, "undeclared identifier '%.*s'", len, name);
@@ -621,7 +621,7 @@ static Expr * parse_operand(Parser *p) {
     }
 }
 
-static Expr * parse_postfix_inc_dec(Tk op, Expr *operand) {
+static Expr * parse_postfix_inc_dec(Parser *p, Tk op, Expr *operand) {
     // Note we can't just expand postfix a++ or a-- to a = a + 1, since the
     // result of this assignment would be the ADDITION, not the value of 'a'
     // BEFORE the addition -- we have to pass on the postfix to the compiler.
@@ -631,6 +631,8 @@ static Expr * parse_postfix_inc_dec(Tk op, Expr *operand) {
     postfix->op = op;
     postfix->l = operand;
     postfix->type = t_copy(operand->type);
+    postfix->tk = merge_tks(operand->tk, p->l.info);
+    next_tk(&p->l); // Skip the operator
     return postfix;
 }
 
@@ -659,21 +661,17 @@ static Expr * parse_array_access(Parser *p, Expr *array) {
 }
 
 static Expr * parse_postfix(Parser *p, Expr *operand) {
-    Tk op = p->l.tk;
-    if (!POSTFIX_PREC[op]) { // No postfix operation
-        return operand;
-    }
-    Expr *postfix;
-    switch (op) {
-    case TK_INC: case TK_DEC:
-        postfix = parse_postfix_inc_dec(op, operand);
-        postfix->tk = merge_tks(operand->tk, p->l.info);
-        next_tk(&p->l); // Skip the operator
-        break;
-    case '[':
-        postfix = parse_array_access(p, operand);
-        break;
-    default: UNREACHABLE();
+    Expr *postfix = operand;
+    while (POSTFIX_PREC[p->l.tk]) {
+        switch (p->l.tk) {
+        case TK_INC: case TK_DEC:
+            postfix = parse_postfix_inc_dec(p, p->l.tk, postfix);
+            break;
+        case '[':
+            postfix = parse_array_access(p, postfix);
+            break;
+        default: UNREACHABLE();
+        }
     }
     return postfix;
 }
@@ -979,46 +977,42 @@ static Type * parse_type_specs(Parser *p) {
     return t_prim(TYPE_COMBINATION_TO_PRIM[combination], is_signed);
 }
 
-// Forward declaration
-static void parse_declarator_internal(Parser *p, Declarator *decl);
-
-static void parse_direct_declarator(Parser *p, Declarator *decl) {
+static Type ** parse_declarator_recursive(Parser *p, Declarator *d, Type **t) {
+    int num_ptrs = 0;
+    while (p->l.tk == '*') {
+        num_ptrs++;
+        d->tk = merge_tks(d->tk, p->l.info);
+        next_tk(&p->l);
+    }
     switch (p->l.tk) {
     case TK_IDENT:
-        decl->name = p->l.info;
-        decl->tk = merge_tks(decl->tk, p->l.info);
+        d->name = p->l.info;
+            d->tk = merge_tks(d->tk, p->l.info);
         next_tk(&p->l);
         break;
     case '(':
         next_tk(&p->l);
-        parse_declarator_internal(p, decl);
+        t = parse_declarator_recursive(p, d, t);
         expect_tk(&p->l, ')');
-        decl->tk = merge_tks(decl->tk, p->l.info);
+        d->tk = merge_tks(d->tk, p->l.info);
         next_tk(&p->l);
         break;
     default: break;
     }
-    while (p->l.tk == '[') { // Arrays
+    while (p->l.tk == '[') {
         next_tk(&p->l);
         uint64_t size = parse_const_expr(p);
         expect_tk(&p->l, ']');
-        decl->tk = merge_tks(decl->tk, p->l.info);
+        d->tk = merge_tks(d->tk, p->l.info);
         next_tk(&p->l);
-        decl->type = t_arr(decl->type, size);
+        *t = t_arr(NULL, size);
+        t = &(*t)->elem;
     }
-}
-
-static void parse_declarator_internal(Parser *p, Declarator *decl) {
-    int num_ptrs = 0;
-    while (p->l.tk == '*') {
-        num_ptrs++;
-        decl->tk = merge_tks(decl->tk, p->l.info);
-        next_tk(&p->l);
+    while (num_ptrs--) {
+        *t = t_ptr(NULL);
+        t = &(*t)->ptr;
     }
-    parse_direct_declarator(p, decl);
-    for (int i = 0; i < num_ptrs; i++) { // Pointers come at the end
-        decl->type = t_ptr(decl->type);
-    }
+    return t;
 }
 
 static Declarator parse_declarator(Parser *p, Type *base, int is_abstract) {
@@ -1026,7 +1020,8 @@ static Declarator parse_declarator(Parser *p, Type *base, int is_abstract) {
     d.type = base;
     d.name.start = NULL;
     d.tk = p->l.info; // Start token
-    parse_declarator_internal(p, &d);
+    Type **inner = parse_declarator_recursive(p, &d, &d.type);
+    *inner = base;
     if (is_abstract && d.name.start) {
         trigger_error_at(d.name, "variable name not permitted here");
     } else if (!is_abstract && !d.name.start) {

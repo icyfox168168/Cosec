@@ -4,7 +4,7 @@ project(Cosec C)
 set(CMAKE_C_STANDARD 99)
 
 # Set some debug and release flags
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra")
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O0 -g")
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3")
 
@@ -88,6 +88,8 @@ test(ptrs8 pointers/8.c)
 test(arrays1 arrays/1.c)
 test(arrays2 arrays/2.c)
 test(arrays3 arrays/3.c)
+test(arrays4 arrays/4.c)
+test(arrays5 arrays/5.c)
 
 test(float1 floats/1.c)
 test(float2 floats/2.c)

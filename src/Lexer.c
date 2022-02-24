@@ -105,7 +105,7 @@ static void lex_ident(Lexer *l) {
     while (isalnum(*l->c) || *l->c == '_') { // Find the end of the identifier
         l->c++;
     }
-    int len = (int) (l->c - start); // Length of the identifier
+    size_t len = l->c - start; // Length of the identifier
     for (int i = 0; KEYWORDS[i]; i++) { // Check identifier isn't a keyword
         char *keyword = KEYWORDS[i];
         if (strlen(keyword) == len && strncmp(keyword, start, len) == 0) {

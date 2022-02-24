@@ -580,13 +580,35 @@ static IrIns * compile_assign(Compiler *c, Expr *assign) {
     return right; // Assignment evaluates to its right operand
 }
 
+static IrIns * emit_load(Compiler *c, IrIns *to_load) {
+    IrIns *load;
+    if (is_ptr(to_load->type) && is_arr(to_load->type->ptr)) {
+        // Loading a pointer to an array
+        IrIns *zero = new_ir(IR_IMM);
+        zero->imm = 0;
+        zero->type = t_prim(T_i64, 0);
+        emit(c, zero);
+        load = new_ir(IR_ELEM);
+        load->l = to_load;
+        load->r = zero;
+        load->type = t_copy(to_load->type->ptr);
+        emit(c, load);
+    } else if (is_arr(to_load->type)) {
+        load = to_load; // The array itself -> nothing to load
+    } else if (is_ptr(to_load->type)) {
+        load = new_ir(IR_LOAD); // Any other normal variable
+        load->l = to_load;
+        load->type = t_copy(to_load->type->ptr);
+        emit(c, load);
+    } else {
+        assert(0); // Shouldn't happen!
+    }
+    return load;
+}
+
 static IrIns * compile_array_access(Compiler *c, Expr *access) {
     IrIns *ptr = compile_ptr_arith(c, access);
-    IrIns *load = new_ir(IR_LOAD); // Dereference the pointer
-    load->l = ptr;
-    load->type = t_copy(access->type);
-    emit(c, load);
-    return load;
+    return emit_load(c, ptr); // Load the array access
 }
 
 static IrIns * compile_and(Compiler *c, Expr *binary) {
@@ -773,27 +795,7 @@ static IrIns * compile_conv(Compiler *c, Expr *conv) {
 
 static IrIns * compile_local(Compiler *c, Expr *expr) {
     assert(expr->local->alloc); // Check the local has been allocated
-    Type *t = expr->local->alloc->type;
-    IrIns *load;
-    if (is_ptr(t) && is_arr(t->ptr)) { // Loading a pointer to an array
-        IrIns *zero = new_ir(IR_IMM);
-        zero->imm = 0;
-        zero->type = t_prim(T_i64, 0);
-        emit(c, zero);
-        load = new_ir(IR_ELEM);
-        load->l = expr->local->alloc;
-        load->r = zero;
-    } else if (is_arr(t)) {
-        load = expr->local->alloc; // The array itself -> nothing to load
-    } else if (is_ptr(t)) {
-        load = new_ir(IR_LOAD); // Any other normal variable
-        load->l = expr->local->alloc;
-    } else {
-        assert(0); // Shouldn't happen!
-    }
-    load->type = t_copy(expr->type);
-    emit(c, load);
-    return load;
+    return emit_load(c, expr->local->alloc);
 }
 
 static IrIns * compile_kint(Compiler *c, Expr *expr) {
