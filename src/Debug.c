@@ -75,13 +75,13 @@ static void print_expr(Expr *expr) {
         printf(" ( ");
         print_expr(expr->l);
         printf(" ");
-        print_tk(expr->op);
+        print_simple_tk(expr->op);
         printf(" )");
         break;
     case EXPR_UNARY:
         print_type(expr->type);
         printf(" ( ");
-        print_tk(expr->op);
+        print_simple_tk(expr->op);
         printf(" ");
         print_expr(expr->l);
         printf(" )");
@@ -89,7 +89,7 @@ static void print_expr(Expr *expr) {
     case EXPR_BINARY:
         print_type(expr->type);
         printf(" ( ");
-        print_tk(expr->op);
+        print_simple_tk(expr->op);
         printf(" ");
         print_expr(expr->l);
         printf(" ");

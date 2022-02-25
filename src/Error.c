@@ -73,30 +73,30 @@ void trigger_error(char *fmt, ...) {
     exit(1);
 }
 
-static void print_error_info(TkInfo at) {
-    if (!at.file) {
+static void print_error_info(Token *tk) {
+    if (!tk->file) {
         return; // No file
     }
     print_colour(COLOUR_BLUE);
     printf(" --> ");
     print_colour(COLOUR_CLEAR);
-    printf("%s", at.file);
-    if (at.line > 0) {
-        printf(":%d", at.line);
+    printf("%s", tk->file);
+    if (tk->line > 0) {
+        printf(":%d", tk->line);
     }
-    if (at.col > 0) {
-        printf(":%d", at.col);
+    if (tk->col > 0) {
+        printf(":%d", tk->col);
     }
     printf("\n");
 
-    if (!at.line_str) {
+    if (!tk->line_str) {
         return; // No line of code
     }
     print_colour(COLOUR_BLUE);
-    printf(" %d | ", at.line);
+    printf(" %d | ", tk->line);
     print_colour(COLOUR_CLEAR);
-    char *c = at.line_str;
-    while (isspace(*c)) { // Print only spaces at the start of the line
+    char *c = tk->line_str;
+    while (isspace(*c)) { // Print only spaces tk the start of the line
         if (*c == '\t') {
             printf("  ");
         } else {
@@ -111,14 +111,14 @@ static void print_error_info(TkInfo at) {
     int line_len = (int) (c - text_start);
     printf("%.*s\n", line_len, text_start);
 
-    if (at.len < 0 || at.col < 1) {
+    if (tk->len < 0 || tk->col < 1) {
         return; // No arrow
     }
-    int num_digits = (at.line == 0) ? 1 : (int) log10(at.line) + 1;
+    int num_digits = (tk->line == 0) ? 1 : (int) log10(tk->line) + 1;
     for (int i = 0; i < num_digits + 4; i++) { // Spaces for line number
         printf(" ");
     }
-    c = at.line_str;
+    c = tk->line_str;
     while (isspace(*c)) { // Spaces to start line
         if (*c == '\t') {
             printf("  ");
@@ -127,53 +127,53 @@ static void print_error_info(TkInfo at) {
         }
         c++;
     }
-    while ((int) (c - at.line_str) < at.col - 1) { // Spaces until arrow
+    while ((int) (c - tk->line_str) < tk->col - 1) { // Spaces until arrow
         printf(" ");
         c++;
     }
     print_colour(COLOUR_GREEN);
     printf("^"); // Arrow head
-    for (int i = 0; i < at.len - 1; i++) {
+    for (int i = 0; i < (int) tk->len - 1; i++) {
         printf("~"); // Arrow tail
     }
     print_colour(COLOUR_CLEAR);
     printf("\n");
 }
 
-void trigger_error_at(TkInfo at, char *fmt, ...) {
+void trigger_error_at(Token *tk, char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     print_error_header();
     vprintf(fmt, args);
     print_colour(COLOUR_CLEAR);
     printf("\n");
-    print_error_info(at);
+    print_error_info(tk);
     va_end(args);
     exit(1);
 }
 
-void trigger_warning_at(TkInfo at, char *fmt, ...) {
+void trigger_warning_at(Token *tk, char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     print_warning_header();
     vprintf(fmt, args);
     print_colour(COLOUR_CLEAR);
     printf("\n");
-    print_error_info(at);
+    print_error_info(tk);
     va_end(args);
 }
 
-void expect_tk(Lexer *l, Tk expected) {
-    if (l->tk == expected) {
+void expect_tk(Token *tk, Tk expected) {
+    if (tk->t == expected) {
         return; // No error
     }
     print_error_header();
     printf("expected ");
-    print_tk(expected);
+    print_simple_tk(expected);
     printf(", found ");
-    print_tk(l->tk);
+    print_tk(tk);
     print_colour(COLOUR_CLEAR);
     printf("\n");
-    print_error_info(l->info);
+    print_error_info(tk);
     exit(1);
 }

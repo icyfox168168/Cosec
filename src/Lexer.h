@@ -10,8 +10,8 @@
     X(IDENT, "identifier")                 \
     X(KINT, "integer")                     \
     X(KFLOAT, "number")                    \
-    X(KCHAR, "character")                  \
-    X(KSTR, "string")                      \
+    X(KCHAR, "character literal")          \
+    X(KSTR, "string literal")              \
                                            \
     /* Symbols */                          \
     Y(INC, '+', '+', "++")                 \
@@ -71,32 +71,26 @@ enum {
     NUM_TKS, // Required for hash-maps indexed by tokens
 };
 
-typedef struct {
+typedef struct token {
+    struct token *next, *prev;
     char *file;
+    Tk t;
     char *start;
-    int len;
+    size_t len;
     int line, col;
     char *line_str;
-} TkInfo;
+    union {
+        uint64_t kint; // For TK_KINT
+        double kfloat; // For TK_KFLOAT
+        char kch;      // For TK_KCHAR
+        char *kstr;    // For TK_KSTR
+    };
+} Token;
 
-typedef struct {
-    char *file, *source;
-    char *c; // Character in 'source' that we're up to
-    int line;
-    char *line_str;
-    TkInfo info; // Information about the most recently lexed token
+Token * lex_file(char *file);
 
-    Tk tk; // Most recently lexed token
-    char *ident; size_t len; // For TK_IDENT
-    uint64_t kint;           // For TK_KINT
-    double kfloat;           // For TK_KFLOAT
-    char kch;                // For TK_KCHAR
-    char *kstr;              // For TK_KSTR
-} Lexer;
-
-Lexer new_lexer(char *file);
-void next_tk(Lexer *l);
-void print_tk(Tk tk);
-TkInfo merge_tks(TkInfo start, TkInfo end);
+void print_simple_tk(Tk t);
+void print_tk(Token *tk);
+Token * merge_tks(Token *start, Token *end);
 
 #endif

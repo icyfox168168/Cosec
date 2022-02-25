@@ -20,8 +20,8 @@ typedef struct local {
 
 typedef struct {
     Type *type;
-    TkInfo name; // Zeroed in an abstract declarator
-    TkInfo tk;
+    Token *name; // Zeroed in an abstract declarator
+    Token *tk;
 } Declarator;
 
 typedef enum {
@@ -51,7 +51,7 @@ typedef struct expr {
         struct { Tk _o2; struct expr *_l2, *_r, *cond; }; // EXPR_TERNARY
         // Nothing for EXPR_CONV
     };
-    TkInfo tk;
+    Token *tk;
 } Expr;
 
 Expr * new_expr(ExprType kind); // Used by the compiler

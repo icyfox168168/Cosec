@@ -7,8 +7,8 @@
 // ERROR -- prints colourful error and warning messages to stdout.
 
 void trigger_error(char *fmt, ...) __attribute__((noreturn));
-void trigger_error_at(TkInfo at, char *fmt, ...) __attribute__((noreturn));
-void trigger_warning_at(TkInfo at, char *fmt, ...);
-void expect_tk(Lexer *l, Tk expected);
+void trigger_error_at(Token *tk, char *fmt, ...) __attribute__((noreturn));
+void trigger_warning_at(Token *tk, char *fmt, ...);
+void expect_tk(Token *tk, Tk expected);
 
 #endif

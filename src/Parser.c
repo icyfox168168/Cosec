@@ -6,12 +6,18 @@
 #include "Error.h"
 
 typedef struct {
-    Lexer l;
+    Token *tk; // Current token we're parsing
     FnDef *fn; // Current function we're parsing into
     // Linked list of locals in the current scope; head of the list is the
     // most RECENTLY defined local (not the first one)
     Local *locals;
 } Parser;
+
+static void next_tk(Parser *p) {
+    if (p->tk->t != '\0') {
+        p->tk = p->tk->next;
+    }
+}
 
 static Stmt * new_stmt(StmtType kind) {
     Stmt *stmt = malloc(sizeof(Stmt));
@@ -40,13 +46,14 @@ static Local * find_local(Parser *p, char *name, size_t len) {
     return NULL;
 }
 
-static Local * def_local(Parser *p, TkInfo name, Type *type) {
-    if (find_local(p, name.start, name.len)) {
-        trigger_error_at(name, "redefinition of '%.*s'", name.len, name.start);
+static Local * def_local(Parser *p, Token *name, Type *type) {
+    if (find_local(p, name->start, name->len)) {
+        trigger_error_at(name, "redefinition of '%.*s'", name->len,
+                         name->start);
     }
-    char *name_str = malloc((name.len + 1) * sizeof(char));
-    strncpy(name_str, name.start, name.len);
-    name_str[name.len] = '\0';
+    char *name_str = malloc((name->len + 1) * sizeof(char));
+    strncpy(name_str, name->start, name->len);
+    name_str[name->len] = '\0';
     Local *local = malloc(sizeof(Local));
     local->next = p->locals; // Prepend to the linked list
     local->name = name_str;
@@ -357,8 +364,8 @@ static Expr * to_cond(Expr *expr) {
 }
 
 static Expr * parse_ternary(Parser *p, Expr *cond, Expr *l) {
-    expect_tk(&p->l, ':');
-    next_tk(&p->l);
+    expect_tk(p->tk, ':');
+    next_tk(p);
     Prec prec = BINARY_PREC['?'] - IS_RIGHT_ASSOC['?'];
     Expr *r = parse_subexpr(p, prec);
 
@@ -549,9 +556,9 @@ static Expr * parse_binary(Parser *p, Tk op, Expr *left, Expr *right) {
 }
 
 static Expr * parse_kint(Parser *p) {
-    expect_tk(&p->l, TK_KINT);
+    expect_tk(p->tk, TK_KINT);
     Expr *k = new_expr(EXPR_KINT);
-    k->kint = p->l.kint;
+    k->kint = p->tk->kint;
     if (k->kint > INT64_MAX) {
         k->type = t_prim(T_i64, 0);
     } else if (k->kint > INT32_MAX) {
@@ -559,65 +566,65 @@ static Expr * parse_kint(Parser *p) {
     } else {
         k->type = t_prim(T_i32, 1);
     }
-    k->tk = p->l.info;
-    next_tk(&p->l);
+    k->tk = p->tk;
+    next_tk(p);
     return k;
 }
 
 static Expr * parse_kfloat(Parser *p) {
-    expect_tk(&p->l, TK_KFLOAT);
+    expect_tk(p->tk, TK_KFLOAT);
     Expr *k = new_expr(EXPR_KFLOAT);
-    k->kfloat = p->l.kfloat;
+    k->kfloat = p->tk->kfloat;
     k->type = t_prim(T_f32, 1);
-    k->tk = p->l.info;
-    next_tk(&p->l);
+    k->tk = p->tk;
+    next_tk(p);
     return k;
 }
 
 static Expr * parse_kchar(Parser *p) {
-    expect_tk(&p->l, TK_KCHAR);
+    expect_tk(p->tk, TK_KCHAR);
     Expr *k = new_expr(EXPR_KCHAR);
-    k->kch = p->l.kch;
+    k->kch = p->tk->kch;
     k->type = t_prim(T_i8, 1);
-    k->tk = p->l.info;
-    next_tk(&p->l);
+    k->tk = p->tk;
+    next_tk(p);
     return k;
 }
 
 static Expr * parse_kstr(Parser *p) {
-    expect_tk(&p->l, TK_KSTR);
+    expect_tk(p->tk, TK_KSTR);
     Expr *k = new_expr(EXPR_KSTR);
-    k->kstr = p->l.kstr;
+    k->kstr = p->tk->kstr;
     k->type = t_ptr(t_prim(T_i8, 1));
-    k->tk = p->l.info;
-    next_tk(&p->l);
+    k->tk = p->tk;
+    next_tk(p);
     return k;
 }
 
 static Expr * parse_local(Parser *p) {
-    expect_tk(&p->l, TK_IDENT);
-    char *name = p->l.ident;
-    size_t len = p->l.len;
+    expect_tk(p->tk, TK_IDENT);
+    char *name = p->tk->start;
+    size_t len = p->tk->len;
     Local *local = find_local(p, name, len);
     if (!local) { // Check the local exists
-        trigger_error_at(p->l.info, "undeclared identifier '%.*s'", len, name);
+        trigger_error_at(p->tk, "undeclared identifier '%.*s'", len, name);
     }
     Expr *expr = new_expr(EXPR_LOCAL);
     expr->local = local;
     expr->type = t_copy(local->type);
-    expr->tk = p->l.info;
-    next_tk(&p->l);
+    expr->tk = p->tk;
+    next_tk(p);
     return expr;
 }
 
 static Expr * parse_operand(Parser *p) {
-    switch (p->l.tk) {
+    switch (p->tk->t) {
         case TK_KINT:   return parse_kint(p);
         case TK_KFLOAT: return parse_kfloat(p);
         case TK_KCHAR:  return parse_kchar(p);
         case TK_KSTR:   return parse_kstr(p);
         case TK_IDENT:  return parse_local(p);
-        default:        trigger_error_at(p->l.info, "expected expression");
+        default:        trigger_error_at(p->tk, "expected expression");
     }
 }
 
@@ -631,19 +638,19 @@ static Expr * parse_postfix_inc_dec(Parser *p, Tk op, Expr *operand) {
     postfix->op = op;
     postfix->l = operand;
     postfix->type = t_copy(operand->type);
-    postfix->tk = merge_tks(operand->tk, p->l.info);
-    next_tk(&p->l); // Skip the operator
+    postfix->tk = merge_tks(operand->tk, p->tk);
+    next_tk(p); // Skip the operator
     return postfix;
 }
 
 static Expr * parse_array_access(Parser *p, Expr *array) {
-    TkInfo start = p->l.info;
-    expect_tk(&p->l, '[');
-    next_tk(&p->l);
+    Token *start = p->tk;
+    expect_tk(p->tk, '[');
+    next_tk(p);
     Expr *index = parse_subexpr(p, PREC_NONE);
-    expect_tk(&p->l, ']');
-    index->tk = merge_tks(start, p->l.info);
-    next_tk(&p->l);
+    expect_tk(p->tk, ']');
+    index->tk = merge_tks(start, p->tk);
+    next_tk(p);
 
     ensure_can_deref(array);
     if (!is_int(index->type)) {
@@ -662,10 +669,10 @@ static Expr * parse_array_access(Parser *p, Expr *array) {
 
 static Expr * parse_postfix(Parser *p, Expr *operand) {
     Expr *postfix = operand;
-    while (POSTFIX_PREC[p->l.tk]) {
-        switch (p->l.tk) {
+    while (POSTFIX_PREC[p->tk->t]) {
+        switch (p->tk->t) {
         case TK_INC: case TK_DEC:
-            postfix = parse_postfix_inc_dec(p, p->l.tk, postfix);
+            postfix = parse_postfix_inc_dec(p, p->tk->t, postfix);
             break;
         case '[':
             postfix = parse_array_access(p, postfix);
@@ -732,11 +739,11 @@ static int has_decl(Parser *p); // Forward declarations
 static Type * parse_type_specs(Parser *p);
 static Declarator parse_declarator(Parser *p, Type *base, int is_abstract);
 
-static Expr * parse_cast(Parser *p, TkInfo start_tk) {
+static Expr * parse_cast(Parser *p, Token *start_tk) {
     Type *base_type = parse_type_specs(p);
     Declarator declarator = parse_declarator(p, base_type, 1);
-    expect_tk(&p->l, ')');
-    next_tk(&p->l);
+    expect_tk(p->tk, ')');
+    next_tk(p);
     Expr *operand = parse_subexpr(p, UNARY_PREC['(']);
     Expr *conv = conv_to(operand, declarator.type, 1);
     conv->tk = merge_tks(start_tk, operand->tk);
@@ -745,28 +752,28 @@ static Expr * parse_cast(Parser *p, TkInfo start_tk) {
 
 static Expr * parse_braced_subexpr(Parser *p) {
     Expr *expr = parse_subexpr(p, PREC_NONE);
-    expect_tk(&p->l, ')');
-    expr->tk = merge_tks(expr->tk, p->l.info);
-    next_tk(&p->l);
+    expect_tk(p->tk, ')');
+    expr->tk = merge_tks(expr->tk, p->tk);
+    next_tk(p);
     return expr;
 }
 
-static Expr * parse_sizeof(Parser *p, TkInfo op_tk) {
+static Expr * parse_sizeof(Parser *p, Token *op_tk) {
     Type *result;
-    TkInfo tk, end;
-    if (p->l.tk == '(') {
-        next_tk(&p->l);
+    Token *tk, *end;
+    if (p->tk->t == '(') {
+        next_tk(p);
         if (!has_decl(p)) {
-            trigger_error_at(p->l.info, "expected type name");
+            trigger_error_at(p->tk, "expected type name");
         }
-        tk = p->l.info;
+        tk = p->tk;
         Type *base_type = parse_type_specs(p);
         Declarator decl = parse_declarator(p, base_type, 1);
         result = decl.type;
         tk = merge_tks(tk, decl.tk);
-        expect_tk(&p->l, ')');
-        end = p->l.info;
-        next_tk(&p->l);
+        expect_tk(p->tk, ')');
+        end = p->tk;
+        next_tk(p);
     } else {
         Expr *operand = parse_subexpr(p, UNARY_PREC[TK_SIZEOF]);
         result = operand->type; // Discard the operand itself; not evaluated
@@ -787,13 +794,13 @@ static Expr * parse_sizeof(Parser *p, TkInfo op_tk) {
 }
 
 static Expr * parse_unary(Parser *p) {
-    Tk op = p->l.tk;
-    TkInfo op_tk = p->l.info;
+    Tk op = p->tk->t;
+    Token *op_tk = p->tk;
     if (!UNARY_PREC[op]) { // If there's no unary operator
         Expr *operand = parse_operand(p); // Parse an operand
         return parse_postfix(p, operand); // And optional postfix operator
     }
-    next_tk(&p->l); // Skip the unary operator
+    next_tk(p); // Skip the unary operator
 
     // A "special" unary operator -> casts, sub-expressions, sizeof
     if (op == '(') { // Casts and subexpressions start with the same token :(
@@ -825,9 +832,9 @@ static Expr * parse_unary(Parser *p) {
 
 static Expr * parse_subexpr(Parser *p, Prec min_prec) {
     Expr *left = parse_unary(p);
-    while (BINARY_PREC[p->l.tk] > min_prec) {
-        Tk op = p->l.tk;
-        next_tk(&p->l); // Skip the binary operator
+    while (BINARY_PREC[p->tk->t] > min_prec) {
+        Tk op = p->tk->t;
+        next_tk(p); // Skip the binary operator
         Prec prec = BINARY_PREC[op] + IS_RIGHT_ASSOC[op];
         Expr *right = parse_subexpr(p, prec); // Parse right operand
         left = parse_binary(p, op, left, right);
@@ -841,12 +848,12 @@ static Expr * parse_expr(Parser *p) {
 
 static uint64_t parse_const_expr(Parser *p) {
     // TODO: constant expressions only consist of an integer so far
-    if (p->l.tk == TK_KINT) {
-        uint64_t result = p->l.kint;
-        next_tk(&p->l);
+    if (p->tk->t == TK_KINT) {
+        uint64_t result = p->tk->kint;
+        next_tk(p);
         return result;
     } else {
-        trigger_error_at(p->l.info, "expected constant expression");
+        trigger_error_at(p->tk, "expected constant expression");
     }
 }
 
@@ -942,23 +949,23 @@ static Prim TYPE_COMBINATION_TO_PRIM[NUM_TYPE_COMBINATIONS] = {
 };
 
 static int has_decl(Parser *p) {
-    return TYPE_SPECS[p->l.tk];
+    return TYPE_SPECS[p->tk->t];
 }
 
 static Type * parse_type_specs(Parser *p) {
     // Check there's at least one type specifier
-    TkInfo start = p->l.info;
+    Token *start = p->tk;
     if (!has_decl(p)) {
         trigger_error_at(start, "expected declaration");
     }
     // Keep parsing type specifiers into a hash-map until there's no more
     int type_specs[COMBINATION_SIZE];
     memset(type_specs, 0, sizeof(int) * (NUM_TKS - FIRST_KEYWORD));
-    TkInfo end = start;
+    Token *end = start;
     while (has_decl(p)) {
-        type_specs[p->l.tk - FIRST_KEYWORD]++;
-        end = p->l.info;
-        next_tk(&p->l);
+        type_specs[p->tk->t - FIRST_KEYWORD]++;
+        end = p->tk;
+        next_tk(p);
     }
     // Find the corresponding combination in TYPE_COMBINATIONS
     int combination = -1;
@@ -970,7 +977,7 @@ static Type * parse_type_specs(Parser *p) {
         }
     }
     if (combination == -1) {
-        TkInfo tk = merge_tks(start, end);
+        Token *tk = merge_tks(start, end);
         trigger_error_at(tk, "invalid combination of type specifiers");
     }
     int is_signed = !type_specs[TK_UNSIGNED - FIRST_KEYWORD];
@@ -979,32 +986,32 @@ static Type * parse_type_specs(Parser *p) {
 
 static Type ** parse_declarator_recursive(Parser *p, Declarator *d, Type **t) {
     int num_ptrs = 0;
-    while (p->l.tk == '*') {
+    while (p->tk->t == '*') {
         num_ptrs++;
-        d->tk = merge_tks(d->tk, p->l.info);
-        next_tk(&p->l);
+        d->tk = merge_tks(d->tk, p->tk);
+        next_tk(p);
     }
-    switch (p->l.tk) {
+    switch (p->tk->t) {
     case TK_IDENT:
-        d->name = p->l.info;
-            d->tk = merge_tks(d->tk, p->l.info);
-        next_tk(&p->l);
+        d->name = p->tk;
+        d->tk = merge_tks(d->tk, p->tk);
+        next_tk(p);
         break;
     case '(':
-        next_tk(&p->l);
+        next_tk(p);
         t = parse_declarator_recursive(p, d, t);
-        expect_tk(&p->l, ')');
-        d->tk = merge_tks(d->tk, p->l.info);
-        next_tk(&p->l);
+        expect_tk(p->tk, ')');
+        d->tk = merge_tks(d->tk, p->tk);
+        next_tk(p);
         break;
     default: break;
     }
-    while (p->l.tk == '[') {
-        next_tk(&p->l);
+    while (p->tk->t == '[') {
+        next_tk(p);
         uint64_t size = parse_const_expr(p);
-        expect_tk(&p->l, ']');
-        d->tk = merge_tks(d->tk, p->l.info);
-        next_tk(&p->l);
+        expect_tk(p->tk, ']');
+        d->tk = merge_tks(d->tk, p->tk);
+        next_tk(p);
         *t = t_arr(NULL, size);
         t = &(*t)->elem;
     }
@@ -1018,13 +1025,13 @@ static Type ** parse_declarator_recursive(Parser *p, Declarator *d, Type **t) {
 static Declarator parse_declarator(Parser *p, Type *base, int is_abstract) {
     Declarator d;
     d.type = base;
-    d.name.start = NULL;
-    d.tk = p->l.info; // Start token
+    d.name = NULL;
+    d.tk = p->tk; // Start token
     Type **inner = parse_declarator_recursive(p, &d, &d.type);
     *inner = base;
-    if (is_abstract && d.name.start) {
+    if (is_abstract && d.name) {
         trigger_error_at(d.name, "variable name not permitted here");
-    } else if (!is_abstract && !d.name.start) {
+    } else if (!is_abstract && !d.name) {
         trigger_error_at(d.tk, "expected variable name");
     }
     return d;
@@ -1034,8 +1041,8 @@ static Stmt * parse_declaration(Parser *p, Type *base_type, int allowed_defn) {
     Declarator declarator = parse_declarator(p, base_type, 0);
     Local *local = def_local(p, declarator.name, declarator.type);
     Expr *value = NULL;
-    if (allowed_defn && p->l.tk == '=') { // Optional assignment
-        next_tk(&p->l); // Skip the '=' token
+    if (allowed_defn && p->tk->t == '=') { // Optional assignment
+        next_tk(p); // Skip the '=' token
         value = parse_subexpr(p, PREC_COMMA); // Can't have commas
     }
 
@@ -1057,19 +1064,19 @@ static Stmt * parse_declaration_list(Parser *p) {
     Type *base_type = parse_type_specs(p); // Base type specifiers
     Stmt *head;
     Stmt **decl = &head;
-    while (p->l.tk != ';') {
+    while (p->tk->t != ';') {
         *decl = parse_declaration(p, base_type, 1);
         while (*decl) { // Find the end of the chain
             decl = &(*decl)->next;
         }
-        if (p->l.tk == ',') {
-            next_tk(&p->l); // Parse another declaration
+        if (p->tk->t == ',') {
+            next_tk(p); // Parse another declaration
         } else {
             break; // Stop parsing declarations
         }
     }
-    expect_tk(&p->l, ';');
-    next_tk(&p->l);
+    expect_tk(p->tk, ';');
+    next_tk(p);
     return head;
 }
 
@@ -1078,24 +1085,24 @@ static Stmt * parse_stmt(Parser *p); // Forward declaration
 static Stmt * parse_expr_stmt(Parser *p) {
     Stmt *stmt = new_stmt(STMT_EXPR);
     stmt->expr = parse_expr(p);
-    expect_tk(&p->l, ';');
-    next_tk(&p->l);
+    expect_tk(p->tk, ';');
+    next_tk(p);
     return stmt;
 }
 
 static Stmt * parse_if(Parser *p) {
-    expect_tk(&p->l, TK_IF);
+    expect_tk(p->tk, TK_IF);
     Stmt *stmt = new_stmt(STMT_IF);
     IfChain **if_chain = &stmt->if_chain;
     int has_else = 0;
-    while (p->l.tk == TK_IF) {
-        next_tk(&p->l);
-        expect_tk(&p->l, '(');
-        next_tk(&p->l);
+    while (p->tk->t == TK_IF) {
+        next_tk(p);
+        expect_tk(p->tk, '(');
+        next_tk(p);
         Expr *cond = parse_expr(p); // Condition
         cond = to_cond(cond);
-        expect_tk(&p->l, ')');
-        next_tk(&p->l);
+        expect_tk(p->tk, ')');
+        next_tk(p);
         Stmt *body = parse_stmt(p); // Body
         IfChain *this_if = malloc(sizeof(IfChain));
         this_if->next = NULL;
@@ -1104,9 +1111,9 @@ static Stmt * parse_if(Parser *p) {
         *if_chain = this_if;
         if_chain = &(*if_chain)->next;
         has_else = 0;
-        if (p->l.tk == TK_ELSE) {
+        if (p->tk->t == TK_ELSE) {
             has_else = 1;
-            next_tk(&p->l);
+            next_tk(p);
         } else {
             break;
         }
@@ -1123,14 +1130,14 @@ static Stmt * parse_if(Parser *p) {
 
 static Stmt * parse_while(Parser *p) {
     Stmt *stmt = new_stmt(STMT_WHILE);
-    expect_tk(&p->l, TK_WHILE);
-    next_tk(&p->l);
-    expect_tk(&p->l, '(');
-    next_tk(&p->l);
+    expect_tk(p->tk, TK_WHILE);
+    next_tk(p);
+    expect_tk(p->tk, '(');
+    next_tk(p);
     Expr *cond = parse_expr(p); // Condition
     stmt->cond = to_cond(cond);
-    expect_tk(&p->l, ')');
-    next_tk(&p->l);
+    expect_tk(p->tk, ')');
+    next_tk(p);
     stmt->body = parse_stmt(p); // Body
     return stmt;
 }
@@ -1138,37 +1145,37 @@ static Stmt * parse_while(Parser *p) {
 static Stmt * parse_for(Parser *p) {
     Stmt *head = NULL;
     Stmt **stmt = &head;
-    expect_tk(&p->l, TK_FOR);
-    next_tk(&p->l);
-    expect_tk(&p->l, '(');
-    next_tk(&p->l);
+    expect_tk(p->tk, TK_FOR);
+    next_tk(p);
+    expect_tk(p->tk, '(');
+    next_tk(p);
     Local *scope = p->locals;
 
     if (has_decl(p)) { // Initializer
         *stmt = parse_declaration_list(p); // Declaration initializer
-    } else if (p->l.tk != ';') {
+    } else if (p->tk->t != ';') {
         *stmt = parse_expr_stmt(p); // Expression initializer
     } else {
-        next_tk(&p->l); // No initializer, skip ';'
+        next_tk(p); // No initializer, skip ';'
     }
     while (*stmt) { // Find the end of the initializer
         stmt = &(*stmt)->next;
     }
 
     Expr *cond = NULL; // Condition
-    if (p->l.tk != ';') {
+    if (p->tk->t != ';') {
         cond = parse_expr(p);
         cond = to_cond(cond);
     }
-    expect_tk(&p->l, ';');
-    next_tk(&p->l);
+    expect_tk(p->tk, ';');
+    next_tk(p);
 
     Expr *inc = NULL;
-    if (p->l.tk != ')') {
+    if (p->tk->t != ')') {
         inc = parse_expr(p); // Increment
     }
-    expect_tk(&p->l, ')');
-    next_tk(&p->l);
+    expect_tk(p->tk, ')');
+    next_tk(p);
 
     Stmt *body = parse_stmt(p); // Body
     p->locals = scope; // Remove the declarations in the loop header
@@ -1187,61 +1194,61 @@ static Stmt * parse_for(Parser *p) {
 
 static Stmt * parse_do_while(Parser *p) {
     Stmt *stmt = new_stmt(STMT_DO_WHILE);
-    expect_tk(&p->l, TK_DO);
-    next_tk(&p->l);
+    expect_tk(p->tk, TK_DO);
+    next_tk(p);
     stmt->body = parse_stmt(p); // Body
-    expect_tk(&p->l, TK_WHILE);
-    next_tk(&p->l);
-    expect_tk(&p->l, '(');
-    next_tk(&p->l);
+    expect_tk(p->tk, TK_WHILE);
+    next_tk(p);
+    expect_tk(p->tk, '(');
+    next_tk(p);
     Expr *cond = parse_expr(p); // Condition
     stmt->cond = to_cond(cond);
-    expect_tk(&p->l, ')');
-    next_tk(&p->l);
-    expect_tk(&p->l, ';');
-    next_tk(&p->l);
+    expect_tk(p->tk, ')');
+    next_tk(p);
+    expect_tk(p->tk, ';');
+    next_tk(p);
     return stmt;
 }
 
 static Stmt * parse_break(Parser *p) {
-    expect_tk(&p->l, TK_BREAK);
-    next_tk(&p->l);
-    expect_tk(&p->l, ';');
-    next_tk(&p->l);
+    expect_tk(p->tk, TK_BREAK);
+    next_tk(p);
+    expect_tk(p->tk, ';');
+    next_tk(p);
     Stmt *stmt = new_stmt(STMT_BREAK);
     return stmt;
 }
 
 static Stmt * parse_continue(Parser *p) {
-    expect_tk(&p->l, TK_CONTINUE);
-    next_tk(&p->l);
-    expect_tk(&p->l, ';');
-    next_tk(&p->l);
+    expect_tk(p->tk, TK_CONTINUE);
+    next_tk(p);
+    expect_tk(p->tk, ';');
+    next_tk(p);
     Stmt *stmt = new_stmt(STMT_CONTINUE);
     return stmt;
 }
 
 static Stmt * parse_ret(Parser *p) {
-    expect_tk(&p->l, TK_RETURN);
-    next_tk(&p->l);
+    expect_tk(p->tk, TK_RETURN);
+    next_tk(p);
     Stmt *ret = new_stmt(STMT_RET);
-    if (p->l.tk != ';') {
+    if (p->tk->t != ';') {
         Expr *value = parse_expr(p);
         value = conv_to(value, p->fn->decl->return_type, 0);
         ret->expr = value;
     }
-    expect_tk(&p->l, ';');
-    next_tk(&p->l);
+    expect_tk(p->tk, ';');
+    next_tk(p);
     return ret;
 }
 
 static Stmt * parse_block(Parser *p) {
-    expect_tk(&p->l, '{');
-    next_tk(&p->l);
+    expect_tk(p->tk, '{');
+    next_tk(p);
     Stmt *block = NULL;
     Stmt **stmt = &block;
     Local *scope = p->locals; // New locals scope
-    while (p->l.tk && p->l.tk != '}') {
+    while (p->tk->t && p->tk->t != '}') {
         if (has_decl(p)) { // Declarations can only occur in BLOCKS
             *stmt = parse_declaration_list(p);
         } else {
@@ -1252,14 +1259,14 @@ static Stmt * parse_block(Parser *p) {
         }
     }
     p->locals = scope;
-    expect_tk(&p->l, '}');
-    next_tk(&p->l);
+    expect_tk(p->tk, '}');
+    next_tk(p);
     return block;
 }
 
 static Stmt * parse_stmt(Parser *p) {
-    switch (p->l.tk) {
-        case ';':         next_tk(&p->l); return NULL; // Empty
+    switch (p->tk->t) {
+        case ';':         next_tk(p); return NULL; // Empty
         case '{':         return parse_block(p);       // Block
         case TK_IF:       return parse_if(p);          // If/else if/else
         case TK_WHILE:    return parse_while(p);       // While loop
@@ -1286,22 +1293,22 @@ static FnArg * parse_fn_decl_arg(Parser *p) {
 }
 
 static FnArg * parse_fn_decl_args(Parser *p) {
-    expect_tk(&p->l, '('); // Arguments
-    next_tk(&p->l);
+    expect_tk(p->tk, '('); // Arguments
+    next_tk(p);
     FnArg *head = NULL;
     FnArg **arg = &head;
-    while (p->l.tk && p->l.tk != ')') {
+    while (p->tk->t && p->tk->t != ')') {
         *arg = parse_fn_decl_arg(p); // Parse an argument
         arg = &(*arg)->next;
-        if (p->l.tk == ',') { // Check for another argument
-            next_tk(&p->l);
+        if (p->tk->t == ',') { // Check for another argument
+            next_tk(p);
             continue;
         } else {
             break;
         }
     }
-    expect_tk(&p->l, ')');
-    next_tk(&p->l);
+    expect_tk(p->tk, ')');
+    next_tk(p);
     return head;
 }
 
@@ -1313,9 +1320,9 @@ static FnDef * parse_fn_def(Parser *p) {
     def->decl = malloc(sizeof(FnDecl));
     def->decl->return_type = parse_type_specs(p); // Return type
 
-    expect_tk(&p->l, TK_IDENT); // Name
-    def->decl->local = def_local(p, p->l.info, NULL);
-    next_tk(&p->l);
+    expect_tk(p->tk, TK_IDENT); // Name
+    def->decl->local = def_local(p, p->tk, NULL);
+    next_tk(p);
 
     // 'parse_fn_decl_args' creates new locals for the function arguments;
     // create a new scope so that they get deleted
@@ -1330,7 +1337,7 @@ static AstModule * parse_module(Parser *p) {
     AstModule *module = malloc(sizeof(AstModule));
     module->fns = NULL;
     FnDef **def = &module->fns;
-    while (p->l.tk) { // Until we reach the end of the file
+    while (p->tk->t) { // Until we reach the end of the file
         *def = parse_fn_def(p);
         def = &(*def)->next;
     }
@@ -1339,8 +1346,7 @@ static AstModule * parse_module(Parser *p) {
 
 AstModule * parse(char *file) {
     Parser p;
-    p.l = new_lexer(file);
-    next_tk(&p.l);
+    p.tk = lex_file(file);
     p.locals = NULL;
     AstModule *module = parse_module(&p);
     return module;
