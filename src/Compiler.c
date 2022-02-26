@@ -713,20 +713,16 @@ static IrIns * compile_not(Compiler *c, Expr *unary) {
 
 static IrIns * compile_addr(Compiler *c, Expr *unary) {
     IrIns *result = compile_expr(c, unary->l);
-    assert(result->op == IR_LOAD); // Ensure 'assign->l' is an lvalue
+    assert(result->op == IR_LOAD || result->op == IR_ELEM);
     IrIns *ptr = result->l; // Left operand contains the pointer we're after
-    delete_ir(result); // Delete the IR_LOAD
+    delete_ir(result); // Delete the IR_LOAD/IR_ELEM
     return ptr;
 }
 
 static IrIns * compile_deref(Compiler *c, Expr *unary) {
     IrIns *result = compile_expr(c, unary->l);
     result = discharge(c, result);
-    IrIns *load = new_ir(IR_LOAD);
-    load->l = result;
-    load->type = t_copy(unary->type);
-    emit(c, load);
-    return load;
+    return emit_load(c, result);
 }
 
 // Compiles ++ or -- as a prefix or postfix operator. We could've had the

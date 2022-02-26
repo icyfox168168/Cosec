@@ -92,7 +92,6 @@ static Prec UNARY_PREC[NUM_TKS] = {
     ['!'] = PREC_UNARY, // Logical not
     ['&'] = PREC_UNARY, // Address-of
     ['*'] = PREC_UNARY, // Dereference
-    ['('] = PREC_UNARY, // Cast
     [TK_INC] = PREC_UNARY, // Increment
     [TK_DEC] = PREC_UNARY, // Decrement
     [TK_SIZEOF] = PREC_UNARY, // 'sizeof'
@@ -617,6 +616,17 @@ static Expr * parse_local(Parser *p) {
     return expr;
 }
 
+static Expr * parse_braced_subexpr(Parser *p) {
+    expect_tk(p->tk, '(');
+    Token *start = p->tk;
+    next_tk(p);
+    Expr *subexpr = parse_subexpr(p, PREC_NONE);
+    expect_tk(p->tk, ')');
+    subexpr->tk = merge_tks(start, p->tk);
+    next_tk(p);
+    return subexpr;
+}
+
 static Expr * parse_operand(Parser *p) {
     switch (p->tk->t) {
         case TK_KINT:   return parse_kint(p);
@@ -624,6 +634,7 @@ static Expr * parse_operand(Parser *p) {
         case TK_KCHAR:  return parse_kchar(p);
         case TK_KSTR:   return parse_kstr(p);
         case TK_IDENT:  return parse_local(p);
+        case '(':       return parse_braced_subexpr(p);
         default:        trigger_error_at(p->tk, "expected expression");
     }
 }
@@ -735,53 +746,52 @@ static Expr * parse_unary_arith(Tk op, Expr *operand) {
     return unary;
 }
 
-static int has_decl(Parser *p); // Forward declarations
+static int has_decl(Token *tk); // Forward declarations
 static Type * parse_type_specs(Parser *p);
 static Declarator parse_declarator(Parser *p, Type *base, int is_abstract);
 
-static Expr * parse_cast(Parser *p, Token *start_tk) {
+static Expr * parse_cast(Parser *p) {
+    expect_tk(p->tk, '(');
+    Token *start = p->tk;
+    next_tk(p);
     Type *base_type = parse_type_specs(p);
     Declarator declarator = parse_declarator(p, base_type, 1);
     expect_tk(p->tk, ')');
     next_tk(p);
     Expr *operand = parse_subexpr(p, UNARY_PREC['(']);
     Expr *conv = conv_to(operand, declarator.type, 1);
-    conv->tk = merge_tks(start_tk, operand->tk);
+    conv->tk = merge_tks(start, operand->tk);
     return conv;
 }
 
-static Expr * parse_braced_subexpr(Parser *p) {
-    Expr *expr = parse_subexpr(p, PREC_NONE);
-    expect_tk(p->tk, ')');
-    expr->tk = merge_tks(expr->tk, p->tk);
+static Expr * parse_sizeof(Parser *p) {
+    expect_tk(p->tk, TK_SIZEOF);
+    Token *start = p->tk;
     next_tk(p);
-    return expr;
-}
 
-static Expr * parse_sizeof(Parser *p, Token *op_tk) {
     Type *result;
-    Token *tk, *end;
+    Token *err, *end;
     if (p->tk->t == '(') {
         next_tk(p);
-        if (!has_decl(p)) {
+        if (!has_decl(p->tk)) {
             trigger_error_at(p->tk, "expected type name");
         }
-        tk = p->tk;
+        err = p->tk;
         Type *base_type = parse_type_specs(p);
         Declarator decl = parse_declarator(p, base_type, 1);
         result = decl.type;
-        tk = merge_tks(tk, decl.tk);
+        err = merge_tks(err, decl.tk);
         expect_tk(p->tk, ')');
         end = p->tk;
         next_tk(p);
     } else {
         Expr *operand = parse_subexpr(p, UNARY_PREC[TK_SIZEOF]);
         result = operand->type; // Discard the operand itself; not evaluated
-        tk = operand->tk;
-        end = tk;
+        err = operand->tk;
+        end = err;
     }
     if (is_incomplete(result)) {
-        trigger_error_at(tk, "cannot calculate size of incomplete type '%s'",
+        trigger_error_at(err, "cannot calculate size of incomplete type '%s'",
                          type_to_str(result));
     }
     // The operand to a 'sizeof' operator isn't evaluated (unless it's a VLA);
@@ -789,31 +799,24 @@ static Expr * parse_sizeof(Parser *p, Token *op_tk) {
     Expr *size = new_expr(EXPR_KINT);
     size->kint = bytes(result);
     size->type = t_prim(T_i64, 0); // Always 64 bits on a 64-bit system
-    size->tk = merge_tks(op_tk, end);
+    size->tk = merge_tks(start, end);
     return size;
 }
 
 static Expr * parse_unary(Parser *p) {
     Tk op = p->tk->t;
     Token *op_tk = p->tk;
-    if (!UNARY_PREC[op]) { // If there's no unary operator
+    if (op == '(' && has_decl(p->tk->next)) { // Handle casts separately
+        return parse_cast(p);
+    }
+    if (!UNARY_PREC[op]) { // Otherwise, if there's no unary operator
         Expr *operand = parse_operand(p); // Parse an operand
         return parse_postfix(p, operand); // And optional postfix operator
     }
-    next_tk(p); // Skip the unary operator
-
-    // A "special" unary operator -> casts, sub-expressions, sizeof
-    if (op == '(') { // Casts and subexpressions start with the same token :(
-        if (has_decl(p)) { // Cast
-            return parse_cast(p, op_tk);
-        } else { // Expression in parentheses
-            return parse_braced_subexpr(p);
-        }
-    } else if (op == TK_SIZEOF) { // Special case
-        return parse_sizeof(p, op_tk);
+    if (op == TK_SIZEOF) { // Handle sizeof separately
+        return parse_sizeof(p);
     }
-
-    // Otherwise, a plain old unary operator
+    next_tk(p); // Skip the unary operator
     Expr *operand = parse_subexpr(p, UNARY_PREC[op]);
     Expr *unary;
     switch (op) {
@@ -948,21 +951,21 @@ static Prim TYPE_COMBINATION_TO_PRIM[NUM_TYPE_COMBINATIONS] = {
     T_f64,  // long double
 };
 
-static int has_decl(Parser *p) {
-    return TYPE_SPECS[p->tk->t];
+static int has_decl(Token *tk) {
+    return TYPE_SPECS[tk->t];
 }
 
 static Type * parse_type_specs(Parser *p) {
     // Check there's at least one type specifier
     Token *start = p->tk;
-    if (!has_decl(p)) {
+    if (!has_decl(start)) {
         trigger_error_at(start, "expected declaration");
     }
     // Keep parsing type specifiers into a hash-map until there's no more
     int type_specs[COMBINATION_SIZE];
     memset(type_specs, 0, sizeof(int) * (NUM_TKS - FIRST_KEYWORD));
     Token *end = start;
-    while (has_decl(p)) {
+    while (has_decl(p->tk)) {
         type_specs[p->tk->t - FIRST_KEYWORD]++;
         end = p->tk;
         next_tk(p);
@@ -1151,7 +1154,7 @@ static Stmt * parse_for(Parser *p) {
     next_tk(p);
     Local *scope = p->locals;
 
-    if (has_decl(p)) { // Initializer
+    if (has_decl(p->tk)) { // Initializer
         *stmt = parse_declaration_list(p); // Declaration initializer
     } else if (p->tk->t != ';') {
         *stmt = parse_expr_stmt(p); // Expression initializer
@@ -1249,7 +1252,7 @@ static Stmt * parse_block(Parser *p) {
     Stmt **stmt = &block;
     Local *scope = p->locals; // New locals scope
     while (p->tk->t && p->tk->t != '}') {
-        if (has_decl(p)) { // Declarations can only occur in BLOCKS
+        if (has_decl(p->tk)) { // Declarations can only occur in BLOCKS
             *stmt = parse_declaration_list(p);
         } else {
             *stmt = parse_stmt(p);

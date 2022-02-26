@@ -260,10 +260,12 @@ static AsmOperand discharge_load(Assembler *a, IrIns *ir_load) {
 }
 
 static AsmOperand discharge_alloc(Assembler *a, IrIns *ir_alloc) {
-    ir_alloc->vreg = a->next_gpr++;
+    // Don't actually assign the IR_ALLOC a vreg for its pointer; just emit a
+    // new LEA instruction each time. Otherwise, we have one vreg with a really
+    // long lifetime if it's used multiple times throughout a function
     AsmIns *lea = new_asm(X86_LEA);
     lea->l.type = OP_GPR;
-    lea->l.reg = ir_alloc->vreg;
+    lea->l.reg = a->next_gpr++;
     lea->l.size = gpr_size(ir_alloc->type);
     lea->r = to_mem_operand(a, ir_alloc);
     lea->r.access_size = 0; // Don't care about bytes for a LEA instruction

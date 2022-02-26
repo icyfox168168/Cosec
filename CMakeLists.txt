@@ -90,6 +90,8 @@ test(arrays2 arrays/2.c)
 test(arrays3 arrays/3.c)
 test(arrays4 arrays/4.c)
 test(arrays5 arrays/5.c)
+test(arrays6 arrays/6.c)
+test(arrays7 arrays/7.c)
 
 test(float1 floats/1.c)
 test(float2 floats/2.c)
