@@ -216,7 +216,7 @@ static void check_conv(Expr *src, Type *t, int explicit_cast) {
     if (!((is_arith(t) && is_arith(s)) ||
           (is_ptr(t) && is_ptr(s)) ||
           (is_ptr(t) && is_int(s)) || (is_int(t) && is_ptr(s)) ||
-          (is_ptr(t) && is_arr(s)) || (is_arr(t) && is_ptr(s)))) {
+          (is_ptr(t) && is_arr(s)))) {
         trigger_error_at(src->tk, "invalid conversion from '%s' to '%s'",
                          type_to_str(s), type_to_str(t));
     }
@@ -231,8 +231,8 @@ static void check_conv(Expr *src, Type *t, int explicit_cast) {
                                     "pointer types '%s' and '%s'",
                            type_to_str(s), type_to_str(t));
     }
-    if (!explicit_cast && is_ptr_arr(t) && is_ptr_arr(s) &&
-            !are_equal(t->ptr, s->ptr) && !is_void_ptr(s) && !is_void_ptr(t)) {
+    if (!explicit_cast && is_ptr(t) && is_arr(s) &&
+            !are_equal(t->ptr, s->ptr) && !is_void_ptr(t)) {
         trigger_warning_at(src->tk, "implicit conversion between incompatible "
                                     "pointer and array types '%s' and '%s'",
                            type_to_str(s), type_to_str(t));

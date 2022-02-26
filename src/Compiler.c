@@ -256,6 +256,9 @@ static void merge_branch_chains(BrChain **head, BrChain *to_append) {
     *head = to_append;
 }
 
+static IrIns * discharge(Compiler *c, IrIns *ins); // Forward declarations
+static IrIns * compile_expr(Compiler *c, Expr *expr);
+
 // Emits an IR conversion instruction that converts 'operand' from its type
 // 'src' to the target type 'target'
 static IrIns * emit_conv(Compiler *c, IrIns *operand, Type *src, Type *target) {
@@ -284,6 +287,9 @@ static IrIns * emit_conv(Compiler *c, IrIns *operand, Type *src, Type *target) {
         op = IR_PTR2I;
     } else if (is_ptr(src) && is_ptr(target)) {
         op = IR_PTR2PTR;
+    } else if (is_arr(src) && is_ptr(target)) {
+        assert(are_equal(src->elem, target->ptr));
+        return discharge(c, operand); // Turn the array into a pointer
     } else {
         assert(0); // Parser should protect against this
     }
@@ -293,8 +299,6 @@ static IrIns * emit_conv(Compiler *c, IrIns *operand, Type *src, Type *target) {
     emit(c, conv);
     return conv;
 }
-
-static IrIns * compile_expr(Compiler *c, Expr *expr); // Forward declaration
 
 static IrIns * discharge_cond(Compiler *c, IrIns *cond) {
     assert(cond->op == IR_CONDBR);
