@@ -271,7 +271,8 @@ static int is_arith_op(Tk o) {
 }
 
 static int is_bit_op(Tk o) {
-    return o == '&' || o == '|' || o == '^' || o == TK_LSHIFT || o == TK_RSHIFT;
+    return o == '&' || o == '|' || o == '^' || o == TK_LSHIFT ||
+           o == TK_RSHIFT || o == '~';
 }
 
 static int is_rel_op(Tk o) {
@@ -849,15 +850,86 @@ static Expr * parse_expr(Parser *p) {
     return parse_subexpr(p, PREC_NONE);
 }
 
-static uint64_t parse_const_expr(Parser *p) {
-    // TODO: constant expressions only consist of an integer so far
-    if (p->tk->t == TK_KINT) {
-        uint64_t result = p->tk->kint;
-        next_tk(p);
-        return result;
-    } else {
-        trigger_error_at(p->tk, "expected constant expression");
+static int64_t calc_const_expr(Expr *expr); // Forward declaration
+
+static int64_t resolve_conv(Expr *expr) {
+    switch (expr->l->kind) {
+        case EXPR_KFLOAT: return (int64_t) expr->l->kfloat;
+        default: return calc_const_expr(expr->l);
     }
+}
+
+static int64_t resolve_postfix(Expr *expr) {
+    switch (expr->op) {
+    case '[':
+        if (expr->l->kind == EXPR_KSTR) {
+            return expr->l->kstr[calc_const_expr(expr->r)];
+        } // Fall through otherwise...
+    default: trigger_error_at(expr->tk, "expected constant expression");
+    }
+}
+
+static int64_t resolve_unary(Expr *expr) {
+    int64_t l = calc_const_expr(expr->l);
+    switch (expr->op) {
+        case '-': return -l;
+        case '+': return l;
+        case '~': return ~l;
+        case '!': return !l;
+        default:  trigger_error_at(expr->tk, "expected constant expression");
+    }
+}
+
+static int64_t resolve_binary(Expr *expr) {
+    int64_t l = calc_const_expr(expr->l), r = calc_const_expr(expr->r);
+    switch (expr->op) {
+        case '+':       return l + r;
+        case '-':       return l - r;
+        case '*':       return l * r;
+        case '/':       return l / r;
+        case '%':       return l % r;
+        case TK_LSHIFT: return l << r;
+        case TK_RSHIFT: return l >> r;
+        case '<':       return l < r;
+        case TK_LE:     return l <= r;
+        case '>':       return l > r;
+        case TK_GE:     return l >= r;
+        case TK_EQ:     return l == r;
+        case TK_NEQ:    return l != r;
+        case '&':       return l & r;
+        case '|':       return l | r;
+        case TK_AND:    return l && r;
+        case TK_OR:     return l || r;
+        default: trigger_error_at(expr->tk, "expected constant expression");
+    }
+}
+
+static int64_t calc_const_expr(Expr *expr) {
+    int64_t result;
+    switch (expr->kind) {
+        case EXPR_KINT:    result = (int64_t) expr->kint; break;
+        case EXPR_KCHAR:   result = (int64_t) expr->kch; break;
+        case EXPR_CONV:    result = resolve_conv(expr); break;
+        case EXPR_POSTFIX: result = resolve_postfix(expr); break;
+        case EXPR_UNARY:   result = resolve_unary(expr); break;
+        case EXPR_BINARY:  result = resolve_binary(expr); break;
+        case EXPR_TERNARY: result = calc_const_expr(expr->cond) ?
+                                    calc_const_expr(expr->l) :
+                                    calc_const_expr(expr->r); break;
+        default: trigger_error_at(expr->tk, "expected constant expression");
+    }
+    int b = bits(expr->type);
+    result &= (((int64_t) 1 << b) - 1); // Limit to the target type
+    if (expr->type->is_signed && (result & ((int64_t) 1 << (b - 1)))) {
+        // Sign extend if the result is signed and the sign bit is set
+        result |= ~(((int64_t) 1 << b) - 1);
+    }
+    return result;
+}
+
+static int64_t parse_const_expr(Parser *p) {
+    Expr *expr = parse_expr(p);
+    return calc_const_expr(expr);
 }
 
 
@@ -1011,10 +1083,13 @@ static Type ** parse_declarator_recursive(Parser *p, Declarator *d, Type **t) {
     }
     while (p->tk->t == '[') {
         next_tk(p);
-        uint64_t size = parse_const_expr(p);
+        int64_t size = parse_const_expr(p);
         expect_tk(p->tk, ']');
         d->tk = merge_tks(d->tk, p->tk);
         next_tk(p);
+        if (size <= 0) {
+            trigger_error_at(d->tk, "array size '%lli' must be positive", size);
+        }
         *t = t_arr(NULL, size);
         t = &(*t)->elem;
     }

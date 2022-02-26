@@ -46,10 +46,9 @@ typedef struct expr {
         char kch;      // EXPR_KCHAR
         char *kstr;    // EXPR_KSTR
         Local *local;  // EXPR_LOCAL
-        struct { Tk op; struct expr *l; }; // EXPR_UNARY, EXPR_POSTFIX
-        struct { Tk _o1; struct expr *_l1, *r; }; // EXPR_BINARY
-        struct { Tk _o2; struct expr *_l2, *_r, *cond; }; // EXPR_TERNARY
-        // Nothing for EXPR_CONV
+        struct { Tk op; struct expr *l; }; // Unary, postfix, conv
+        struct { Tk _o1; struct expr *_l1, *r; }; // Binary
+        struct { Tk _o2; struct expr *_l2, *_r, *cond; }; // Ternary
     };
     Token *tk;
 } Expr;
