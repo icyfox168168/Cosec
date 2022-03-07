@@ -32,21 +32,24 @@ typedef enum {
     T_PRIM,
     T_PTR,
     T_ARR,
+    T_FN,
 } Kind;
 
 typedef struct type {
     Kind kind;
     int is_signed;
     union {
-        Prim prim;        // For T_PRIM
-        struct type *ptr; // For T_PTR
-        struct { struct type *elem; uint64_t size; }; // For T_ARR
+        Prim prim;        // T_PRIM
+        struct type *ptr; // T_PTR
+        struct { struct type *elem; uint64_t size; }; // T_ARR
+        struct { struct type *ret; struct local **args; int nargs; }; // T_FN
     };
 } Type;
 
 Type * t_prim(Prim prim, int is_signed);
 Type * t_ptr(Type *deref);
 Type * t_arr(Type *elem, uint64_t size);
+Type * t_fn(Type *ret, struct local **args, int nargs);
 Type * t_copy(Type *t);
 
 int bits(Type *t);  // Returns the size of a type in bits
@@ -60,6 +63,7 @@ int is_ptr_arr(Type *t);
 int is_arith(Type *t);
 int is_int(Type *t);
 int is_fp(Type *t);
+int is_fn(Type *t);
 int are_equal(Type *l, Type *r);
 int is_incomplete(Type *t);
 

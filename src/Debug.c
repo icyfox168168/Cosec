@@ -23,15 +23,25 @@ static int print_type(Type *t) {
     case T_PRIM:
         len += printf("%s", PRIM_NAMES[t->prim]);
         break;
+    case T_PTR:
+        len += print_type(t->ptr);
+        len += printf("*");
+        break;
     case T_ARR:
         len += printf("[%llu x ", t->size);
         len += print_type(t->elem);
         len += printf("]");
         break;
-    case T_PTR:
-        len += print_type(t->ptr);
-        len += printf("*");
-        break;
+    case T_FN:
+        len += print_type(t->ret);
+        len += printf("(");
+        for (int i = 0; i < t->nargs; i++) {
+            len += print_type(t->args[i]->decl.type);
+            if (i < t->nargs - 1) {
+                len += printf(", ");
+            }
+        }
+        len += printf(")");
     }
     return len;
 }
@@ -39,8 +49,10 @@ static int print_type(Type *t) {
 // ---- Abstract Syntax Tree --------------------------------------------------
 
 static void print_local(Local *local) {
-    print_type(local->type);
-    printf(" %s", local->name);
+    print_type(local->decl.type);
+    if (local->decl.name) {
+        printf(" %.*s", (int) local->decl.name->len, local->decl.name->start);
+    }
 }
 
 static void print_expr(Expr *expr) {
@@ -190,12 +202,13 @@ void print_ast(FnDef *fn) {
     if (!fn) {
         return;
     }
-    print_type(fn->decl->return_type);
-    printf(" %s ( ", fn->decl->local->name);
-    for (FnArg *arg = fn->decl->args; arg; arg = arg->next) {
-        print_local(arg->local);
-        if (arg->next) {
-            printf(" ");
+    Declarator *decl = &fn->local->decl;
+    print_type(decl->type->ret);
+    printf(" %.*s ( ", (int) decl->name->len, decl->name->start);
+    for (int i = 0; i < decl->type->nargs; i++) {
+        print_local(decl->type->args[i]);
+        if (i < decl->type->nargs - 1) {
+            printf(", ");
         }
     }
     printf(" ) ");

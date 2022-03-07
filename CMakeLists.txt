@@ -147,3 +147,7 @@ test(types2 types/2.c)
 test(types3 types/3.c)
 test(types4 types/4.c)
 test(types5 types/5.c)
+
+test(fns1 functions/1.c)
+test(fns2 functions/2.c)
+test(fns3 functions/3.c)

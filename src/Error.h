@@ -4,11 +4,11 @@
 
 #include "Lexer.h"
 
-// ERROR -- prints colourful error and warning messages to stdout.
-
-void trigger_error(char *fmt, ...) __attribute__((noreturn));
-void trigger_error_at(Token *tk, char *fmt, ...) __attribute__((noreturn));
-void trigger_warning_at(Token *tk, char *fmt, ...);
+void print_error(char *fmt, ...);
+void print_error_at(Token *tk, char *fmt, ...);
+void print_warning_at(Token *tk, char *fmt, ...);
+void print_info_at(Token *tk, char *fmt, ...);
+void trigger_error() __attribute__((noreturn));;
 void expect_tk(Token *tk, Tk expected);
 
 #endif

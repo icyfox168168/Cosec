@@ -37,28 +37,31 @@ Expr * new_expr(ExprType kind) {
     return expr;
 }
 
-static Local * find_local(Parser *p, char *name, size_t len) {
+static Local * find_local(Parser *p, Token *name) {
+    if (!name) {
+        return NULL;
+    }
     for (Local *l = p->locals; l; l = l->next) {
-        if (strlen(l->name) == len && strncmp(l->name, name, len) == 0) {
+        if (l->decl.name && l->decl.name->len == name->len &&
+                strncmp(l->decl.name->start, name->start, name->len) == 0) {
             return l;
         }
     }
     return NULL;
 }
 
-static Local * def_local(Parser *p, Token *name, Type *type) {
-    if (find_local(p, name->start, name->len)) {
-        trigger_error_at(name, "redefinition of '%.*s'", name->len,
-                         name->start);
+static Local * def_local(Parser *p, Declarator decl) {
+    Local *existing = find_local(p, decl.name);
+    if (existing) {
+        print_error_at(decl.tk, "redefinition of '%.*s'", decl.name->len,
+                       decl.name->start);
+        print_info_at(existing->decl.tk, "initial definition here");
+        trigger_error();
     }
-    char *name_str = malloc((name->len + 1) * sizeof(char));
-    strncpy(name_str, name->start, name->len);
-    name_str[name->len] = '\0';
     Local *local = malloc(sizeof(Local));
-    local->next = p->locals; // Prepend to the linked list
-    local->name = name_str;
-    local->type = type;
+    local->decl = decl;
     local->alloc = NULL;
+    local->next = p->locals; // Prepend to the linked list
     p->locals = local;
     return local;
 }
@@ -174,15 +177,18 @@ static void ensure_lvalue(Expr *lvalue) {
     if (!(lvalue->kind == EXPR_LOCAL ||
             (lvalue->kind == EXPR_UNARY && lvalue->op == '*') ||
             (lvalue->kind == EXPR_BINARY && lvalue->op == '['))) {
-        trigger_error_at(lvalue->tk, "expression is not assignable");
+        print_error_at(lvalue->tk, "expression is not assignable");
+        trigger_error();
     }
     if (is_arr(lvalue->type)) {
-        trigger_error_at(lvalue->tk, "array type '%s' is not assignable",
-                         type_to_str(lvalue->type));
+        print_error_at(lvalue->tk, "array type '%s' is not assignable",
+                       type_to_str(lvalue->type));
+        trigger_error();
     }
     if (is_incomplete(lvalue->type)) {
-        trigger_error_at(lvalue->tk, "incomplete type '%s' is not assignable",
-                         type_to_str(lvalue->type));
+        print_error_at(lvalue->tk, "incomplete type '%s' is not assignable",
+                       type_to_str(lvalue->type));
+        trigger_error();
     }
 }
 
@@ -192,23 +198,18 @@ static void ensure_can_take_addr(Expr *operand) {
     if (!(operand->kind == EXPR_LOCAL ||
           (operand->kind == EXPR_UNARY && operand->op == '*') ||
           (operand->kind == EXPR_BINARY && operand->op == '['))) {
-        trigger_error_at(operand->tk, "cannot take address of operand");
+        print_error_at(operand->tk, "cannot take address of operand");
+        trigger_error();
     }
 }
 
 static void ensure_can_deref(Expr *operand) {
     // Can only dereference a pointer or an array
     if (operand->type->kind != T_PTR && operand->type->kind != T_ARR) {
-        trigger_error_at(operand->tk, "cannot dereference operand of type '%s'",
-                         type_to_str(operand->type));
+        print_error_at(operand->tk, "cannot dereference operand of type '%s'",
+                       type_to_str(operand->type));
+        trigger_error();
     }
-}
-
-__attribute__((noreturn))
-static void invalid_arguments(Expr *l, Expr *r) {
-    trigger_error_at(merge_tks(l->tk, r->tk),
-                     "invalid arguments '%s' and '%s' to operation",
-                     type_to_str(l->type), type_to_str(r->type));
 }
 
 static void check_conv(Expr *src, Type *t, int explicit_cast) {
@@ -217,25 +218,26 @@ static void check_conv(Expr *src, Type *t, int explicit_cast) {
           (is_ptr(t) && is_ptr(s)) ||
           (is_ptr(t) && is_int(s)) || (is_int(t) && is_ptr(s)) ||
           (is_ptr(t) && is_arr(s)))) {
-        trigger_error_at(src->tk, "invalid conversion from '%s' to '%s'",
-                         type_to_str(s), type_to_str(t));
+        print_error_at(src->tk, "invalid conversion from '%s' to '%s'",
+                       type_to_str(s), type_to_str(t));
+        trigger_error();
     }
     if (!explicit_cast && is_int(t) && is_int(s) && bits(t) < bits(s)) {
-        trigger_warning_at(src->tk, "implicit conversion from '%s' to '%s' "
-                                    "loses precision",
-                           type_to_str(s), type_to_str(t));
+        print_warning_at(src->tk, "implicit conversion from '%s' to '%s' "
+                                  "loses precision",
+                         type_to_str(s), type_to_str(t));
     }
     if (!explicit_cast && is_ptr(t) && is_ptr(s) && !are_equal(t, s) &&
             !(is_void_ptr(s) || is_void_ptr(t) || is_null_ptr(src))) {
-        trigger_warning_at(src->tk, "implicit conversion between incompatible "
-                                    "pointer types '%s' and '%s'",
-                           type_to_str(s), type_to_str(t));
+        print_warning_at(src->tk, "implicit conversion between incompatible "
+                                  "pointer types '%s' and '%s'",
+                         type_to_str(s), type_to_str(t));
     }
     if (!explicit_cast && is_ptr(t) && is_arr(s) &&
             !are_equal(t->ptr, s->ptr) && !is_void_ptr(t)) {
-        trigger_warning_at(src->tk, "implicit conversion between incompatible "
-                                    "pointer and array types '%s' and '%s'",
-                           type_to_str(s), type_to_str(t));
+        print_warning_at(src->tk, "implicit conversion between incompatible "
+                                  "pointer and array types '%s' and '%s'",
+                         type_to_str(s), type_to_str(t));
     }
 }
 
@@ -386,7 +388,10 @@ static Expr * parse_ternary(Parser *p, Expr *cond, Expr *l) {
         result = to_ptr(r->type); // Pick the non-void pointer
         l = conv_to(l, result, 0); // Convert to the non-void pointer
     } else {
-        invalid_arguments(l, r);
+        print_error_at(merge_tks(l->tk, r->tk),
+                       "invalid arguments '%s' and '%s' to ternary operation",
+                       type_to_str(l->type), type_to_str(r->type));
+        trigger_error();
     }
     Expr *ternary = new_expr(EXPR_TERNARY);
     ternary->cond = to_cond(cond);
@@ -425,14 +430,21 @@ static Expr * parse_arith(Tk op, Expr *l, Expr *r) {
         // Result is an INTEGER
         result = t_prim(T_i64, 0);
     } else {
-        invalid_arguments(l, r);
+        print_error_at(merge_tks(l->tk, r->tk),
+                       "invalid arguments '%s' and '%s' to arithmetic "
+                       "operation",
+                       type_to_str(l->type), type_to_str(r->type));
+        trigger_error();
     }
     return parse_operation(op, l, r, result);
 }
 
 static Expr * parse_bit(Tk op, Expr *l, Expr *r) {
     if (!(is_int(l->type) && is_int(r->type))) {
-        invalid_arguments(l, r);
+        print_error_at(merge_tks(l->tk, r->tk),
+                       "invalid arguments '%s' and '%s' to bitwise operation",
+                       type_to_str(l->type), type_to_str(r->type));
+        trigger_error();
     }
     Type *result = promote_binary_int(l->type, r->type);
     l = conv_to(l, result, 0);
@@ -486,7 +498,11 @@ static Expr * parse_eq(Tk op, Expr *l, Expr *r) {
         l = conv_to(l, promotion, 0); // Convert to the non-void pointer
         result = t_prim(T_i1, 0); // Pointer comparisons always unsigned
     } else {
-        invalid_arguments(l, r);
+        print_error_at(merge_tks(l->tk, r->tk),
+                       "invalid arguments '%s' and '%s' to comparison "
+                       "operation",
+                       type_to_str(l->type), type_to_str(r->type));
+        trigger_error();
     }
     return parse_operation(op, l, r, result);
 }
@@ -502,7 +518,11 @@ static Expr * parse_rel(Tk op, Expr *l, Expr *r) {
                are_equal(l->type, r->type)) {
         result = t_prim(T_i1, 0); // Pointer comparisons always unsigned
     } else {
-        invalid_arguments(l, r);
+        print_error_at(merge_tks(l->tk, r->tk),
+                       "invalid arguments '%s' and '%s' to comparison "
+                       "operation",
+                       type_to_str(l->type), type_to_str(r->type));
+        trigger_error();
     }
     return parse_operation(op, l, r, result);
 }
@@ -603,15 +623,16 @@ static Expr * parse_kstr(Parser *p) {
 
 static Expr * parse_local(Parser *p) {
     expect_tk(p->tk, TK_IDENT);
-    char *name = p->tk->start;
-    size_t len = p->tk->len;
-    Local *local = find_local(p, name, len);
+    Token *name = p->tk;
+    Local *local = find_local(p, name);
     if (!local) { // Check the local exists
-        trigger_error_at(p->tk, "undeclared identifier '%.*s'", len, name);
+        print_error_at(p->tk, "undeclared identifier '%.*s'", name->len,
+                       name->start);
+        trigger_error();
     }
     Expr *expr = new_expr(EXPR_LOCAL);
     expr->local = local;
-    expr->type = t_copy(local->type);
+    expr->type = t_copy(local->decl.type);
     expr->tk = p->tk;
     next_tk(p);
     return expr;
@@ -636,7 +657,9 @@ static Expr * parse_operand(Parser *p) {
         case TK_KSTR:   return parse_kstr(p);
         case TK_IDENT:  return parse_local(p);
         case '(':       return parse_braced_subexpr(p);
-        default:        trigger_error_at(p->tk, "expected expression");
+        default:
+            print_error_at(p->tk, "expected expression");
+            trigger_error();
     }
 }
 
@@ -666,8 +689,9 @@ static Expr * parse_array_access(Parser *p, Expr *array) {
 
     ensure_can_deref(array);
     if (!is_int(index->type)) {
-        trigger_error_at(index->tk, "invalid argument '%s' to array access",
-                         type_to_str(index->type));
+        print_error_at(index->tk, "invalid argument '%s' to array access",
+                       type_to_str(index->type));
+        trigger_error();
     }
     index = conv_to(index, t_prim(T_i64, 0), 0); // Have to add an i64
     Expr *array_access = new_expr(EXPR_BINARY);
@@ -735,8 +759,9 @@ static Expr * parse_prefix_inc_dec(Tk op, Expr *operand) {
 static Expr * parse_unary_arith(Tk op, Expr *operand) {
     if (!((is_arith_op(op) && is_arith(operand->type)) ||
           (is_bit_op(op) && is_int(operand->type)))) {
-        trigger_error_at(operand->tk, "invalid argument '%s' to operation",
-                         type_to_str(operand->type));
+        print_error_at(operand->tk, "invalid argument '%s' to operation",
+                       type_to_str(operand->type));
+        trigger_error();
     }
     Type *result = promote_unary_arith(operand->type);
     operand = conv_to(operand, result, 0);
@@ -749,14 +774,14 @@ static Expr * parse_unary_arith(Tk op, Expr *operand) {
 
 static int has_decl(Token *tk); // Forward declarations
 static Type * parse_type_specs(Parser *p);
-static Declarator parse_declarator(Parser *p, Type *base, int is_abstract);
+static Declarator parse_abstract_declarator(Parser *p, Type *base);
 
 static Expr * parse_cast(Parser *p) {
     expect_tk(p->tk, '(');
     Token *start = p->tk;
     next_tk(p);
     Type *base_type = parse_type_specs(p);
-    Declarator declarator = parse_declarator(p, base_type, 1);
+    Declarator declarator = parse_abstract_declarator(p, base_type);
     expect_tk(p->tk, ')');
     next_tk(p);
     Expr *operand = parse_subexpr(p, UNARY_PREC['(']);
@@ -775,11 +800,12 @@ static Expr * parse_sizeof(Parser *p) {
     if (p->tk->t == '(') {
         next_tk(p);
         if (!has_decl(p->tk)) {
-            trigger_error_at(p->tk, "expected type name");
+            print_error_at(p->tk, "expected type name");
+            trigger_error();
         }
         err = p->tk;
         Type *base_type = parse_type_specs(p);
-        Declarator decl = parse_declarator(p, base_type, 1);
+        Declarator decl = parse_abstract_declarator(p, base_type);
         result = decl.type;
         err = merge_tks(err, decl.tk);
         expect_tk(p->tk, ')');
@@ -792,8 +818,9 @@ static Expr * parse_sizeof(Parser *p) {
         end = err;
     }
     if (is_incomplete(result)) {
-        trigger_error_at(err, "cannot calculate size of incomplete type '%s'",
-                         type_to_str(result));
+        print_error_at(err, "cannot calculate size of incomplete type '%s'",
+                       type_to_str(result));
+        trigger_error();
     }
     // The operand to a 'sizeof' operator isn't evaluated (unless it's a VLA);
     // 'sizeof' just evaluates to a constant integer
@@ -865,7 +892,9 @@ static int64_t resolve_postfix(Expr *expr) {
         if (expr->l->kind == EXPR_KSTR) {
             return expr->l->kstr[calc_const_expr(expr->r)];
         } // Fall through otherwise...
-    default: trigger_error_at(expr->tk, "expected constant expression");
+    default:
+        print_error_at(expr->tk, "expected constant expression");
+        trigger_error();
     }
 }
 
@@ -876,7 +905,9 @@ static int64_t resolve_unary(Expr *expr) {
         case '+': return l;
         case '~': return ~l;
         case '!': return !l;
-        default:  trigger_error_at(expr->tk, "expected constant expression");
+        default:
+            print_error_at(expr->tk, "expected constant expression");
+            trigger_error();
     }
 }
 
@@ -900,7 +931,9 @@ static int64_t resolve_binary(Expr *expr) {
         case '|':       return l | r;
         case TK_AND:    return l && r;
         case TK_OR:     return l || r;
-        default: trigger_error_at(expr->tk, "expected constant expression");
+        default:
+            print_error_at(expr->tk, "expected constant expression");
+            trigger_error();
     }
 }
 
@@ -916,7 +949,9 @@ static int64_t calc_const_expr(Expr *expr) {
         case EXPR_TERNARY: result = calc_const_expr(expr->cond) ?
                                     calc_const_expr(expr->l) :
                                     calc_const_expr(expr->r); break;
-        default: trigger_error_at(expr->tk, "expected constant expression");
+        default:
+            print_error_at(expr->tk, "expected constant expression");
+            trigger_error();
     }
     int b = bits(expr->type);
     result &= (((int64_t) 1 << b) - 1); // Limit to the target type
@@ -1031,7 +1066,8 @@ static Type * parse_type_specs(Parser *p) {
     // Check there's at least one type specifier
     Token *start = p->tk;
     if (!has_decl(start)) {
-        trigger_error_at(start, "expected declaration");
+        print_error_at(start, "expected declaration");
+        trigger_error();
     }
     // Keep parsing type specifiers into a hash-map until there's no more
     int type_specs[COMBINATION_SIZE];
@@ -1053,10 +1089,58 @@ static Type * parse_type_specs(Parser *p) {
     }
     if (combination == -1) {
         Token *tk = merge_tks(start, end);
-        trigger_error_at(tk, "invalid combination of type specifiers");
+        print_error_at(tk, "invalid combination of type specifiers");
+        trigger_error();
     }
     int is_signed = !type_specs[TK_UNSIGNED - FIRST_KEYWORD];
     return t_prim(TYPE_COMBINATION_TO_PRIM[combination], is_signed);
+}
+
+static Type ** parse_array_declarator(Parser *p, Declarator *d, Type **t) {
+    expect_tk(p->tk, '[');
+    next_tk(p);
+    int64_t size = parse_const_expr(p);
+    expect_tk(p->tk, ']');
+    d->tk = merge_tks(d->tk, p->tk);
+    next_tk(p);
+    if (size <= 0) {
+        print_error_at(d->tk, "invalid array size '%lli', must be positive",
+                       size);
+        trigger_error();
+    }
+    *t = t_arr(NULL, size);
+    t = &(*t)->elem;
+    return t;
+}
+
+// Forward declaration
+static Declarator parse_declarator(Parser *p, Type *base);
+
+static Type ** parse_fn_declarator(Parser *p, Declarator *d, Type **t) {
+    expect_tk(p->tk, '(');
+    next_tk(p);
+    int nargs = 0, max_args = 4;
+    Local **args = malloc(sizeof(Local) * max_args);
+    while (p->tk->t != ')') {
+        Type *base = parse_type_specs(p);
+        if (nargs >= max_args) {
+            max_args *= 2;
+            args = realloc(args, sizeof(Local) * max_args);
+        }
+        Declarator arg = parse_declarator(p, base); // Can be named or abstract
+        args[nargs++] = def_local(p, arg);
+        if (p->tk->t != ',') {
+            break;
+        } else {
+            next_tk(p);
+        }
+    }
+    expect_tk(p->tk, ')');
+    d->tk = merge_tks(d->tk, p->tk);
+    next_tk(p);
+    *t = t_fn(NULL, args, nargs);
+    t = &(*t)->ret;
+    return t;
 }
 
 static Type ** parse_declarator_recursive(Parser *p, Declarator *d, Type **t) {
@@ -1066,32 +1150,26 @@ static Type ** parse_declarator_recursive(Parser *p, Declarator *d, Type **t) {
         d->tk = merge_tks(d->tk, p->tk);
         next_tk(p);
     }
-    switch (p->tk->t) {
-    case TK_IDENT:
+    if (p->tk->t == TK_IDENT) {
         d->name = p->tk;
         d->tk = merge_tks(d->tk, p->tk);
         next_tk(p);
-        break;
-    case '(':
+    } else if (p->tk->t == '(' && p->tk->next->t != ')') {
+        // An empty "sub-declarator" is a function pointer not a NOP
         next_tk(p);
         t = parse_declarator_recursive(p, d, t);
         expect_tk(p->tk, ')');
         d->tk = merge_tks(d->tk, p->tk);
         next_tk(p);
-        break;
-    default: break;
     }
-    while (p->tk->t == '[') {
-        next_tk(p);
-        int64_t size = parse_const_expr(p);
-        expect_tk(p->tk, ']');
-        d->tk = merge_tks(d->tk, p->tk);
-        next_tk(p);
-        if (size <= 0) {
-            trigger_error_at(d->tk, "array size '%lli' must be positive", size);
+    while (p->tk->t == '[' || p->tk->t == '(') {
+        if (p->tk->t == '[') {
+            t = parse_array_declarator(p, d, t);
+        } else if (p->tk->t == '(') {
+            Local *scope = p->locals; // Function declaration scope
+            t = parse_fn_declarator(p, d, t);
+            p->locals = scope;
         }
-        *t = t_arr(NULL, size);
-        t = &(*t)->elem;
     }
     while (num_ptrs--) {
         *t = t_ptr(NULL);
@@ -1100,24 +1178,53 @@ static Type ** parse_declarator_recursive(Parser *p, Declarator *d, Type **t) {
     return t;
 }
 
-static Declarator parse_declarator(Parser *p, Type *base, int is_abstract) {
+static void check_type(Type *t, Token *err) {
+    while (t->kind != T_PRIM) {
+        if (t->kind == T_FN && t->ret->kind == T_ARR) {
+            print_error_at(err, "function cannot return array type '%s'",
+                           type_to_str(t->ret));
+            trigger_error();
+        } else if (t->kind == T_FN && t->ret->kind == T_FN) {
+            print_error_at(err, "function cannot return function type '%s'",
+                           type_to_str(t->ret));
+            trigger_error();
+        }
+        t = t->ptr;
+    }
+}
+
+static Declarator parse_declarator(Parser *p, Type *base) {
     Declarator d;
     d.type = base;
     d.name = NULL;
     d.tk = p->tk; // Start token
     Type **inner = parse_declarator_recursive(p, &d, &d.type);
     *inner = base;
-    if (is_abstract && d.name) {
-        trigger_error_at(d.name, "variable name not permitted here");
-    } else if (!is_abstract && !d.name) {
-        trigger_error_at(d.tk, "expected variable name");
-    }
+    check_type(d.type, d.tk);
     return d;
 }
 
+static Declarator parse_named_declarator(Parser *p, Type *base) {
+    Declarator decl = parse_declarator(p, base);
+    if (!decl.name) {
+        print_error_at(decl.tk, "expected variable name");
+        trigger_error();
+    }
+    return decl;
+}
+
+static Declarator parse_abstract_declarator(Parser *p, Type *base) {
+    Declarator decl = parse_declarator(p, base);
+    if (decl.name) {
+        print_error_at(decl.name, "variable name not permitted here");
+        trigger_error();
+    }
+    return decl;
+}
+
 static Stmt * parse_declaration(Parser *p, Type *base_type, int allowed_defn) {
-    Declarator declarator = parse_declarator(p, base_type, 0);
-    Local *local = def_local(p, declarator.name, declarator.type);
+    Declarator declarator = parse_named_declarator(p, base_type);
+    Local *local = def_local(p, declarator);
     Expr *value = NULL;
     if (allowed_defn && p->tk->t == '=') { // Optional assignment
         next_tk(p); // Skip the '=' token
@@ -1129,7 +1236,7 @@ static Stmt * parse_declaration(Parser *p, Type *base_type, int allowed_defn) {
     if (value) {
         Expr *local_expr = new_expr(EXPR_LOCAL);
         local_expr->local = result->local;
-        local_expr->type = result->local->type;
+        local_expr->type = result->local->decl.type;
         local_expr->tk = declarator.tk;
         Stmt *assign = new_stmt(STMT_EXPR);
         assign->expr = parse_assign(local_expr, value);
@@ -1312,7 +1419,7 @@ static Stmt * parse_ret(Parser *p) {
     Stmt *ret = new_stmt(STMT_RET);
     if (p->tk->t != ';') {
         Expr *value = parse_expr(p);
-        value = conv_to(value, p->fn->decl->return_type, 0);
+        value = conv_to(value, p->fn->local->decl.type->ret, 0);
         ret->expr = value;
     }
     expect_tk(p->tk, ';');
@@ -1360,64 +1467,36 @@ static Stmt * parse_stmt(Parser *p) {
 
 // ---- Module ----------------------------------------------------------------
 
-static FnArg * parse_fn_decl_arg(Parser *p) {
-    Type *base_type = parse_type_specs(p); // Type
-    FnArg *arg = malloc(sizeof(FnArg));
-    arg->next = NULL;
-    Stmt *decl = parse_declaration(p, base_type, 0);
-    arg->local = decl->local;
-    assert(!decl->next); // Sanity check -> only one statement from 'parse_declaration'
-    return arg;
-}
-
-static FnArg * parse_fn_decl_args(Parser *p) {
-    expect_tk(p->tk, '('); // Arguments
-    next_tk(p);
-    FnArg *head = NULL;
-    FnArg **arg = &head;
-    while (p->tk->t && p->tk->t != ')') {
-        *arg = parse_fn_decl_arg(p); // Parse an argument
-        arg = &(*arg)->next;
-        if (p->tk->t == ',') { // Check for another argument
-            next_tk(p);
-            continue;
-        } else {
-            break;
-        }
-    }
-    expect_tk(p->tk, ')');
-    next_tk(p);
-    return head;
-}
-
-static FnDef * parse_fn_def(Parser *p) {
-    FnDef *def = malloc(sizeof(FnDef));
-    def->next = NULL;
-    p->fn = def;
-
-    def->decl = malloc(sizeof(FnDecl));
-    def->decl->return_type = parse_type_specs(p); // Return type
-
-    expect_tk(p->tk, TK_IDENT); // Name
-    def->decl->local = def_local(p, p->tk, NULL);
-    next_tk(p);
-
-    // 'parse_fn_decl_args' creates new locals for the function arguments;
-    // create a new scope so that they get deleted
-    Local *scope = p->locals;
-    def->decl->args = parse_fn_decl_args(p); // Arguments
-    def->body = parse_block(p); // Body
-    p->locals = scope;
-    return def;
-}
-
 static AstModule * parse_module(Parser *p) {
     AstModule *module = malloc(sizeof(AstModule));
     module->fns = NULL;
     FnDef **def = &module->fns;
     while (p->tk->t) { // Until we reach the end of the file
-        *def = parse_fn_def(p);
-        def = &(*def)->next;
+        Type *base = parse_type_specs(p); // Declaration
+        Declarator decl = parse_named_declarator(p, base);
+        if (p->tk->t == '{') {
+            if (!is_fn(decl.type)) {
+                print_error_at(decl.tk, "expected function");
+                trigger_error();
+            }
+            FnDef *fn = malloc(sizeof(FnDef));
+            fn->next = NULL;
+            fn->local = def_local(p, decl);
+            p->fn = fn;
+
+            Type *fn_decl_type = fn->local->decl.type;
+            Local *scope = p->locals;
+            p->locals->next = fn_decl_type->args[fn_decl_type->nargs - 1];
+            fn->body = parse_block(p); // Body
+            p->locals = scope;
+
+            *def = fn;
+            def = &(*def)->next;
+        } else {
+            expect_tk(p->tk, ';');
+            next_tk(p);
+            // TODO: top level declarations
+        }
     }
     return module;
 }

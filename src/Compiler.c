@@ -863,7 +863,7 @@ static void compile_block(Compiler *c, Stmt *stmt);
 static void compile_decl(Compiler *c, Stmt *decl) {
     IrIns *alloc = new_ir(IR_ALLOC); // Create some stack space
     // The result of IR_ALLOC is a POINTER to the value
-    alloc->type = t_ptr(t_copy(decl->local->type));
+    alloc->type = t_ptr(t_copy(decl->local->decl.type));
     emit(c, alloc);
     decl->local->alloc = alloc;
 }
@@ -1046,11 +1046,12 @@ static void compile_block(Compiler *c, Stmt *stmt) {
 
 // ---- Module ----------------------------------------------------------------
 
-static void compile_fn_args(Compiler *c, FnArg *args) {
+static void compile_fn_args(Compiler *c, Local **args, int nargs) {
     int gpr_arg_num = 0, fp_arg_num = 0;
-    for (FnArg *arg = args; arg; arg = arg->next) { // Emit IR_FARGs
+    IrIns *fargs[nargs];
+    for (int i = 0; i < nargs; i++) { // Emit IR_FARGs
         IrIns *farg = new_ir(IR_FARG);
-        farg->type = t_copy(arg->local->type);
+        farg->type = t_copy(args[i]->decl.type);
         if (is_fp(farg->type)) {
             // Count floating point arguments SEPARATELY since they go into
             // SSE registers (separate from the general purpose registers)
@@ -1059,17 +1060,17 @@ static void compile_fn_args(Compiler *c, FnArg *args) {
             farg->arg_num = gpr_arg_num++;
         }
         emit(c, farg);
-        arg->ir_farg = farg;
+        fargs[i] = farg;
     }
-    for (FnArg *arg = args; arg; arg = arg->next) { // Emit IR_ALLOCs
+    for (int i = 0; i < nargs; i++) { // Emit IR_ALLOCs
         IrIns *alloc = new_ir(IR_ALLOC);
         // IR_ALLOC returns a POINTER
-        alloc->type = t_ptr(t_copy(arg->local->type));
+        alloc->type = t_ptr(t_copy(args[i]->decl.type));
         emit(c, alloc);
-        arg->local->alloc = alloc;
+        args[i]->alloc = alloc;
         IrIns *store = new_ir(IR_STORE);
         store->l = alloc;
-        store->r = arg->ir_farg;
+        store->r = fargs[i];
         emit(c, store);
     }
 }
@@ -1092,19 +1093,20 @@ static void ensure_ret(Fn *fn) {
     }
 }
 
-static char * prepend_underscore(char *str) {
-    char *out = malloc(strlen(str) + 2);
+static char * prepend_underscore(char *str, size_t len) {
+    char *out = malloc(len + 2);
     out[0] = '_';
-    strcpy(&out[1], str);
+    strncpy(&out[1], str, len);
     return out;
 }
 
 static Fn * compile_fn_def(Compiler *c, FnDef *ast_fn) {
     Fn *fn = new_fn();
     c->fn = fn;
-    fn->name = prepend_underscore(ast_fn->decl->local->name);
+    Declarator *fn_decl = &ast_fn->local->decl;
+    fn->name = prepend_underscore(fn_decl->name->start, fn_decl->name->len);
     fn->entry = emit_bb(c); // Entry block
-    compile_fn_args(c, ast_fn->decl->args);
+    compile_fn_args(c, fn_decl->type->args, fn_decl->type->nargs);
     compile_block(c, ast_fn->body); // Body
     ensure_ret(fn); // Make sure every BB ends with a terminator instruction
     return fn;

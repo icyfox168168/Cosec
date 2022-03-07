@@ -59,7 +59,8 @@ Lexer new_lexer(char *file) {
     l.file = file;
     l.source = read_file(file);
     if (!l.source) {
-        trigger_error("couldn't read file '%s'", file);
+        print_error("couldn't read file '%s'", file);
+        trigger_error();
     }
     l.c = l.source;
     l.line = 1;
@@ -111,7 +112,8 @@ static void lex_comments(Lexer *l) {
             l->c++;
         }
         if (!*l->c) {
-            trigger_error_at(err, "unterminated '/*' comment");
+            print_error_at(err, "unterminated '/*' comment");
+            trigger_error();
         }
         l->c += 2; // Skip final '*/'
     }
@@ -142,7 +144,8 @@ static Token * lex_float(Lexer *l) {
     l->c = end;
     if (errno != 0 || end == tk->start || isalnum(*l->c)) {
         Token *err = cur_tk(l, 1);
-        trigger_error_at(err, "invalid digit '%c' in number", *l->c);
+        print_error_at(err, "invalid digit '%c' in number", *l->c);
+        trigger_error();
     }
     tk->t = TK_KFLOAT;
     tk->len = l->c - tk->start;
@@ -158,11 +161,13 @@ static Token * lex_number(Lexer *l) {
     l->c = end;
     tk->len = l->c - tk->start;
     if (errno != 0) {
-        trigger_error_at(tk, "number out of range");
+        print_error_at(tk, "number out of range");
+        trigger_error();
     }
     if (end == tk->start || isalnum(*l->c)) {
         Token *err = cur_tk(l, 1);
-        trigger_error_at(err, "invalid digit '%c' in number", *l->c);
+        print_error_at(err, "invalid digit '%c' in number", *l->c);
+        trigger_error();
     }
     if (*end == '.') { // If the int ends in a '.', then it was a float
         l->c = tk->start; // Re-start
@@ -193,9 +198,11 @@ static char lex_numeric_esc_seq(Lexer *l, int base) {
     Token *err = cur_tk(l, 1);
     err->len = end - l->c;
     if (err->len == 0) {
-        trigger_error_at(err, "missing hex escape sequence");
+        print_error_at(err, "missing hex escape sequence");
+        trigger_error();
     } else if (num > UCHAR_MAX) {
-        trigger_error_at(err, "escape sequence out of range");
+        print_error_at(err, "escape sequence out of range");
+        trigger_error();
     }
     l->c = end;
     return (char) num;
@@ -214,7 +221,8 @@ static char lex_esc_seq(Lexer *l) {
         l->c++; // Skip the 'x'
         return lex_numeric_esc_seq(l, 16);
     } else {
-        trigger_error_at(err, "unknown escape sequence");
+        print_error_at(err, "unknown escape sequence");
+        trigger_error();
     }
 }
 
@@ -223,10 +231,12 @@ static Token * lex_char(Lexer *l) {
     l->c++; // Skip opening quote
     char c = *l->c;
     if (c == '\n' || c == '\r') {
-        trigger_error_at(tk, "invalid character literal");
+        print_error_at(tk, "invalid character literal");
+        trigger_error();
     } else if (c == '\'') {
         tk->len = 2;
-        trigger_error_at(tk, "empty character literal");
+        print_error_at(tk, "empty character literal");
+        trigger_error();
     } else if (c == '\\') {
         tk->kch = lex_esc_seq(l);
     } else {
@@ -235,7 +245,8 @@ static Token * lex_char(Lexer *l) {
     }
     if (*l->c++ != '\'') { // Skip terminating quote
         Token *err = cur_tk(l, 1);
-        trigger_error_at(err, "expected terminating '");
+        print_error_at(err, "expected terminating '");
+        trigger_error();
     }
     tk->t = TK_KCHAR;
     tk->len = l->c - tk->start;
@@ -258,7 +269,8 @@ static Token * lex_str(Lexer *l) {
         char c = *l->c;
         if (c == '\n' || c == '\r') { // Can't be a newline
             Token *err = cur_tk(l, 1);
-            trigger_error_at(err, "string cannot contain newlines");
+            print_error_at(err, "string cannot contain newlines");
+            trigger_error();
         } else if (c == '\\') { // Escape sequence
             c = lex_esc_seq(l);
         } else { // Normal character
@@ -270,7 +282,8 @@ static Token * lex_str(Lexer *l) {
 
     if (*l->c++ != '"') { // Skip closing quote
         Token *err = cur_tk(l, 1);
-        trigger_error_at(err, "expected terminating \"");
+        print_error_at(err, "expected terminating \"");
+        trigger_error();
     }
     tk->t = TK_KSTR;
     tk->len = l->c - tk->start;

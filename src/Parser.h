@@ -11,18 +11,17 @@
 // incorrect syntax, undefined locals) are performed on the AST before it's
 // compiled to SSA IR.
 
-typedef struct local {
-    struct local *next;
+typedef struct decl {
     Type *type;
-    char *name;
-    struct ir_ins *alloc; // The IR_ALLOC instruction for this local
-} Local;
-
-typedef struct {
-    Type *type;
-    Token *name; // Zeroed in an abstract declarator
+    Token *name; // NULL in an abstract declarator
     Token *tk;
 } Declarator;
+
+typedef struct local {
+    struct local *next;
+    Declarator decl;
+    struct ir_ins *alloc; // The IR_ALLOC instruction for this local
+} Local;
 
 typedef enum {
     EXPR_KINT,    // Constant integer
@@ -86,26 +85,14 @@ typedef struct stmt {
     };
 } Stmt;
 
-typedef struct fn_arg {
-    struct fn_arg *next;
-    Local *local;
-    struct ir_ins *ir_farg; // The IR_FARG instruction emitted for this arg
-} FnArg;
-
-typedef struct {
-    Type *return_type;
-    Local *local;
-    FnArg *args; // Linked list of function arguments
-} FnDecl;
-
 typedef struct fn_def {
     struct fn_def *next;
-    FnDecl *decl;
+    Local *local;
     Stmt *body;
 } FnDef;
 
 typedef struct {
-    FnDef *fns; // Linked list of top-level functions
+    FnDef *fns; // Linked list of function definitions
 } AstModule;
 
 AstModule * parse(char *file);

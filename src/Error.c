@@ -55,14 +55,7 @@ static void print_error_header() {
     print_colour(COLOUR_WHITE);
 }
 
-static void print_warning_header() {
-    print_colour(COLOUR_YELLOW);
-    print_colour(COLOUR_BOLD);
-    printf("warning: ");
-    print_colour(COLOUR_WHITE);
-}
-
-void trigger_error(char *fmt, ...) {
+void print_error(char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     print_error_header();
@@ -70,7 +63,6 @@ void trigger_error(char *fmt, ...) {
     print_colour(COLOUR_CLEAR);
     printf("\n");
     va_end(args);
-    exit(1);
 }
 
 static void print_error_info(Token *tk) {
@@ -140,7 +132,7 @@ static void print_error_info(Token *tk) {
     printf("\n");
 }
 
-void trigger_error_at(Token *tk, char *fmt, ...) {
+void print_error_at(Token *tk, char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     print_error_header();
@@ -149,18 +141,39 @@ void trigger_error_at(Token *tk, char *fmt, ...) {
     printf("\n");
     print_error_info(tk);
     va_end(args);
-    exit(1);
 }
 
-void trigger_warning_at(Token *tk, char *fmt, ...) {
+void print_warning_at(Token *tk, char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    print_warning_header();
+    print_colour(COLOUR_YELLOW);
+    print_colour(COLOUR_BOLD);
+    printf("warning: ");
+    print_colour(COLOUR_WHITE);
     vprintf(fmt, args);
     print_colour(COLOUR_CLEAR);
     printf("\n");
     print_error_info(tk);
     va_end(args);
+}
+
+void print_info_at(Token *tk, char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    print_colour(COLOUR_BLUE);
+    print_colour(COLOUR_BOLD);
+    printf("info: ");
+    print_colour(COLOUR_CLEAR);
+    print_colour(COLOUR_WHITE);
+    vprintf(fmt, args);
+    print_colour(COLOUR_CLEAR);
+    printf("\n");
+    print_error_info(tk);
+    va_end(args);
+}
+
+void trigger_error() {
+    exit(1);
 }
 
 void expect_tk(Token *tk, Tk expected) {
